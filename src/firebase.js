@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 // --- COLE SUA CONFIGURAÇÃO AQUI ABAIXO ---
 // (Substitua tudo entre as chaves pelo que copiou do site do Firebase)
@@ -15,4 +16,8 @@ const firebaseConfig = {
 // Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
 // Exporta o Banco de Dados para usarmos no site
-export const db = getFirestore(app);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+
+export { db, auth, googleProvider };

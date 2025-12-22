@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { db } from './firebase'; 
-import { collection, getDocs, addDoc } from 'firebase/firestore'; 
+import { db, auth, googleProvider } from './firebase'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, query, where, onSnapshot } from 'firebase/firestore'; 
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { 
   MapPin, Search, User, CheckCircle, 
   X, Coffee, Wifi, Car, Utensils, PlusCircle, Star, ArrowRight,
-  ChevronLeft, ChevronRight, Info, AlertCircle, PawPrint, FileText, Ban, Youtube, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, DollarSign, LogOut, LayoutDashboard, List, Phone, Mail, Ticket
+  ChevronLeft, ChevronRight, Info, AlertCircle, PawPrint, FileText, Ban, Youtube, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, DollarSign, LogOut, LayoutDashboard, List, Phone, Mail, Ticket, Lock, Briefcase
 } from 'lucide-react';
 
 // --- UTILITÁRIOS ---
@@ -34,15 +35,6 @@ const useSEO = (title, description, shouldIndex = true) => {
       document.head.appendChild(metaDesc);
     }
     metaDesc.setAttribute("content", description);
-
-    let metaRobots = document.querySelector("meta[name='robots']");
-    if (!metaRobots) {
-      metaRobots = document.createElement('meta');
-      metaRobots.name = "robots";
-      document.head.appendChild(metaRobots);
-    }
-    metaRobots.setAttribute("content", shouldIndex ? "index, follow" : "noindex, nofollow");
-
   }, [title, description, shouldIndex]);
 };
 
@@ -70,7 +62,7 @@ const Badge = ({ children, type = 'default' }) => {
     red: "bg-red-50 text-red-900 border-red-100",
     green: "bg-green-50 text-green-800 border-green-200",
   };
-  
+   
   return (
     <span className={`${styles[type] || styles.default} text-xs px-3 py-1 rounded-full font-medium border flex items-center gap-1`}>
       {type === 'default' ? <CheckCircle size={12} className="text-brand-500"/> : <Ban size={12} className="text-red-500"/>}
@@ -169,7 +161,7 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
           <h2 className="text-xl font-bold">Voucher de Reserva</h2>
           <p className="text-brand-100 text-sm">Apresente este código na entrada</p>
         </div>
-        
+         
         <div className="p-8 overflow-y-auto">
           <div className="text-center mb-8 border-b border-dashed border-gray-200 pb-8">
             <p className="text-gray-400 text-xs uppercase font-bold tracking-widest mb-1">CÓDIGO DA RESERVA</p>
@@ -204,7 +196,7 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
             </div>
           </div>
         </div>
-        
+         
         <div className="p-4 bg-gray-50 border-t border-gray-100 text-center">
           <Button className="w-full justify-center" onClick={() => window.print()}>Imprimir Voucher</Button>
         </div>
@@ -277,36 +269,291 @@ const SimpleCalendar = ({ availableDays = [0,1,2,3,4,5,6], onDateSelect, selecte
   );
 };
 
+// --- MODAL DE LOGIN OTIMIZADO PARA CHECKOUT ---
+const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
+  if (!isOpen) return null;
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showLoginLink, setShowLoginLink] = useState(false);
+  const role = 'user'; 
+
+  const ensureUserProfile = async (userAuth) => {
+    const userRef = doc(db, "users", userAuth.uid);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        email: userAuth.email,
+        name: userAuth.displayName || userAuth.email.split('@')[0],
+        role: role, 
+        createdAt: new Date()
+      });
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true); setError('');
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      await ensureUserProfile(result.user);
+      onLoginSuccess();
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("Erro ao entrar com Google.");
+    } finally { setLoading(false); }
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true); setError(''); setShowLoginLink(false);
+    try {
+      let result;
+      if (isRegistering) {
+        result = await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        result = await signInWithEmailAndPassword(auth, email, password);
+      }
+      await ensureUserProfile(result.user);
+      onLoginSuccess();
+      onClose();
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/wrong-password') setError("Senha incorreta.");
+      else if (err.code === 'auth/user-not-found') setError("Usuário não encontrado.");
+      else if (err.code === 'auth/email-already-in-use') {
+        setError("Este e-mail já possui cadastro.");
+        setShowLoginLink(true);
+      }
+      else setError("Erro ao autenticar. Verifique seus dados.");
+    } finally { setLoading(false); }
+  };
+
+  const switchToLogin = () => {
+    setIsRegistering(false);
+    setError('');
+    setShowLoginLink(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl relative" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+        
+        <div className="text-center mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">{isRegistering ? 'Criar Conta' : 'Fazer Login'}</h2>
+          <p className="text-gray-500 text-sm mt-1">Para concluir sua reserva com segurança.</p>
+        </div>
+
+        <div className="space-y-4">
+          <Button variant="outline" onClick={handleGoogleLogin} className="w-full justify-center" disabled={loading}>
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" alt="Google" />
+            Continuar com Google
+          </Button>
+
+          <div className="relative flex py-2 items-center">
+             <div className="flex-grow border-t border-gray-200"></div>
+             <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold uppercase">Ou com Email</span>
+             <div className="flex-grow border-t border-gray-200"></div>
+          </div>
+
+          <form onSubmit={handleEmailAuth} className="space-y-4 text-left">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input type="email" required className="w-full border rounded-lg p-3 outline-none focus:ring-2 focus:ring-brand-500" placeholder="seu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+              <input type="password" required className="w-full border rounded-lg p-3 outline-none focus:ring-2 focus:ring-brand-500" placeholder="******" value={password} onChange={e => setPassword(e.target.value)} />
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex flex-col gap-2 animate-fade-in">
+                <div className="flex items-center gap-2"><AlertCircle size={16}/> {error}</div>
+                {showLoginLink && (
+                  <button type="button" onClick={switchToLogin} className="text-sm font-bold underline hover:text-red-800 text-left">
+                    Já tem conta? Clique para entrar.
+                  </button>
+                )}
+              </div>
+            )}
+
+            <Button type="submit" className="w-full justify-center" disabled={loading}>
+              {loading ? 'Processando...' : (isRegistering ? 'Cadastrar e Continuar' : 'Entrar e Continuar')}
+            </Button>
+          </form>
+          
+          {!showLoginLink && (
+            <p className="text-center text-sm text-gray-600 mt-4">
+               {isRegistering ? 'Já tem conta?' : 'Não tem cadastro?'}
+               <button onClick={() => setIsRegistering(!isRegistering)} className="text-brand-600 font-bold hover:underline ml-1">
+                 {isRegistering ? 'Fazer Login' : 'Criar grátis'}
+               </button>
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- TELAS DO SISTEMA ---
 
-// 1. TELA DE LOGIN
-const LoginPage = ({ onLogin }) => {
+// 1. TELA DE LOGIN PRINCIPAL (Full Page)
+const LoginPage = ({ onLoginSuccess, initialRole = 'user', lockRole = false, initialIsRegistering = false }) => {
   useSEO("Login | Mapa do Day Use", "Acesse sua conta.", false);
+  const [role, setRole] = useState(initialRole); 
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(initialIsRegistering); 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showLoginLink, setShowLoginLink] = useState(false);
+
+  useEffect(() => { setRole(initialRole); }, [initialRole]);
+  useEffect(() => { setIsRegistering(initialIsRegistering); }, [initialIsRegistering]);
+
+  const ensureUserProfile = async (userAuth) => {
+    const userRef = doc(db, "users", userAuth.uid);
+    const userSnap = await getDoc(userRef);
+
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        email: userAuth.email,
+        name: userAuth.displayName || userAuth.email.split('@')[0],
+        role: role, 
+        createdAt: new Date()
+      });
+      return true; 
+    }
+    return false; 
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true); setError(''); setShowLoginLink(false);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const isNewUser = await ensureUserProfile(result.user);
+      onLoginSuccess(isNewUser);
+    } catch (err) {
+      console.error(err);
+      setError("Erro ao entrar com Google.");
+    } finally { setLoading(false); }
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true); setError(''); setShowLoginLink(false);
+    try {
+      let result;
+      let isNewUser = false;
+      if (isRegistering) {
+        result = await createUserWithEmailAndPassword(auth, email, password);
+        isNewUser = true;
+      } else {
+        result = await signInWithEmailAndPassword(auth, email, password);
+      }
+      const isProfileCreated = await ensureUserProfile(result.user);
+      onLoginSuccess(isNewUser || isProfileCreated);
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/wrong-password') setError("Senha incorreta.");
+      else if (err.code === 'auth/user-not-found') setError("Usuário não encontrado.");
+      else if (err.code === 'auth/email-already-in-use') {
+        setError("Este e-mail já está cadastrado.");
+        setShowLoginLink(true);
+      }
+      else setError("Erro ao autenticar. Verifique seus dados.");
+    } finally { setLoading(false); }
+  };
+
+  const switchToLogin = () => {
+    setIsRegistering(false);
+    setError('');
+    setShowLoginLink(false);
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
-        <div className="w-16 h-16 bg-brand-100 rounded-full flex items-center justify-center mx-auto mb-6">
-          <User size={32} className="text-brand-600" />
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
+      <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center animate-fade-in border border-gray-100">
+        
+        {!lockRole && (
+          <div className="flex bg-gray-100 p-1 rounded-xl mb-8 relative">
+            <button 
+              onClick={() => setRole('user')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all z-10 ${role === 'user' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <User size={18}/> Sou Viajante
+            </button>
+            <button 
+              onClick={() => setRole('partner')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all z-10 ${role === 'partner' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <Briefcase size={18}/> Sou Parceiro
+            </button>
+          </div>
+        )}
+
+        <div className="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-6 text-brand-600">
+          {role === 'user' ? <User size={32} /> : <Briefcase size={32} />}
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Bem-vindo de volta!</h1>
-        <p className="text-gray-500 mb-8">Como você deseja acessar?</p>
-        <div className="space-y-3">
-          <button onClick={() => onLogin('user')} className="w-full p-4 border border-gray-200 rounded-xl hover:border-brand-500 hover:bg-brand-50 transition-all flex items-center gap-4 group">
-            <div className="bg-gray-100 p-2 rounded-full group-hover:bg-white"><User size={20}/></div>
-            <div className="text-left">
-              <p className="font-bold text-gray-900">Sou Viajante</p>
-              <p className="text-xs text-gray-500">Quero reservar day uses</p>
+        
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+          {isRegistering ? 'Criar Conta' : 'Bem-vindo!'}
+        </h1>
+        <p className="text-gray-500 mb-8">
+          {role === 'partner' ? 'Cadastre-se para anunciar seu Day Use.' : (isRegistering ? 'Cadastre-se para reservar.' : 'Entre para gerenciar reservas.')}
+        </p>
+        
+        <div className="space-y-4">
+          <Button variant="outline" onClick={handleGoogleLogin} className="w-full justify-center" disabled={loading}>
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" alt="Google" />
+            {isRegistering ? 'Cadastrar com Google' : 'Entrar com Google'}
+          </Button>
+
+          <div className="relative flex py-2 items-center">
+             <div className="flex-grow border-t border-gray-200"></div>
+             <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold uppercase">Ou com Email</span>
+             <div className="flex-grow border-t border-gray-200"></div>
+          </div>
+
+          <form onSubmit={handleEmailAuth} className="space-y-4 text-left">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input type="email" required className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-brand-500 outline-none" placeholder="seu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
             </div>
-            <ChevronRight className="ml-auto text-gray-400"/>
-          </button>
-          <button onClick={() => onLogin('partner')} className="w-full p-4 border border-gray-200 rounded-xl hover:border-brand-500 hover:bg-brand-50 transition-all flex items-center gap-4 group">
-            <div className="bg-gray-100 p-2 rounded-full group-hover:bg-white"><LayoutDashboard size={20}/></div>
-            <div className="text-left">
-              <p className="font-bold text-gray-900">Sou Parceiro</p>
-              <p className="text-xs text-gray-500">Gerenciar meu estabelecimento</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+              <input type="password" required className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-brand-500 outline-none" placeholder="******" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
-            <ChevronRight className="ml-auto text-gray-400"/>
-          </button>
+
+            {error && (
+              <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex flex-col gap-2 animate-fade-in">
+                <div className="flex items-center gap-2"><AlertCircle size={16}/> {error}</div>
+                {showLoginLink && (
+                  <button type="button" onClick={switchToLogin} className="text-sm font-bold underline hover:text-red-800 text-left">
+                    Já tem conta? Clique para entrar.
+                  </button>
+                )}
+              </div>
+            )}
+
+            <Button type="submit" className="w-full justify-center" disabled={loading}>
+              {loading ? 'Processando...' : (isRegistering ? 'Cadastrar' : 'Entrar')}
+            </Button>
+          </form>
+          
+          {!showLoginLink && (
+            <p className="text-sm text-gray-600 mt-4">
+               {isRegistering ? 'Já tem conta?' : 'Não tem cadastro?'}
+               <button onClick={() => setIsRegistering(!isRegistering)} className="text-brand-600 font-bold hover:underline ml-1">
+                 {isRegistering ? 'Fazer Login' : 'Criar grátis'}
+               </button>
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -319,12 +566,20 @@ const CheckoutPage = ({ bookingData, onConfirm, onBack, user }) => {
 
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('credit');
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  
   const [guestDetails, setGuestDetails] = useState({
     name: user?.name || '',
-    email: '',
+    email: user?.email || '',
     phone: ''
   });
   const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if(user) {
+      setGuestDetails(prev => ({...prev, name: user.name || prev.name, email: user.email || prev.email}));
+    }
+  }, [user]);
 
   const validate = () => {
     const newErrors = {};
@@ -332,14 +587,14 @@ const CheckoutPage = ({ bookingData, onConfirm, onBack, user }) => {
     if (!guestDetails.email.includes('@')) newErrors.email = "E-mail inválido";
     const phoneClean = guestDetails.phone.replace(/\D/g, '');
     if (phoneClean.length < 10) newErrors.phone = "Telefone inválido (mínimo 10 dígitos)";
-    
+     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handlePay = () => {
     if (!validate()) return;
-    
+     
     setLoading(true);
     setTimeout(() => {
       onConfirm(guestDetails);
@@ -347,216 +602,210 @@ const CheckoutPage = ({ bookingData, onConfirm, onBack, user }) => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in">
-      <button onClick={onBack} className="flex items-center gap-2 text-gray-500 hover:text-brand-600 mb-6 font-medium">
-        <ChevronLeft size={20}/> Voltar para detalhes
-      </button>
+    <>
+      <LoginModal 
+        isOpen={showLoginModal} 
+        onClose={() => setShowLoginModal(false)}
+        onLoginSuccess={() => setShowLoginModal(false)}
+      />
 
-      <div className="grid md:grid-cols-2 gap-12">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-6">Confirmar e Pagar</h1>
-          
-          <div className="space-y-6">
+      <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in">
+        <button onClick={onBack} className="flex items-center gap-2 text-gray-500 hover:text-brand-600 mb-6 font-medium">
+          <ChevronLeft size={20}/> Voltar para detalhes
+        </button>
+
+        <div className="grid md:grid-cols-2 gap-12">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-6">Confirmar e Pagar</h1>
             
-            {/* Dados do Hóspede (Se não tiver logado ou para confirmar) */}
-            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
-              <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><User size={20}/> Seus Dados</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Nome Completo</label>
-                  <input 
-                    className={`w-full border rounded-lg p-3 ${errors.name ? 'border-red-500' : ''}`} 
-                    value={guestDetails.name}
-                    onChange={e => setGuestDetails({...guestDetails, name: e.target.value})}
-                    placeholder="Ex: Maria Silva"
-                  />
-                  {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">E-mail</label>
-                    <input 
-                      className={`w-full border rounded-lg p-3 ${errors.email ? 'border-red-500' : ''}`} 
-                      value={guestDetails.email}
-                      onChange={e => setGuestDetails({...guestDetails, email: e.target.value})}
-                      placeholder="seu@email.com"
-                    />
-                    {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
+            <div className="space-y-6">
+              
+              {/* SEÇÃO 1: Dados do Hóspede */}
+              <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm relative overflow-hidden">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><User size={20}/> Seus Dados</h3>
+                
+                {!user ? (
+                  <div className="text-center py-8">
+                    <div className="bg-brand-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-brand-600">
+                      <User size={32}/>
+                    </div>
+                    <h3 className="font-bold text-gray-900 mb-2">Para continuar, identifique-se</h3>
+                    <p className="text-gray-500 text-sm mb-6">Cadastre-se ou faça login para garantir sua segurança e receber o voucher.</p>
+                    <Button onClick={() => setShowLoginModal(true)} className="w-full justify-center">Entrar ou Cadastrar</Button>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">WhatsApp</label>
-                    <input 
-                      className={`w-full border rounded-lg p-3 ${errors.phone ? 'border-red-500' : ''}`} 
-                      value={guestDetails.phone}
-                      onChange={e => setGuestDetails({...guestDetails, phone: e.target.value})}
-                      placeholder="(00) 90000-0000"
-                    />
-                    {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
+                ) : (
+                  <div className="space-y-4 animate-fade-in">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Nome Completo</label>
+                      <input 
+                        className={`w-full border rounded-lg p-3 ${errors.name ? 'border-red-500' : ''}`} 
+                        value={guestDetails.name}
+                        onChange={e => setGuestDetails({...guestDetails, name: e.target.value})}
+                        placeholder="Ex: Maria Silva"
+                      />
+                      {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">E-mail</label>
+                        <input 
+                          className={`w-full border rounded-lg p-3 ${errors.email ? 'border-red-500' : ''}`} 
+                          value={guestDetails.email}
+                          onChange={e => setGuestDetails({...guestDetails, email: e.target.value})}
+                          placeholder="seu@email.com"
+                          readOnly
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">WhatsApp</label>
+                        <input 
+                          className={`w-full border rounded-lg p-3 ${errors.phone ? 'border-red-500' : ''}`} 
+                          value={guestDetails.phone}
+                          onChange={e => setGuestDetails({...guestDetails, phone: e.target.value})}
+                          placeholder="(00) 90000-0000"
+                        />
+                        {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
-              <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><CreditCard size={20}/> Pagamento</h3>
-              <div className="flex gap-4 mb-6">
-                <button 
-                  onClick={() => setPaymentMethod('credit')}
-                  className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === 'credit' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-100 hover:bg-gray-50'}`}
-                >
-                  <CreditCard size={24}/> Cartão
-                </button>
-                <button 
-                  onClick={() => setPaymentMethod('pix')}
-                  className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === 'pix' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-100 hover:bg-gray-50'}`}
-                >
-                  <div className="font-bold text-xl">PIX</div> Pix
-                </button>
+                )}
               </div>
 
-              {paymentMethod === 'credit' ? (
-                <div className="space-y-4 animate-fade-in">
-                  <input className="w-full border rounded-lg p-3" placeholder="Número do Cartão" />
-                  <div className="grid grid-cols-2 gap-4">
-                    <input className="w-full border rounded-lg p-3" placeholder="Validade (MM/AA)" />
-                    <input className="w-full border rounded-lg p-3" placeholder="CVV" />
-                  </div>
-                  <input className="w-full border rounded-lg p-3" placeholder="Nome no Cartão" />
+              {/* SEÇÃO 2: Pagamento */}
+              <div className={`bg-white p-6 rounded-2xl border border-gray-200 shadow-sm transition-opacity ${!user ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><CreditCard size={20}/> Pagamento</h3>
+                <div className="flex gap-4 mb-6">
+                  <button onClick={() => setPaymentMethod('credit')} className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === 'credit' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                    <CreditCard size={24}/> Cartão
+                  </button>
+                  <button onClick={() => setPaymentMethod('pix')} className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${paymentMethod === 'pix' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                    <div className="font-bold text-xl">PIX</div> Pix
+                  </button>
                 </div>
-              ) : (
-                <div className="text-center py-8 animate-fade-in">
-                  <div className="w-48 h-48 bg-gray-100 mx-auto mb-4 rounded-xl flex items-center justify-center text-gray-400">QR Code</div>
-                  <p className="text-sm text-gray-500">O código será gerado após confirmar.</p>
-                </div>
-              )}
-            </div>
 
-            <Button onClick={handlePay} disabled={loading} className="w-full text-lg py-4 shadow-xl">
-              {loading ? 'Processando...' : `Pagar ${formatBRL(bookingData.total)}`}
-            </Button>
-            <p className="text-center text-xs text-gray-400 mt-2 flex items-center justify-center gap-1"><Info size={12}/> Ambiente seguro. Seus dados estão protegidos.</p>
+                {paymentMethod === 'credit' ? (
+                  <div className="space-y-4">
+                    <input className="w-full border rounded-lg p-3" placeholder="Número do Cartão" />
+                    <div className="grid grid-cols-2 gap-4">
+                      <input className="w-full border rounded-lg p-3" placeholder="Validade" />
+                      <input className="w-full border rounded-lg p-3" placeholder="CVV" />
+                    </div>
+                    <input className="w-full border rounded-lg p-3" placeholder="Nome no Cartão" />
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="w-48 h-48 bg-gray-100 mx-auto mb-4 rounded-xl flex items-center justify-center text-gray-400">QR Code</div>
+                    <p className="text-sm text-gray-500">O código será gerado após confirmar.</p>
+                  </div>
+                )}
+              </div>
+
+              <Button onClick={handlePay} disabled={loading || !user} className="w-full text-lg py-4 shadow-xl">
+                {loading ? 'Processando...' : `Pagar ${formatBRL(bookingData.total)}`}
+              </Button>
+              <p className="text-center text-xs text-gray-400 mt-2 flex items-center justify-center gap-1"><Info size={12}/> Ambiente seguro.</p>
+            </div>
           </div>
-        </div>
 
-        {/* Direita: Resumo */}
-        <div>
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-xl sticky top-24">
-            <div className="flex gap-4 mb-6">
-              <img src={bookingData.item.image} className="w-24 h-24 rounded-xl object-cover" />
-              <div>
-                <p className="text-xs text-gray-500 uppercase font-bold">Day Use em</p>
-                <h3 className="font-bold text-gray-900 text-lg leading-tight">{bookingData.item.name}</h3>
-                <p className="text-sm text-gray-500 mt-1">{bookingData.item.city}</p>
-                <div className="flex items-center gap-1 text-xs font-bold mt-2"><Star size={12} className="text-yellow-500 fill-yellow-500"/> 5.0</div>
-              </div>
-            </div>
-
-            <div className="border-t border-gray-100 pt-4 space-y-3">
-              <h4 className="font-bold text-gray-900">Detalhes do preço</h4>
-              <div className="flex justify-between text-gray-600 text-sm">
-                <span>Adultos ({bookingData.adults}x)</span>
-                <span>{formatBRL(bookingData.adults * bookingData.item.priceAdult)}</span>
-              </div>
-              {bookingData.children > 0 && (
-                <div className="flex justify-between text-gray-600 text-sm">
-                  <span>Crianças ({bookingData.children}x)</span>
-                  <span>{formatBRL(bookingData.children * bookingData.item.priceChild)}</span>
+          <div>
+            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-xl sticky top-24">
+              <div className="flex gap-4 mb-6">
+                <img src={bookingData.item.image} className="w-24 h-24 rounded-xl object-cover" />
+                <div>
+                  <p className="text-xs text-gray-500 uppercase font-bold">Day Use em</p>
+                  <h3 className="font-bold text-gray-900 text-lg leading-tight">{bookingData.item.name}</h3>
+                  <p className="text-sm text-gray-500 mt-1">{bookingData.item.city}</p>
+                  <div className="flex items-center gap-1 text-xs font-bold mt-2"><Star size={12} className="text-yellow-500 fill-yellow-500"/> 5.0</div>
                 </div>
-              )}
-              {bookingData.pets > 0 && (
-                <div className="flex justify-between text-gray-600 text-sm">
-                  <span>Taxa Pet ({bookingData.pets}x)</span>
-                  <span>{formatBRL(bookingData.pets * bookingData.item.petFee)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-gray-600 text-sm">
-                <span>Taxa de serviço</span>
-                <span>R$ 0,00</span>
               </div>
-            </div>
-
-            <div className="border-t border-gray-100 pt-4 mt-4 flex justify-between items-center">
-              <span className="font-bold text-gray-900 text-lg">Total (BRL)</span>
-              <span className="font-bold text-brand-600 text-2xl">{formatBRL(bookingData.total)}</span>
+              <div className="border-t border-gray-100 pt-4 space-y-3">
+                <h4 className="font-bold text-gray-900">Detalhes do preço</h4>
+                <div className="flex justify-between text-gray-600 text-sm"><span>Adultos ({bookingData.adults}x)</span><span>{formatBRL(bookingData.adults * bookingData.item.priceAdult)}</span></div>
+                {bookingData.children > 0 && <div className="flex justify-between text-gray-600 text-sm"><span>Crianças ({bookingData.children}x)</span><span>{formatBRL(bookingData.children * bookingData.item.priceChild)}</span></div>}
+                {bookingData.pets > 0 && <div className="flex justify-between text-gray-600 text-sm"><span>Taxa Pet ({bookingData.pets}x)</span><span>{formatBRL(bookingData.pets * bookingData.item.petFee)}</span></div>}
+                <div className="flex justify-between text-gray-600 text-sm"><span>Taxa de serviço</span><span>R$ 0,00</span></div>
+              </div>
+              <div className="border-t border-gray-100 pt-4 mt-4 flex justify-between items-center">
+                <span className="font-bold text-gray-900 text-lg">Total (BRL)</span>
+                <span className="font-bold text-brand-600 text-2xl">{formatBRL(bookingData.total)}</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
 // 3. DASHBOARD DO PARCEIRO
-const PartnerDashboard = ({ onEditItem, onViewReservations }) => {
+const PartnerDashboard = ({ onEditItem, user }) => {
   useSEO("Painel do Parceiro", "Gerencie seus anúncios.", false);
-
   const [items, setItems] = useState([]);
   const [reservations, setReservations] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      const qItems = await getDocs(collection(db, "dayuses"));
+      const qItems = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
+      const querySnapshot = await getDocs(qItems);
       const listItems = [];
-      qItems.forEach((doc) => listItems.push({ id: doc.id, ...doc.data() }));
+      querySnapshot.forEach((doc) => listItems.push({ id: doc.id, ...doc.data() }));
       setItems(listItems);
 
-      const qRes = await getDocs(collection(db, "reservations"));
+      const qRes = query(collection(db, "reservations"), where("ownerId", "==", user.uid));
+      const queryResSnapshot = await getDocs(qRes);
       const listRes = [];
-      qRes.forEach((doc) => listRes.push({ id: doc.id, ...doc.data() }));
+      queryResSnapshot.forEach((doc) => listRes.push({ id: doc.id, ...doc.data() }));
       setReservations(listRes); 
-
-      setLoading(false);
     }
-    load();
-  }, []);
+    if (user) load();
+  }, [user]);
+
+  if (!user) return null;
 
   return (
     <div className="max-w-6xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel do Parceiro</h1>
-      <p className="text-gray-500 mb-8">Gerencie seus anúncios e reservas.</p>
+      <p className="text-gray-500 mb-8">Bem-vindo, {user.name}.</p>
 
-      {/* Stats Rápidos */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-gray-500 text-sm font-medium">Faturamento Total</p>
+          <p className="text-gray-500 text-sm font-medium">Faturamento</p>
           <p className="text-3xl font-bold text-brand-600 mt-2">{formatBRL(reservations.reduce((acc, curr) => acc + curr.total, 0))}</p>
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-gray-500 text-sm font-medium">Reservas Confirmadas</p>
+          <p className="text-gray-500 text-sm font-medium">Reservas</p>
           <p className="text-3xl font-bold text-gray-900 mt-2">{reservations.length}</p>
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-gray-500 text-sm font-medium">Day Uses Ativos</p>
+          <p className="text-gray-500 text-sm font-medium">Anúncios</p>
           <p className="text-3xl font-bold text-gray-900 mt-2">{items.length}</p>
         </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-12">
-        {/* Lista de Reservas */}
         <div>
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><List size={20}/> Últimas Reservas</h2>
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><List size={20}/> Últimas Vendas</h2>
           <div className="space-y-4">
-            {reservations.length === 0 ? <p className="text-gray-400">Nenhuma reserva ainda.</p> : reservations.map(res => (
+            {reservations.length === 0 ? <p className="text-gray-400">Nenhuma venda ainda.</p> : reservations.map(res => (
               <div key={res.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center">
                 <div>
                   <p className="font-bold text-gray-900">{res.guestName || "Cliente"}</p>
-                  <p className="text-xs text-gray-500">{res.date.split('-').reverse().join('/')} • {res.adults} Ad, {res.children} Cr</p>
+                  <p className="text-xs text-gray-500">{res.itemName}</p>
+                  <p className="text-xs text-gray-400">{res.date.split('-').reverse().join('/')}</p>
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-brand-600">{formatBRL(res.total)}</p>
-                  <Badge type="green">Confirmado</Badge>
+                  <Badge type="green">Pago</Badge>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Meus Locais */}
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold flex items-center gap-2"><MapIcon size={20}/> Meus Locais</h2>
-            <Button className="py-2 px-4 text-sm" onClick={onEditItem}>+ Novo</Button>
+            <Button className="py-2 px-4 text-sm" onClick={onEditItem}>+ Novo Day Use</Button>
           </div>
           <div className="space-y-4">
             {items.map(item => (
@@ -566,9 +815,9 @@ const PartnerDashboard = ({ onEditItem, onViewReservations }) => {
                   <p className="font-bold text-gray-900 text-sm">{item.name}</p>
                   <p className="text-xs text-gray-500">{item.city}</p>
                 </div>
-                <Button variant="ghost" className="mr-2" onClick={() => alert("Editar em breve!")}>Editar</Button>
               </div>
             ))}
+            {items.length === 0 && <p className="text-gray-400 text-center py-4">Cadastre seu primeiro local!</p>}
           </div>
         </div>
       </div>
@@ -577,45 +826,40 @@ const PartnerDashboard = ({ onEditItem, onViewReservations }) => {
 };
 
 // 4. DASHBOARD DO USUÁRIO
-const UserDashboard = () => {
+const UserDashboard = ({ user }) => {
   useSEO("Minhas Viagens", "Gerencie suas reservas.", false);
-
   const [myTrips, setMyTrips] = useState([]);
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   
   useEffect(() => {
     async function load() {
-      const q = await getDocs(collection(db, "reservations"));
+      const q = query(collection(db, "reservations"), where("userId", "==", user.uid));
+      const querySnapshot = await getDocs(q);
       const list = [];
-      q.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      querySnapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
       setMyTrips(list);
     }
-    load();
-  }, []);
+    if(user) load();
+  }, [user]);
 
-  const handleCancel = async (id) => {
-    if(confirm("Deseja realmente cancelar esta reserva?")) {
-      alert("Solicitação de cancelamento enviada!");
-    }
-  };
+  if(!user) return null;
 
   return (
     <div className="max-w-4xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <VoucherModal isOpen={!!selectedVoucher} trip={selectedVoucher} onClose={() => setSelectedVoucher(null)} />
-      
       <h1 className="text-3xl font-bold text-gray-900 mb-6">Minhas Viagens</h1>
-      
       {myTrips.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-3xl border border-dashed">
           <p className="text-gray-500">Você ainda não tem reservas.</p>
+          <p className="text-sm text-brand-600 mt-2">Explore o mapa e garanta seu próximo lazer.</p>
         </div>
       ) : (
         <div className="space-y-6">
           {myTrips.map(trip => (
             <div key={trip.id} className="bg-white rounded-3xl border border-gray-200 overflow-hidden shadow-sm flex flex-col md:flex-row">
               <div className="md:w-48 h-32 md:h-auto bg-gray-100 relative">
-                 <img src={trip.itemImage} className="w-full h-full object-cover" />
-                 <div className="absolute top-2 left-2"><Badge type="green">Confirmada</Badge></div>
+                  <img src={trip.itemImage} className="w-full h-full object-cover" />
+                  <div className="absolute top-2 left-2"><Badge type="green">Confirmada</Badge></div>
               </div>
               <div className="p-6 flex-1 flex flex-col justify-center">
                 <div className="flex justify-between items-start">
@@ -628,14 +872,9 @@ const UserDashboard = () => {
                     <p className="font-bold text-xl text-brand-600">{formatBRL(trip.total)}</p>
                   </div>
                 </div>
-                
                 <div className="mt-6 flex gap-4 pt-4 border-t border-gray-50">
-                  <div className="flex-1 text-sm text-gray-600">
-                    Reserva para <strong>{trip.adults} Adultos</strong>, <strong>{trip.children} Crianças</strong>
-                  </div>
                   <div className="flex gap-2">
                     <button onClick={() => setSelectedVoucher(trip)} className="text-sm text-brand-600 font-bold hover:underline flex items-center gap-1"><Ticket size={14}/> Ver Voucher</button>
-                    <button onClick={() => handleCancel(trip.id)} className="text-sm text-red-500 font-bold hover:underline">Cancelar</button>
                   </div>
                 </div>
               </div>
@@ -647,14 +886,12 @@ const UserDashboard = () => {
   );
 };
 
-// --- HOME PAGE (DESIGN CORRIGIDO: TEXTO EMBAIXO DA IMAGEM) ---
-
+// --- HOME PAGE ---
 const HomePage = ({ items, onSelect, loading }) => {
   useSEO("Day Use em BH e Região | Mapa do Day Use", "Encontre e reserve os melhores day uses em hotéis e resorts.", true);
-
   const [searchTerm, setSearchTerm] = useState("");
   const filtered = items.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) || i.location.toLowerCase().includes(searchTerm.toLowerCase()));
-  
+   
   return (
     <div className="animate-fade-in pb-20">
       <div className="bg-brand-900 text-white pt-16 pb-24 px-6 rounded-3xl shadow-xl mb-12 max-w-6xl mx-4 md:mx-auto mt-6 relative overflow-hidden">
@@ -679,7 +916,6 @@ const HomePage = ({ items, onSelect, loading }) => {
          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {filtered.map(item => (
               <div key={item.id} onClick={() => onSelect(item)} className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 cursor-pointer overflow-hidden border border-gray-100 group transition-all duration-300">
-                {/* CORREÇÃO VISUAL: Imagem em cima, texto em baixo */}
                 <div className="h-56 overflow-hidden relative bg-gray-100">
                   <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
                   <span className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1">
@@ -710,15 +946,122 @@ const HomePage = ({ items, onSelect, loading }) => {
   );
 };
 
-// --- TELA: PARCEIRO ---
-const PartnerPage = ({ onSave, onViewCreated }) => {
+// --- TELA: DETALHES ---
+const DetailsPage = ({ item, onBack, onBook }) => {
+  useSEO(`${item.name} - Ingressos`, `Reserva de Day Use no ${item.name}.`, true);
+  const [date, setDate] = useState("");
+  const [adults, setAdults] = useState(1);
+  const [children, setChildren] = useState(0);
+  const [pets, setPets] = useState(0);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [toast, setToast] = useState(null);
+
+  const adultPrice = item.priceAdult || 0;
+  const childPrice = item.priceChild || 0;
+  const petFee = item.petFee || 0;
+  const total = (adults * adultPrice) + (children * childPrice) + (pets * petFee);
+
+  const renderList = (text) => text ? text.split('\n').map((line, i) => <li key={i}>{line}</li>) : null;
+  const youtubeId = getYoutubeId(item.videoUrl);
+  const images = [item.image, item.image2, item.image3, item.image4, item.image5, item.image6, item.image7, item.image8, item.image9, item.image10].filter(Boolean);
+
+  const openGallery = (index) => {
+    setGalleryIndex(index);
+    setGalleryOpen(true);
+  };
+
+  return (
+    <>
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+      <ImageGallery images={images} isOpen={galleryOpen} onClose={() => setGalleryOpen(false)} startIndex={galleryIndex} />
+
+      <div className="max-w-6xl mx-auto pb-20 pt-8 px-4 animate-fade-in relative">
+        <button onClick={onBack} className="mb-6 text-gray-500 hover:text-brand-600 flex items-center gap-2 font-medium transition-colors">
+          <div className="bg-white p-2 rounded-full border border-gray-200 hover:border-brand-200 transition-colors"><ArrowRight size={16} className="rotate-180"/></div>
+          Voltar
+        </button>
+         
+        <div className="grid lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-8">
+            <div className="grid grid-cols-4 gap-2 h-[300px] md:h-[400px] rounded-3xl overflow-hidden shadow-lg border border-gray-100 group">
+              <div className={`relative ${images.length > 1 ? 'col-span-3' : 'col-span-4'} h-full cursor-pointer`} onClick={() => openGallery(0)}>
+                <img src={images[0]} className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
+                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors"></div>
+              </div>
+              {images.length > 1 && (
+                <div className="col-span-1 grid grid-rows-3 gap-2 h-full">
+                  {images.slice(1, 4).map((img, i) => (
+                    <div key={i} className="relative overflow-hidden bg-gray-100 cursor-pointer h-full" onClick={() => openGallery(i + 1)}>
+                      <img src={img} className="w-full h-full object-cover hover:scale-110 transition-transform duration-500" />
+                      {i === 2 && images.length > 4 && (<div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-lg">+{images.length - 4}</div>)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">{item.name}</h1>
+              <p className="text-gray-500 flex items-center gap-2 text-lg"><MapPin size={20} className="text-brand-500"/> {item.city} - {item.state}</p>
+            </div>
+            <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-8">
+              <div>
+                <h3 className="font-bold text-xl mb-4 text-brand-900 flex items-center gap-2"><FileText size={20}/> Sobre o local</h3>
+                <p className="text-gray-600 leading-relaxed text-lg whitespace-pre-line">{item.description}</p>
+              </div>
+              {youtubeId && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${youtubeId}`} title="Video" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen></iframe></div>)}
+              
+              <div className="hidden md:grid md:grid-cols-2 gap-6">
+                {item.includedItems && (<div><h4 className="font-bold text-green-700 mb-2 flex items-center gap-1"><CheckCircle size={16}/> O que está incluso</h4><ul className="list-disc list-inside text-gray-600 text-sm space-y-1">{renderList(item.includedItems)}</ul></div>)}
+                {item.notIncludedItems && (<div><h4 className="font-bold text-red-600 mb-2 flex items-center gap-1"><Ban size={16}/> Não está incluso</h4><ul className="list-disc list-inside text-gray-600 text-sm space-y-1">{renderList(item.notIncludedItems)}</ul></div>)}
+              </div>
+              <div className="md:hidden space-y-2">
+                {item.includedItems && (<Accordion title="O que está incluso" icon={CheckCircle}><ul className="list-disc list-inside text-gray-600 space-y-1">{renderList(item.includedItems)}</ul></Accordion>)}
+                {item.notIncludedItems && (<Accordion title="Não está incluso" icon={Ban}><ul className="list-disc list-inside text-gray-600 space-y-1">{renderList(item.notIncludedItems)}</ul></Accordion>)}
+                {item.usageRules && (<Accordion title="Regras de Utilização" icon={AlertCircle}><div className="whitespace-pre-line">{item.usageRules}</div></Accordion>)}
+              </div>
+
+              <div className="hidden md:block">
+                {(item.usageRules || item.petAllowed) && (<div className="mt-4"><h4 className="font-bold text-gray-900 mb-2 flex items-center gap-1"><AlertCircle size={16}/> Regras e Pets</h4><div className="text-gray-600 text-sm space-y-2">{item.petAllowed ? (<p className="text-green-600 font-medium flex items-center gap-1"><PawPrint size={14}/> Aceitamos Pets! - {item.petSize} - Taxa: {formatBRL(item.petFee)}</p>) : (<p className="text-red-500 font-medium flex items-center gap-1"><Ban size={14}/> Não aceitamos Pets.</p>)}{item.usageRules && <div className="whitespace-pre-line mt-2">{item.usageRules}</div>}</div></div>)}
+                {item.cancellationPolicy && (<div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4"><h4 className="font-bold text-gray-800 mb-1 text-sm">Política de Cancelamento</h4><p className="text-xs text-gray-500 whitespace-pre-line">{item.cancellationPolicy}</p></div>)}
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-1 flex flex-col gap-4">
+            <div className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 sticky top-24">
+              <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-50">
+                <span className="text-gray-500 font-medium">Ingressos a partir de</span>
+                <span className="text-2xl font-bold text-brand-600">{formatBRL(adultPrice)}</span>
+              </div>
+              <div className="space-y-6">
+                <div><label className="text-sm font-bold text-gray-700 mb-2 block flex items-center gap-2">Datas disponíveis<span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">Clique nos dias</span></label><SimpleCalendar availableDays={item.availableDays || [0,1,2,3,4,5,6]} onDateSelect={setDate} selectedDate={date} setToast={setToast}/>{date && <p className="text-xs text-brand-600 font-bold mt-1 text-center bg-brand-50 py-1 rounded">Selecionado: {date.split('-').reverse().join('/')}</p>}</div>
+                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800">Adultos</p><p className="text-xs text-gray-500">Acima de {item.adultAgeStart || 12} anos</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(adultPrice)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setAdults(Math.max(1, adults - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{adults}</span><button onClick={() => setAdults(Math.min(20, adults + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>
+                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800">Crianças</p><p className="text-xs text-gray-500">{item.childAgeStart || 2} a {item.childAgeEnd || 11} anos</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(childPrice)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setChildren(Math.max(0, children - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{children}</span><button onClick={() => setChildren(Math.min(10, children + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>
+                {item.petAllowed && (<div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800 flex items-center gap-1"><PawPrint size={14}/> Pets</p><p className="text-xs text-gray-500 font-medium text-brand-600">{item.petSize}</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(petFee)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setPets(Math.max(0, pets - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{pets}</span><button onClick={() => setPets(Math.min(5, pets + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>)}
+                <div className="pt-2 border-t border-dashed border-gray-200"><div className="flex justify-between items-center mb-4 mt-4"><span className="text-gray-600 font-medium">Total Geral</span><span className="text-3xl font-bold text-brand-600">{formatBRL(total)}</span></div><Button className="w-full text-lg shadow-xl shadow-brand-500/20 py-4" disabled={!date} onClick={() => onBook({ item, date, adults, children, pets, total })}>Pagar e Reservar</Button></div>
+              </div>
+            </div>
+            <div className="block md:hidden">
+              {item.cancellationPolicy && (<div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4"><h4 className="font-bold text-gray-800 mb-1 text-sm flex items-center gap-2"><Info size={16}/> Política de Cancelamento</h4><p className="text-xs text-gray-500 whitespace-pre-line">{item.cancellationPolicy}</p></div>)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+// --- TELA: PARCEIRO (NOVO LOCAL) ---
+const PartnerPage = ({ onSave, onViewCreated, user }) => {
   useSEO("Área do Parceiro", "Cadastre seu day use.", true);
   const [loading, setLoading] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [createdItem, setCreatedItem] = useState(null);
-  
+   
   const [formData, setFormData] = useState({
+    contactName: user?.name || '', contactEmail: user?.email || '', contactPhone: '', contactJob: 'Sócio/Proprietário',
     name: '', cep: '', street: '', number: '', district: '', city: '', state: '',
     description: '', videoUrl: '',
     images: ['', '', '', '', '', '', '', '', '', ''],
@@ -756,6 +1099,7 @@ const PartnerPage = ({ onSave, onViewCreated }) => {
       ...formData,
       image: mainImage,
       location: `${formData.street}, ${formData.number}`, 
+      ownerId: user.uid, 
       priceAdult: Number(formData.priceAdult),
       priceChild: Number(formData.priceChild),
       petFee: Number(formData.petFee) || 0,
@@ -787,15 +1131,36 @@ const PartnerPage = ({ onSave, onViewCreated }) => {
     <div className="max-w-3xl mx-auto pt-12 px-4 animate-fade-in pb-20">
       <SuccessModal 
         isOpen={showModal} 
-        onClose={() => {setShowModal(false); setFormData({...formData, name: ''}); window.scrollTo(0,0);}} 
+        onClose={() => {setShowModal(false); window.scrollTo(0,0);}} 
         onViewPage={() => onViewCreated(createdItem)} 
         title="Parabéns!"
         message="A página do seu Day Use foi criada e já pode receber reservas."
         actionLabel="Ver Página Criada"
       />
 
-      <div className="text-center mb-10"><h1 className="text-3xl font-bold text-gray-900 mb-2">Área do Parceiro</h1><p className="text-gray-500 text-lg">Cadastro completo do estabelecimento.</p></div>
+      <div className="text-center mb-10"><h1 className="text-3xl font-bold text-gray-900 mb-2">Novo Anúncio</h1><p className="text-gray-500 text-lg">Cadastro completo do estabelecimento.</p></div>
       <form onSubmit={handleSubmit} className="bg-white p-8 rounded-3xl border border-gray-200 shadow-xl space-y-8">
+        
+        <div className="space-y-4">
+          <h3 className="font-bold text-gray-900 border-b pb-2 flex items-center gap-2"><User size={20}/> Dados do Responsável</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Nome Completo</label><input required className="w-full border rounded-lg p-3" value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} placeholder="Seu nome"/></div>
+            <div><label className="block text-sm font-medium mb-1">E-mail</label><input required type="email" className="w-full border rounded-lg p-3 bg-gray-50" value={formData.contactEmail} readOnly /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Telefone / WhatsApp</label><input required className="w-full border rounded-lg p-3" value={formData.contactPhone} onChange={e => setFormData({...formData, contactPhone: e.target.value})} placeholder="(00) 90000-0000"/></div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Cargo na Empresa</label>
+              <select className="w-full border rounded-lg p-3 bg-white" value={formData.contactJob} onChange={e => setFormData({...formData, contactJob: e.target.value})}>
+                <option>Sócio/Proprietário</option>
+                <option>Gerente</option>
+                <option>Atendente</option>
+                <option>Outros</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div className="space-y-4">
           <h3 className="font-bold text-gray-900 border-b pb-2">1. Informações e Localização</h3>
           <div><label className="block text-sm font-medium mb-1">Nome do Local</label><input required className="w-full border rounded-lg p-3" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: Pousada do Sol"/></div>
@@ -859,116 +1224,6 @@ const PartnerPage = ({ onSave, onViewCreated }) => {
   );
 };
 
-// --- TELA: DETALHES ---
-const DetailsPage = ({ item, onBack, onBook }) => {
-  useSEO(`${item.name} - Ingressos`, `Reserva de Day Use no ${item.name}.`, true);
-  const [date, setDate] = useState("");
-  const [adults, setAdults] = useState(1);
-  const [children, setChildren] = useState(0);
-  const [pets, setPets] = useState(0);
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryIndex, setGalleryIndex] = useState(0);
-  const [toast, setToast] = useState(null);
-
-  const adultPrice = item.priceAdult || 0;
-  const childPrice = item.priceChild || 0;
-  const petFee = item.petFee || 0;
-  const total = (adults * adultPrice) + (children * childPrice) + (pets * petFee);
-
-  const renderList = (text) => text ? text.split('\n').map((line, i) => <li key={i}>{line}</li>) : null;
-  const youtubeId = getYoutubeId(item.videoUrl);
-  const images = [item.image, item.image2, item.image3, item.image4, item.image5, item.image6, item.image7, item.image8, item.image9, item.image10].filter(Boolean);
-
-  const openGallery = (index) => {
-    setGalleryIndex(index);
-    setGalleryOpen(true);
-  };
-
-  return (
-    <>
-      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
-      <ImageGallery images={images} isOpen={galleryOpen} onClose={() => setGalleryOpen(false)} startIndex={galleryIndex} />
-
-      <div className="max-w-6xl mx-auto pb-20 pt-8 px-4 animate-fade-in relative">
-        <button onClick={onBack} className="mb-6 text-gray-500 hover:text-brand-600 flex items-center gap-2 font-medium transition-colors">
-          <div className="bg-white p-2 rounded-full border border-gray-200 hover:border-brand-200 transition-colors"><ArrowRight size={16} className="rotate-180"/></div>
-          Voltar
-        </button>
-        
-        <div className="grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
-            <div className="grid grid-cols-4 gap-2 h-[300px] md:h-[400px] rounded-3xl overflow-hidden shadow-lg border border-gray-100 group">
-              <div className={`relative ${images.length > 1 ? 'col-span-3' : 'col-span-4'} h-full cursor-pointer`} onClick={() => openGallery(0)}>
-                <img src={images[0]} className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
-                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors"></div>
-              </div>
-              {images.length > 1 && (
-                <div className="col-span-1 grid grid-rows-3 gap-2 h-full">
-                  {images.slice(1, 4).map((img, i) => (
-                    <div key={i} className="relative overflow-hidden bg-gray-100 cursor-pointer h-full" onClick={() => openGallery(i + 1)}>
-                      <img src={img} className="w-full h-full object-cover hover:scale-110 transition-transform duration-500" />
-                      {i === 2 && images.length > 4 && (<div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-lg">+{images.length - 4}</div>)}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div>
-              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">{item.name}</h1>
-              <p className="text-gray-500 flex items-center gap-2 text-lg"><MapPin size={20} className="text-brand-500"/> {item.city} - {item.state}</p>
-            </div>
-            <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-8">
-              <div>
-                <h3 className="font-bold text-xl mb-4 text-brand-900 flex items-center gap-2"><FileText size={20}/> Sobre o local</h3>
-                <p className="text-gray-600 leading-relaxed text-lg whitespace-pre-line">{item.description}</p>
-              </div>
-              {youtubeId && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${youtubeId}`} title="Video" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen></iframe></div>)}
-              
-              {/* Infos em Grid Desktop */}
-              <div className="hidden md:grid md:grid-cols-2 gap-6">
-                {item.includedItems && (<div><h4 className="font-bold text-green-700 mb-2 flex items-center gap-1"><CheckCircle size={16}/> O que está incluso</h4><ul className="list-disc list-inside text-gray-600 text-sm space-y-1">{renderList(item.includedItems)}</ul></div>)}
-                {item.notIncludedItems && (<div><h4 className="font-bold text-red-600 mb-2 flex items-center gap-1"><Ban size={16}/> Não está incluso</h4><ul className="list-disc list-inside text-gray-600 text-sm space-y-1">{renderList(item.notIncludedItems)}</ul></div>)}
-              </div>
-              {/* Infos em Accordion Mobile */}
-              <div className="md:hidden space-y-2">
-                {item.includedItems && (<Accordion title="O que está incluso" icon={CheckCircle}><ul className="list-disc list-inside text-gray-600 space-y-1">{renderList(item.includedItems)}</ul></Accordion>)}
-                {item.notIncludedItems && (<Accordion title="Não está incluso" icon={Ban}><ul className="list-disc list-inside text-gray-600 space-y-1">{renderList(item.notIncludedItems)}</ul></Accordion>)}
-                {item.usageRules && (<Accordion title="Regras de Utilização" icon={AlertCircle}><div className="whitespace-pre-line">{item.usageRules}</div></Accordion>)}
-              </div>
-
-              {/* Pets e Cancelamento Desktop */}
-              <div className="hidden md:block">
-                {(item.usageRules || item.petAllowed) && (<div className="mt-4"><h4 className="font-bold text-gray-900 mb-2 flex items-center gap-1"><AlertCircle size={16}/> Regras e Pets</h4><div className="text-gray-600 text-sm space-y-2">{item.petAllowed ? (<p className="text-green-600 font-medium flex items-center gap-1"><PawPrint size={14}/> Aceitamos Pets! - {item.petSize} - Taxa: {formatBRL(item.petFee)}</p>) : (<p className="text-red-500 font-medium flex items-center gap-1"><Ban size={14}/> Não aceitamos Pets.</p>)}{item.usageRules && <div className="whitespace-pre-line mt-2">{item.usageRules}</div>}</div></div>)}
-                {item.cancellationPolicy && (<div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4"><h4 className="font-bold text-gray-800 mb-1 text-sm">Política de Cancelamento</h4><p className="text-xs text-gray-500 whitespace-pre-line">{item.cancellationPolicy}</p></div>)}
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-1 flex flex-col gap-4">
-            <div className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 sticky top-24">
-              <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-50">
-                <span className="text-gray-500 font-medium">Ingressos a partir de</span>
-                <span className="text-2xl font-bold text-brand-600">{formatBRL(adultPrice)}</span>
-              </div>
-              <div className="space-y-6">
-                <div><label className="text-sm font-bold text-gray-700 mb-2 block flex items-center gap-2">Datas disponíveis<span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">Clique nos dias</span></label><SimpleCalendar availableDays={item.availableDays || [0,1,2,3,4,5,6]} onDateSelect={setDate} selectedDate={date} setToast={setToast}/>{date && <p className="text-xs text-brand-600 font-bold mt-1 text-center bg-brand-50 py-1 rounded">Selecionado: {date.split('-').reverse().join('/')}</p>}</div>
-                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800">Adultos</p><p className="text-xs text-gray-500">Acima de {item.adultAgeStart || 12} anos</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(adultPrice)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setAdults(Math.max(1, adults - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{adults}</span><button onClick={() => setAdults(Math.min(20, adults + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>
-                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800">Crianças</p><p className="text-xs text-gray-500">{item.childAgeStart || 2} a {item.childAgeEnd || 11} anos</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(childPrice)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setChildren(Math.max(0, children - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{children}</span><button onClick={() => setChildren(Math.min(10, children + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>
-                {item.petAllowed && (<div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="flex justify-between items-start mb-2"><div><p className="text-sm font-bold text-gray-800 flex items-center gap-1"><PawPrint size={14}/> Pets</p><p className="text-xs text-gray-500 font-medium text-brand-600">{item.petSize}</p></div><span className="text-sm font-bold text-brand-600">{formatBRL(petFee)}</span></div><div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200"><button onClick={() => setPets(Math.max(0, pets - 1))} className="w-8 h-8 rounded hover:bg-gray-100 text-brand-600 font-bold">-</button><span className="font-bold text-lg w-8 text-center">{pets}</span><button onClick={() => setPets(Math.min(5, pets + 1))} className="w-8 h-8 rounded bg-brand-500 text-white font-bold hover:bg-brand-600">+</button></div></div>)}
-                <div className="pt-2 border-t border-dashed border-gray-200"><div className="flex justify-between items-center mb-4 mt-4"><span className="text-gray-600 font-medium">Total Geral</span><span className="text-3xl font-bold text-brand-600">{formatBRL(total)}</span></div><Button className="w-full text-lg shadow-xl shadow-brand-500/20 py-4" disabled={!date} onClick={() => onBook({ item, date, adults, children, pets, total })}>Pagar e Reservar</Button></div>
-              </div>
-            </div>
-            {/* Cancelamento Mobile */}
-            <div className="block md:hidden">
-              {item.cancellationPolicy && (<div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4"><h4 className="font-bold text-gray-800 mb-1 text-sm flex items-center gap-2"><Info size={16}/> Política de Cancelamento</h4><p className="text-xs text-gray-500 whitespace-pre-line">{item.cancellationPolicy}</p></div>)}
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-};
-
 // --- APP PRINCIPAL E ROTEAMENTO ---
 
 export default function App() {
@@ -979,6 +1234,41 @@ export default function App() {
   const [dayUses, setDayUses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+  useEffect(() => {
+    let unsubscribeProfile = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser({
+          uid: currentUser.uid,
+          email: currentUser.email,
+          name: currentUser.displayName || currentUser.email.split('@')[0],
+          photoURL: currentUser.photoURL,
+          role: 'user' 
+        });
+
+        const userRef = doc(db, "users", currentUser.uid);
+        unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const userData = docSnap.data();
+            setUser(prev => {
+              if(!prev) return null;
+              return { ...prev, name: userData.name || prev.name, role: userData.role || 'user' };
+            });
+          }
+        });
+      } else {
+        setUser(null);
+        unsubscribeProfile();
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeProfile();
+    };
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -992,14 +1282,11 @@ export default function App() {
     loadData();
   }, []);
 
-  const handleLogin = (role) => {
-    setUser({ role, name: role === 'partner' ? 'Pousada do Sol' : 'Viajante' });
-    setView(role === 'partner' ? 'partner-dashboard' : 'home');
+  const handleLogout = async () => {
+    await signOut(auth);
+    setView('home');
   };
 
-  const handleLogout = () => { setUser(null); setView('home'); };
-
-  // Fluxo de reserva simplificado: Não exige login antes
   const goToCheckout = (data) => {
     setBookingData(data);
     setView('checkout');
@@ -1008,19 +1295,20 @@ export default function App() {
 
   const handleConfirmBooking = async (guestDetails) => {
     try {
+      const userId = user ? user.uid : 'guest';
       await addDoc(collection(db, "reservations"), {
         ...bookingData,
-        userId: user ? 'user_123' : 'guest',
+        userId: userId,
+        ownerId: bookingData.item.ownerId, 
         guestName: guestDetails.name,
         guestEmail: guestDetails.email,
         guestPhone: guestDetails.phone,
         itemName: bookingData.item.name,
         itemImage: bookingData.item.image,
         createdAt: new Date(),
-        status: 'confirmed'
+        status: 'confirmed',
+        total: bookingData.total
       });
-      // Se não estiver logado, loga automaticamente como usuário
-      if (!user) setUser({ role: 'user', name: guestDetails.name.split(' ')[0] });
       setShowConfirmModal(true);
     } catch (e) {
       console.error(e);
@@ -1048,24 +1336,37 @@ export default function App() {
             <img src="/logo.png" alt="Logo" className="h-10 w-auto object-contain" onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='flex'}} />
             <div style={{display:'none'}} className="flex items-center gap-2 font-bold text-xl tracking-tight text-brand-600"><MapPin className="text-brand-500" /> Mapa do Day Use</div>
           </div>
-          
+           
           <div className="flex gap-4 items-center">
              {!user ? (
-               <Button variant="ghost" onClick={() => setView('login')} className="font-bold">Entrar</Button>
+               <div className="flex items-center gap-4">
+                 <button 
+                   onClick={() => setView('partner-register')} 
+                   className="hidden md:flex text-sm font-semibold text-gray-500 hover:text-brand-600 items-center gap-2 transition-colors"
+                 >
+                    Seja um parceiro
+                 </button>
+                 <Button variant="ghost" onClick={() => setView('login')} className="font-bold">Entrar</Button>
+               </div>
              ) : (
                <div className="flex items-center gap-4">
-                 {user.role === 'partner' && <Button variant="ghost" onClick={() => setView('partner-dashboard')} className={view === 'partner-dashboard' ? 'text-brand-600 bg-brand-50' : ''}>Painel</Button>}
-                 {user.role === 'user' && <Button variant="ghost" onClick={() => setView('user-dashboard')} className={view === 'user-dashboard' ? 'text-brand-600 bg-brand-50' : ''}>Minhas Viagens</Button>}
+                 {user.role === 'partner' && (
+                    <Button variant="ghost" onClick={() => setView('partner-dashboard')} className={view === 'partner-dashboard' ? 'text-brand-600 bg-brand-50' : ''}>
+                       Painel Parceiro
+                    </Button>
+                 )}
+                 {user.role === 'user' && (
+                    <Button variant="ghost" onClick={() => setView('user-dashboard')} className={view === 'user-dashboard' ? 'text-brand-600 bg-brand-50' : ''}>
+                       Minhas Viagens
+                    </Button>
+                 )}
                  <div className="flex items-center gap-2 cursor-pointer group relative" onClick={handleLogout}>
-                    <div className="w-10 h-10 bg-brand-500 rounded-full flex items-center justify-center text-white font-bold">{user.name[0]}</div>
-                    <LogOut size={16} className="text-gray-400 hover:text-red-500"/>
+                    <div className="w-10 h-10 bg-brand-500 rounded-full flex items-center justify-center text-white font-bold overflow-hidden border-2 border-brand-100">
+                      {user.photoURL ? <img src={user.photoURL} alt="Foto" className="w-full h-full object-cover"/> : user.name[0]?.toUpperCase()}
+                    </div>
+                    <LogOut size={16} className="text-gray-400 hover:text-red-500 transition-colors"/>
                  </div>
                </div>
-             )}
-             {!user && (
-                <button onClick={() => {setUser({role: 'partner', name: 'Parceiro'}); setView('partner-new')}} className="hidden md:flex text-sm font-semibold text-gray-500 hover:text-brand-600 items-center gap-2 transition-colors">
-                  Sou Parceiro
-                </button>
              )}
           </div>
         </div>
@@ -1075,11 +1376,31 @@ export default function App() {
       <main className="flex-1">
         {view === 'home' && <HomePage items={dayUses} onSelect={(item) => {setSelectedItem(item); setView('details'); window.scrollTo(0,0)}} loading={loading} />}
         {view === 'details' && selectedItem && <DetailsPage item={selectedItem} onBack={() => setView('home')} onBook={goToCheckout} />}
-        {view === 'login' && <LoginPage onLogin={handleLogin} />}
-        {view === 'checkout' && bookingData && <CheckoutPage bookingData={bookingData} onConfirm={handleConfirmBooking} onBack={() => setView('details')} user={user} />}
-        {view === 'partner-dashboard' && <PartnerDashboard onEditItem={() => setView('partner-new')} onViewReservations={() => {}} />}
-        {view === 'user-dashboard' && <UserDashboard />}
-        {view === 'partner-new' && <PartnerPage onSave={async (item) => {const docRef = await addDoc(collection(db, "dayuses"), item); setDayUses([{id: docRef.id, ...item}, ...dayUses]); return {id: docRef.id, ...item};}} onViewCreated={handleViewCreated} />}
+        
+        {view === 'login' && <LoginPage onLoginSuccess={() => setView('home')} initialRole="user" />}
+        {view === 'partner-login' && <LoginPage onLoginSuccess={() => setView('partner-dashboard')} initialRole="partner" lockRole={true} />}
+        {view === 'partner-register' && (
+          <LoginPage 
+            onLoginSuccess={(isNewUser) => setView(isNewUser ? 'partner-new' : 'partner-dashboard')} 
+            initialRole="partner" 
+            lockRole={true}
+            initialIsRegistering={true}
+          />
+        )}
+        
+        {view === 'checkout' && bookingData && (
+          <CheckoutPage 
+            bookingData={bookingData} 
+            onConfirm={handleConfirmBooking} 
+            onBack={() => setView('details')} 
+            user={user} 
+          />
+        )}
+        
+        {view === 'partner-dashboard' && user?.role === 'partner' && <PartnerDashboard user={user} onEditItem={() => setView('partner-new')} />}
+        {view === 'user-dashboard' && <UserDashboard user={user} />}
+        
+        {view === 'partner-new' && user?.role === 'partner' && <PartnerPage user={user} onSave={async (item) => {const docRef = await addDoc(collection(db, "dayuses"), item); setDayUses([{id: docRef.id, ...item}, ...dayUses]); return {id: docRef.id, ...item};}} onViewCreated={handleViewCreated} />}
       </main>
 
       {/* FOOTER */}
