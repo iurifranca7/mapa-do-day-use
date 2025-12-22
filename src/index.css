@@ -1,7 +1,23 @@
+/* Importando a fonte Inter do Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Configurando a fonte padrão */
 body {
-  background-color: #f9fafb;
+  font-family: 'Inter', sans-serif;
+  background-color: #F3F4F6; /* Um cinza muito suave para o fundo */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Animação suave de entrada */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
 }
