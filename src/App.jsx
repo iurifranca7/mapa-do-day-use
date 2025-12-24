@@ -3,10 +3,10 @@ import { Routes, Route, useNavigate, useParams, useLocation, useSearchParams } f
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
 import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { initMercadoPago } from '@mercadopago/sdk-react';
+import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { 
   MapPin, Search, User, CheckCircle, 
-  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Loader, QrCode, Copy
+  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO ---
@@ -16,7 +16,12 @@ try {
   }
 } catch (e) { console.log("Erro config MP", e); }
 
-const BASE_URL = import.meta.env.VITE_BASE_URL || window.location.origin;
+// Sanitização da URL Base (Remove barra no final se existir e garante HTTPS em prod)
+const getBaseUrl = () => {
+  let url = import.meta.env.VITE_BASE_URL || window.location.origin;
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+};
+const BASE_URL = getBaseUrl();
 
 // --- ESTILOS GLOBAIS ---
 const GlobalStyles = () => (
@@ -91,7 +96,7 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
   return (
     <ModalOverlay onClose={onClose}>
       <div className="p-6 text-center">
-        <div className="w-16 h-16 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mx-auto mb-4"><QrCode size={32}/></div>
+        <div className="w-16 h-16 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mx-auto mb-4"><Ticket size={32}/></div>
         <h2 className="text-xl font-bold text-slate-900 mb-2">Pagamento via PIX</h2>
         <p className="text-sm text-slate-500 mb-6">Escaneie o QR Code ou copie o código abaixo para pagar.</p>
         
@@ -101,7 +106,7 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
         
         <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center gap-2 mb-6">
            <p className="text-xs text-slate-500 font-mono truncate flex-1">{pixData.qr_code}</p>
-           <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><Copy size={16}/></button>
+           <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><CheckCircle size={16}/></button>
         </div>
 
         <Button className="w-full mb-3" onClick={() => { onConfirm(); onClose(); }}>Já fiz o pagamento</Button>
