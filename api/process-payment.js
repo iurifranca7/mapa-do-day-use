@@ -1,52 +1,70 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 
-// Inicializa o cliente do Mercado Pago com a chave secreta definida no .env
-const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
-
 export default async function handler(req, res) {
-  // --- Configuração de CORS ---
-  // Permite que o seu frontend (em qualquer domínio) acesse esta API
+  // CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Responde imediatamente a requisições OPTIONS (preflight do navegador)
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Processa apenas requisições POST
   if (req.method === 'POST') {
     try {
-      // Instancia o objeto de pagamento
+      const { 
+        token, 
+        issuer_id, 
+        payment_method_id, 
+        transaction_amount, 
+        installments, 
+        payer, 
+        partnerAccessToken 
+      } = req.body;
+
+      if (!partnerAccessToken) throw new Error("Token do parceiro ausente.");
+
+      // 1. Inicializa o MP com a chave do PARCEIRO (Vendedor)
+      const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
       const payment = new Payment(client);
-      
-      // O corpo da requisição (req.body) contém os dados criptografados enviados pelo Brick no frontend
-      const body = req.body;
 
-      // Envia os dados para o Mercado Pago criar a cobrança
-      const result = await payment.create({ body });
+      // 2. Calcula comissão (15%)
+      const commission = Math.round(transaction_amount * 0.15 * 100) / 100;
 
-      // Retorna o resultado para o frontend (se foi aprovado, recusado ou está pendente)
-      res.status(200).json({
+      // 3. Cria o pagamento
+      const paymentData = {
+        body: {
+          token,
+          issuer_id,
+          payment_method_id,
+          transaction_amount: Number(transaction_amount),
+          installments: Number(installments),
+          description: "Reserva Day Use",
+          payer: {
+            email: payer.email,
+            first_name: payer.first_name,
+            last_name: payer.last_name,
+            identification: payer.identification // CPF
+          },
+          application_fee: commission, // Split: Sua parte
+        }
+      };
+
+      const result = await payment.create(paymentData);
+
+      return res.status(200).json({
         id: result.id,
         status: result.status,
         detail: result.status_detail,
       });
+
     } catch (error) {
-      console.error("Erro ao processar pagamento:", error);
-      res.status(500).json({ 
-        error: 'Erro ao processar pagamento no Mercado Pago', 
-        details: error.message 
+      console.error("Erro Pagamento:", error);
+      return res.status(500).json({ 
+        error: 'Erro ao processar', 
+        message: error.message,
+        cause: error.cause 
       });
     }
-  } else {
-    // Retorna erro se o método não for POST
-    res.status(405).json({ error: 'Method not allowed' });
   }
+  return res.status(405).json({ error: 'Method not allowed' });
 }
