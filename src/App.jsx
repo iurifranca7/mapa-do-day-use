@@ -39,6 +39,14 @@ const generateSlug = (text) => text?.toString().toLowerCase().normalize('NFD').r
 const getStateSlug = (uf) => uf ? uf.toLowerCase() : 'br';
 const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/; const match = url.match(regExp); return (match && match[2].length === 11) ? match[2] : null; };
 
+// --- HOOK DE SEO (RESTAURADO) ---
+const useSEO = (title, description) => {
+  useEffect(() => {
+    document.title = title ? `${title} | Mapa do Day Use` : "Mapa do Day Use";
+    // Aqui você poderia adicionar lógica para meta description se necessário
+  }, [title, description]);
+};
+
 // --- COMPONENTES VISUAIS ---
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled }) => {
   const variants = {
@@ -74,6 +82,37 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
           {onAction && <Button className="w-full justify-center" onClick={() => { onClose(); onAction(); }}>{actionLabel}</Button>}
           <Button variant="ghost" className="w-full justify-center" onClick={onClose}>Fechar</Button>
         </div>
+      </div>
+    </ModalOverlay>
+  );
+};
+
+const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
+  if (!isOpen || !pixData) return null;
+  
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(pixData.qr_code);
+    alert("Código PIX copiado!");
+  };
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="p-6 text-center">
+        <div className="w-16 h-16 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mx-auto mb-4"><Ticket size={32}/></div>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">Pagamento via PIX</h2>
+        <p className="text-sm text-slate-500 mb-6">Escaneie o QR Code ou copie o código abaixo para pagar.</p>
+        
+        {pixData.qr_code_base64 && (
+          <img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code Pix" className="mx-auto w-48 h-48 mb-6 border-2 border-slate-100 rounded-xl" />
+        )}
+        
+        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center gap-2 mb-6">
+           <p className="text-xs text-slate-500 font-mono truncate flex-1">{pixData.qr_code}</p>
+           <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><CheckCircle size={16}/></button>
+        </div>
+
+        <Button className="w-full mb-3" onClick={() => { onConfirm(); onClose(); }}>Já fiz o pagamento</Button>
+        <Button variant="ghost" className="w-full" onClick={onClose}>Cancelar</Button>
       </div>
     </ModalOverlay>
   );
@@ -274,6 +313,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 // --- PÁGINAS ---
 
 const HomePage = () => {
+  useSEO("Home", "Encontre e reserve os melhores day uses em hotéis e resorts.");
   const [items, setItems] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const navigate = useNavigate();
@@ -329,6 +369,7 @@ const DetailsPage = () => {
   const [galleryOpen, setGalleryOpen] = useState(false);
 
   useEffect(() => { getDoc(doc(db, "dayuses", id)).then(s => s.exists() && setItem({id:s.id, ...s.data()})) }, [id]);
+  useSEO(item ? item.name : "Detalhes", "Confira os detalhes deste day use.");
 
   if (!item) return <div className="text-center py-20 text-slate-400">Carregando detalhes...</div>;
   
@@ -398,6 +439,7 @@ const DetailsPage = () => {
 };
 
 const CheckoutPage = () => {
+  useSEO("Pagamento Seguro", "Finalize sua reserva.", false);
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
@@ -655,6 +697,66 @@ const PartnerCallbackPage = () => {
         {status === 'error' && <><X size={32} className="text-red-600 mx-auto mb-4"/><h2 className="text-xl font-bold">Erro na Conexão</h2><Button onClick={()=>navigate('/partner')}>Voltar</Button></>}
       </div>
     </div>
+  );
+};
+
+// --- USER DASHBOARD (MEUS INGRESSOS) ---
+const UserDashboard = () => {
+  const [trips, setTrips] = useState([]);
+  const [selectedVoucher, setSelectedVoucher] = useState(null);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+     const unsub = onAuthStateChanged(auth, u => {
+        if(u) {
+           setUser(u);
+           const q = query(collection(db, "reservations"), where("userId", "==", u.uid));
+           getDocs(q).then(s => setTrips(s.docs.map(d => ({id: d.id, ...d.data()}))));
+        }
+     });
+     return unsub;
+  }, []);
+
+  const handleCancel = async (id) => {
+    if(confirm("Deseja realmente cancelar esta reserva?")) {
+       await deleteDoc(doc(db, "reservations", id));
+       setTrips(trips.filter(t => t.id !== id));
+       alert("Cancelado com sucesso.");
+    }
+  };
+
+  const handleLogout = async () => { await signOut(auth); window.location.href = '/'; }
+
+  if (!user) return <div className="text-center py-20 text-slate-400">Carregando...</div>;
+
+  return (
+     <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
+        <VoucherModal isOpen={!!selectedVoucher} trip={selectedVoucher} onClose={() => setSelectedVoucher(null)} />
+        <div className="flex justify-between items-center mb-8">
+            <h1 className="text-3xl font-bold text-slate-900">Meus Ingressos</h1>
+            {/* Logout agora está no Header */}
+        </div>
+        
+        <div className="space-y-6">
+           {trips.map(t => (
+              <div key={t.id} className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm hover:shadow-md transition-shadow flex flex-col md:flex-row justify-between items-center gap-6">
+                 <div className="flex gap-4 items-center w-full md:w-auto">
+                    <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden shrink-0"><img src={t.itemImage} className="w-full h-full object-cover"/></div>
+                    <div>
+                      <h3 className="font-bold text-lg text-slate-900">{t.itemName}</h3>
+                      <p className="text-sm text-slate-500 flex items-center gap-1 mt-1"><CalendarIcon size={14}/> {t.date}</p>
+                      <p className="text-xs text-slate-400 mt-2 font-medium">{t.guestName} • <span className={t.status === 'cancelled' ? 'text-red-500' : 'text-green-600'}>{t.status === 'cancelled' ? 'Cancelado' : 'Confirmado'}</span></p>
+                    </div>
+                 </div>
+                 <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
+                    <Button variant="outline" className="px-4 py-2 h-auto text-xs" onClick={() => setSelectedVoucher(t)}>Ver Voucher</Button>
+                    {t.status !== 'cancelled' && <Button variant="danger" className="px-4 py-2 h-auto text-xs bg-white text-red-500 hover:bg-red-50 border-red-100" onClick={() => handleCancel(t.id)}>Cancelar</Button>}
+                 </div>
+              </div>
+           ))}
+           {trips.length === 0 && <div className="text-center py-20 bg-white rounded-3xl border border-dashed"><p className="text-slate-400">Você ainda não tem reservas.</p></div>}
+        </div>
+     </div>
   );
 };
 
@@ -924,6 +1026,7 @@ const Layout = ({ children }) => {
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
            <div className="flex items-center gap-2 font-bold text-xl cursor-pointer text-slate-800" onClick={()=>navigate('/')}>
+              {/* LOGO SVG VETORIAL */}
               <svg className="h-10 w-auto text-teal-600" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
               </svg>
