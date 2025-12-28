@@ -1,70 +1,65 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 export default async function handler(req, res) {
-  // CORS
+  // Configuração de CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
 
   if (req.method === 'POST') {
     try {
-      const { 
-        token, 
-        issuer_id, 
-        payment_method_id, 
-        transaction_amount, 
-        installments, 
-        payer, 
-        partnerAccessToken 
-      } = req.body;
+      // Agora recebemos 'formData' do Brick, além do token do parceiro e valor final
+      const { formData, partnerAccessToken, amount } = req.body;
 
-      if (!partnerAccessToken) throw new Error("Token do parceiro ausente.");
+      if (!partnerAccessToken) {
+        throw new Error("Token do parceiro não fornecido.");
+      }
 
-      // 1. Inicializa o MP com a chave do PARCEIRO (Vendedor)
+      // 1. Inicializa o cliente usando o TOKEN DO PARCEIRO (Vendedor)
       const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
       const payment = new Payment(client);
 
-      // 2. Calcula comissão (15%)
-      const commission = Math.round(transaction_amount * 0.15 * 100) / 100;
+      // 2. Calcula a comissão (15% sobre o valor FINAL pago pelo cliente)
+      // Se houve cupom, a comissão é sobre o valor já com desconto.
+      // O parceiro absorve o desconto pois recebe o (valor_pago - comissão).
+      const commission = Math.round(amount * 0.15 * 100) / 100;
 
-      // 3. Cria o pagamento
-      const paymentData = {
-        body: {
-          token,
-          issuer_id,
-          payment_method_id,
-          transaction_amount: Number(transaction_amount),
-          installments: Number(installments),
-          description: "Reserva Day Use",
-          payer: {
-            email: payer.email,
-            first_name: payer.first_name,
-            last_name: payer.last_name,
-            identification: payer.identification // CPF
-          },
-          application_fee: commission, // Split: Sua parte
-        }
+      // 3. Monta o corpo do pagamento
+      // O 'formData' já traz token, método de pagamento, parcelas e dados do pagador criptografados ou formatados pelo Brick.
+      const paymentBody = {
+        ...formData, 
+        transaction_amount: Number(amount), // Garante que o valor processado é o que está no front (com desconto)
+        application_fee: commission,        // Taxa do Marketplace
+        description: "Reserva Day Use",
       };
 
-      const result = await payment.create(paymentData);
+      // 4. Processa
+      const result = await payment.create({ body: paymentBody });
 
-      return res.status(200).json({
+      res.status(200).json({
         id: result.id,
         status: result.status,
         detail: result.status_detail,
       });
 
     } catch (error) {
-      console.error("Erro Pagamento:", error);
-      return res.status(500).json({ 
-        error: 'Erro ao processar', 
+      console.error("Erro no Processamento:", error);
+      res.status(500).json({ 
+        error: 'Erro ao processar pagamento', 
         message: error.message,
-        cause: error.cause 
+        details: error.cause
       });
     }
+  } else {
+    res.status(405).json({ error: 'Method not allowed' });
   }
-  return res.status(405).json({ error: 'Method not allowed' });
 }

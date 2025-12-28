@@ -51,6 +51,7 @@ const generateSlug = (text) => {
 
 const getStateSlug = (uf) => uf ? uf.toLowerCase() : 'br';
 const validateCNPJ = (cnpj) => cnpj.replace(/[^\d]+/g, '').length === 14;
+const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/; const match = url.match(regExp); return (match && match[2].length === 11) ? match[2] : null; };
 
 // --- HOOK DE SEO (DEFINIDO NO INÍCIO PARA EVITAR ERROS) ---
 const useSEO = (title, description) => {
@@ -211,6 +212,26 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
         </div>
       </div>
     </ModalOverlay>
+  );
+};
+const ImageGallery = ({ images, isOpen, onClose }) => {
+  const [idx, setIdx] = useState(0);
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 cursor-pointer" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-6 right-6 bg-white/10 hover:bg-white/30 text-white rounded-full p-3 transition-colors z-50">
+        <X size={32}/>
+      </button>
+      
+      <div className="relative w-full h-full flex items-center justify-center px-2 md:px-20" onClick={e => e.stopPropagation()}>
+         <button onClick={(e) => { e.stopPropagation(); setIdx((idx + images.length - 1) % images.length); }} className="absolute left-2 md:left-8 text-white hover:text-slate-300 transition-colors p-2 bg-black/30 rounded-full"><ChevronLeft size={40}/></button>
+         
+         <img src={images[idx]} className="max-h-[85vh] max-w-[95vw] object-contain rounded-lg shadow-2xl" alt="Galeria" />
+         
+         <button onClick={(e) => { e.stopPropagation(); setIdx((idx + 1) % images.length); }} className="absolute right-2 md:right-8 text-white hover:text-slate-300 transition-colors p-2 bg-black/30 rounded-full"><ChevronRight size={40}/></button>
+      </div>
+      <div className="absolute bottom-6 left-0 right-0 text-center text-white/70 text-sm">{idx + 1} / {images.length}</div>
+    </div>
   );
 };
 
@@ -507,13 +528,21 @@ const DetailsPage = () => {
     </div>
   );
 
-  return (
+return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
-      <div className="flex flex-col-reverse lg:grid lg:grid-cols-3 gap-10">
+      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
+            
+            {/* 1. TÍTULO E LOCALIZAÇÃO (Movido para cima da galeria) */}
+            <div>
+               <h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1>
+               <p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p>
+            </div>
+
+            {/* 2. GALERIA DE FOTOS */}
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}>
                <div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div>
                <div className="col-span-1 grid grid-rows-2 gap-3 h-full">
@@ -521,7 +550,8 @@ const DetailsPage = () => {
                   <div className="relative overflow-hidden h-full"><img src={item.image3 || item.image} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div>
                </div>
             </div>
-            <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
+            
+            {/* 3. CONTEÚDO (Sobre, Regras, etc.) */}
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
                {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
@@ -542,6 +572,7 @@ const DetailsPage = () => {
                </div>
             </div>
          </div>
+         
          <div className="lg:col-span-1 h-fit sticky top-24">
             <BookingBox />
          </div>
