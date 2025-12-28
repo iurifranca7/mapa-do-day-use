@@ -235,7 +235,7 @@ const ImageGallery = ({ images, isOpen, onClose }) => {
   );
 };
 
-const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices = {}, blockedDates = [] }) => {
+const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices = {}, blockedDates = [], basePrice = 0 }) => {
   const [curr, setCurr] = useState(new Date());
   const daysInMonth = new Date(curr.getFullYear(), curr.getMonth() + 1, 0).getDate();
   const firstDay = new Date(curr.getFullYear(), curr.getMonth(), 1).getDay();
@@ -251,6 +251,8 @@ const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices
     if (isAvailable(day)) {
       const date = new Date(curr.getFullYear(), curr.getMonth(), day);
       onDateSelect(date.toISOString().split('T')[0]); 
+    } else {
+      alert("Data indisponível.");
     }
   };
 
@@ -268,18 +270,19 @@ const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices
           const d = i+1;
           const date = new Date(curr.getFullYear(), curr.getMonth(), d);
           const dateStr = date.toISOString().split('T')[0];
-          const isAvail = isAvailable(d);
+          
+          const available = isAvailable(d);
           const dayPrice = prices[date.getDay()];
+          // Só marca como especial se tiver preço definido E for menor que o base
+          const isPromo = available && dayPrice && Number(dayPrice) < basePrice;
+
           return (
-            <button key={d} onClick={()=>handleDayClick(d)} className={`h-9 w-9 rounded-full text-sm font-medium relative flex items-center justify-center ${dateStr===selectedDate?'bg-[#0097A8] text-white shadow-lg':isAvail?'hover:bg-cyan-50 text-slate-700':'text-slate-300 cursor-not-allowed'}`}>
+            <button key={d} onClick={()=>handleDayClick(d)} className={`h-9 w-9 rounded-full text-sm font-medium relative flex items-center justify-center transition-all ${dateStr===selectedDate?'bg-[#0097A8] text-white shadow-lg':available?'hover:bg-cyan-50 text-slate-700':'text-slate-300 cursor-not-allowed'}`}>
               {d}
-              {isAvail && dayPrice && <div className="absolute -bottom-1 w-1 h-1 bg-green-500 rounded-full"></div>}
+              {isPromo && <div className="absolute -bottom-1 w-1 h-1 bg-green-500 rounded-full" title="Preço reduzido"></div>}
             </button>
           )
         })}
-      </div>
-      <div className="mt-2 text-xs text-slate-400 flex gap-2 justify-center">
-         <span className="flex items-center gap-1"><div className="w-1 h-1 bg-green-500 rounded-full"></div> Preço Especial</span>
       </div>
     </div>
   );
@@ -489,14 +492,31 @@ const DetailsPage = () => {
     fetchItem();
   }, [slug, location.state]);
 
+  // Lógica de Preço Dinâmico (Adulto)
   useEffect(() => {
     if(item) {
         if (date) {
           const dayOfWeek = new Date(date + 'T12:00:00').getDay();
-          const specialPrice = item.weeklyPrices?.[dayOfWeek];
-          setCurrentPrice(specialPrice ? Number(specialPrice) : item.priceAdult);
+          const dayConfig = item.weeklyPrices?.[dayOfWeek];
+          let price = item.priceAdult;
+          
+          if (dayConfig && typeof dayConfig === 'object' && dayConfig.adult) price = dayConfig.adult;
+          else if (dayConfig && !isNaN(dayConfig)) price = dayConfig;
+          
+          setCurrentPrice(Number(price) || 0);
         } else {
-          setCurrentPrice(item.priceAdult);
+          // Calcula "A partir de"
+          let minPrice = Number(item.priceAdult || 0);
+          if (item.weeklyPrices) {
+             Object.values(item.weeklyPrices).forEach(p => {
+                 let val = 0;
+                 if (typeof p === 'object' && p.adult) val = Number(p.adult);
+                 else if (!isNaN(p)) val = Number(p);
+                 
+                 if (val > 0 && val < minPrice) minPrice = val;
+             });
+          }
+          setCurrentPrice(minPrice);
         }
     }
   }, [date, item]);
@@ -505,21 +525,79 @@ const DetailsPage = () => {
 
   if (!item) return <div className="text-center py-20 text-slate-400">Carregando detalhes...</div>;
   
-  const childPrice = item.priceChild || 0;
-  const petFee = item.petFee || 0;
-  const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee);
+  // Recalcula preços extras (Criança e Pet) baseados no dia
+  let childPrice = Number(item.priceChild || 0);
+  let petFee = Number(item.petFee || 0);
   
-  const handleBook = () => navigate('/checkout', { state: { bookingData: { item, date, adults, children, pets, total, priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } } } });
+  if (date && item.weeklyPrices) {
+      const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+      const dayConfig = item.weeklyPrices[dayOfWeek];
+      if (typeof dayConfig === 'object') {
+          if (dayConfig.child) childPrice = Number(dayConfig.child);
+          if (dayConfig.pet) petFee = Number(dayConfig.pet);
+      }
+  }
+
+  const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee);
+  const showPets = item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita') || petFee > 0;
+  
+  const handleBook = () => navigate('/checkout', { 
+      state: { 
+          bookingData: { 
+              item, date, adults, children, pets, total, 
+              priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
+          } 
+      } 
+  });
 
   const BookingBox = () => (
     <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
        <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">A partir de</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-       <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data: {date.split('-').reverse().join('/')}</p>}</div>
+       <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data: {date.split('-').reverse().join('/')}</p>}</div>
+       
        <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-         <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400">Acima de {item.adultAgeStart || 12} anos</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
-         <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400">{item.childAgeStart || 2} a {item.childAgeEnd || 11} anos</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div></div>
-         {item.petAllowed && <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-[#0097A8] font-bold">{item.petSize || 'Pequeno'}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div></div>}
+         
+         {/* Adultos */}
+         <div className="flex justify-between items-center">
+             <div>
+                 <span className="text-sm font-medium text-slate-700 block">Adultos</span>
+                 <span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span>
+                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span>
+             </div>
+             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div>
+         </div>
+         
+         {/* Crianças */}
+         <div className="flex justify-between items-center">
+             <div>
+                 <span className="text-sm font-medium text-slate-700 block">Crianças</span>
+                 <span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span>
+                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span>
+             </div>
+             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div>
+         </div>
+         
+         {/* Pets */}
+         {showPets && (
+             <div className="flex justify-between items-center">
+                 <div>
+                     <span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span>
+                     <span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span>
+                     <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span>
+                 </div>
+                 <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div>
+             </div>
+         )}
        </div>
+
+       {/* Política de Gratuidade */}
+       {item.gratuitousness && (
+           <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800">
+               <span className="font-bold block mb-1">🎁 Gratuidade:</span>
+               {item.gratuitousness}
+           </div>
+       )}
+
        <div className="pt-4 border-t border-dashed border-slate-200">
           <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
           <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
@@ -528,21 +606,14 @@ const DetailsPage = () => {
     </div>
   );
 
-return (
+  return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
-            
-            {/* 1. TÍTULO E LOCALIZAÇÃO (Movido para cima da galeria) */}
-            <div>
-               <h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1>
-               <p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p>
-            </div>
-
-            {/* 2. GALERIA DE FOTOS */}
+            <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}>
                <div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div>
                <div className="col-span-1 grid grid-rows-2 gap-3 h-full">
@@ -550,29 +621,23 @@ return (
                   <div className="relative overflow-hidden h-full"><img src={item.image3 || item.image} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div>
                </div>
             </div>
-            
-            {/* 3. CONTEÚDO (Sobre, Regras, etc.) */}
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
                {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
-               
                <div className="grid md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
                   <div><h4 className="font-bold text-[#0097A8] mb-3 flex items-center gap-2"><CheckCircle size={18}/> Incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.includedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
                   <div><h4 className="font-bold text-red-500 mb-3 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.notIncludedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
                </div>
-               
                <div className="pt-4 border-t border-slate-100">
                   <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4>
                   <p className="text-slate-600 text-sm whitespace-pre-line bg-slate-50 p-4 rounded-xl">{item.usageRules || "Sem regras específicas."}</p>
                </div>
-               
                <div className="pt-4 border-t border-slate-100">
                   <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><AlertCircle size={18} className="text-orange-500"/> Cancelamento e Reembolso</h4>
                   <p className="text-slate-600 text-sm whitespace-pre-line bg-orange-50 p-4 rounded-xl">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
                </div>
             </div>
          </div>
-         
          <div className="lg:col-span-1 h-fit sticky top-24">
             <BookingBox />
          </div>
@@ -586,20 +651,20 @@ const CheckoutPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
-  
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [partnerToken, setPartnerToken] = useState(null);
   
-  // Lógica de Cupom e Totais
+  // Lógica de Cupom
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
-  const [finalTotal, setFinalTotal] = useState(bookingData ? bookingData.total : 0);
+  const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
+  const [couponMsg, setCouponMsg] = useState(null); // Novo estado para mensagens de cupom
 
-  // States do Formulário Transparente
-  const [paymentMethod, setPaymentMethod] = useState('card'); // 'card' | 'pix'
+  // States para o formulário manual de cartão
+  const [paymentMethod, setPaymentMethod] = useState('card'); 
   const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
   const [cardExpiry, setCardExpiry] = useState(''); 
@@ -609,25 +674,17 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
-  // Pix Modal
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
-    
-    // Busca o token do parceiro para o split
     const fetchOwner = async () => {
-        if (bookingData.item.ownerId) {
-            const docRef = doc(db, "users", bookingData.item.ownerId);
-            const snap = await getDoc(docRef);
-            if(snap.exists() && snap.data().mp_access_token) {
-                setPartnerToken(snap.data().mp_access_token);
-            }
-        }
+        const docRef = doc(db, "users", bookingData.item.ownerId);
+        const snap = await getDoc(docRef);
+        if(snap.exists() && snap.data().mp_access_token) setPartnerToken(snap.data().mp_access_token);
     };
     fetchOwner();
-    
     const unsub = onAuthStateChanged(auth, u => setUser(u));
     return unsub;
   }, []);
@@ -635,17 +692,23 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      if (!bookingData.item.coupons) { alert("Este local não possui cupons ativos."); return; }
+      setCouponMsg(null); // Limpa msg anterior
+      if (!bookingData.item.coupons) { 
+          setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
+          return; 
+      }
+      
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+      
       if(found) {
         const discountVal = (bookingData.total * found.percentage) / 100;
         setDiscount(discountVal);
         setFinalTotal(bookingData.total - discountVal);
-        alert(`Cupom ${found.code} aplicado! Desconto de ${found.percentage}%`);
+        setCouponMsg({ type: 'success', text: `Cupom ${found.code} aplicado com ${found.percentage}% de desconto` });
       } else {
-        alert("Cupom inválido ou expirado.");
         setDiscount(0);
         setFinalTotal(bookingData.total);
+        setCouponMsg({ type: 'error', text: "Cupom inválido ou expirado." });
       }
   };
 
@@ -656,11 +719,12 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  const handleConfirm = async () => {
+const handleConfirm = async () => {
     await addDoc(collection(db, "reservations"), {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
+      couponCode: couponCode ? couponCode.toUpperCase() : null, // <--- ADICIONADO: Salva o código usado
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -673,19 +737,16 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-     // Validação de segurança do Split
      if(!partnerToken) { 
-        if(confirm("MODO TESTE (MVP): O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
+        if(confirm("MODO TESTE: O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
             handleConfirm();
             return;
         }
-        alert("Erro: O estabelecimento precisa conectar a conta do Mercado Pago para receber.");
         return; 
      }
      
      setProcessing(true);
      try {
-       // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
@@ -693,19 +754,12 @@ const CheckoutPage = () => {
              body: JSON.stringify({ 
                 payment_method_id: 'pix', 
                 transaction_amount: Number(finalTotal),
-                description: `Day Use - ${bookingData.item.name}`,
-                payer: { 
-                    email: user.email, 
-                    first_name: user.displayName?.split(' ')[0] || "Viajante", 
-                    identification: { type: docType, number: docNumber } 
-                },
-                partnerAccessToken: partnerToken, // Token para Split
-                amount: finalTotal
+                installments: 1,
+                payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
+                partnerAccessToken: partnerToken
              }) 
           });
-          
           const result = await response.json();
-          
           if(result.status === 'pending' && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
              setProcessing(false);
@@ -717,64 +771,45 @@ const CheckoutPage = () => {
           return;
        }
 
-       // --- FLUXO CARTÃO (CHECKOUT TRANSPARENTE) ---
-       // 1. Gera o Token do Cartão no Front-end (Segurança)
        const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
        const [month, year] = cardExpiry.split('/');
-       
        const tokenParams = {
           cardNumber: cardNumber.replace(/\s/g, ''),
           cardholderName: cardName,
           cardExpirationMonth: month,
-          cardExpirationYear: '20' + year, // Assume 20xx
+          cardExpirationYear: '20' + year,
           securityCode: cardCvv,
           identification: { type: docType, number: docNumber }
        };
-
        const tokenObj = await mp.createCardToken(tokenParams);
-       
-       // 2. Envia Token + Dados para sua API (que fará o Split)
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
              token: tokenObj.id,
-             issuer_id: "visa", // Em produção, usar mp.getIssuers() para dinamismo
-             payment_method_id: "visa", // Em produção, usar mp.getPaymentMethods()
+             issuer_id: "visa", 
+             payment_method_id: "visa", 
              transaction_amount: Number(finalTotal),
              installments: Number(installments),
-             description: `Day Use - ${bookingData.item.name}`,
-             payer: { 
-                 email: user.email, 
-                 first_name: user.displayName?.split(' ')[0] || "Viajante",
-                 identification: { type: docType, number: docNumber } 
-             },
-             partnerAccessToken: partnerToken, // OBRIGATÓRIO PARA SPLIT
-             amount: finalTotal
+             payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
+             partnerAccessToken: partnerToken
           }) 
        });
-
        const result = await response.json();
-       
-       if(result.status === 'approved' || result.status === 'in_process') {
-           handleConfirm();
-       } else { 
-           alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
-           setProcessing(false); 
-       }
-
+       if(result.status === 'approved' || result.status === 'in_process') handleConfirm();
+       else { alert("Pagamento recusado: " + (result.message || "Verifique os dados")); setProcessing(false); }
      } catch (err) {
         console.error(err);
-        alert("Erro ao processar pagamento. Verifique os dados.");
-        setProcessing(false);
+        if(confirm("Erro na comunicação com MP. Simular sucesso para teste?")) handleConfirm();
+        else setProcessing(false);
      }
   };
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
-      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado!" message="Sua reserva foi confirmada. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos"/>
+      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Tudo Certo!" message="Sua reserva foi confirmada." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
       <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={handleConfirm} />
-      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
+      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false); setExpanded(true);}} hideRoleSelection={true} />
       
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
@@ -790,14 +825,15 @@ const CheckoutPage = () => {
                </div>
             ) : (
                <div className="text-center py-8">
+                  <div className="bg-teal-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-teal-600"><User size={32}/></div>
                   <h3 className="font-bold text-slate-900 mb-2">Para continuar, identifique-se</h3>
                   <Button onClick={()=>setShowLogin(true)} className="w-full justify-center">Entrar ou Cadastrar</Button>
                </div>
             )}
           </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento Seguro</h3>
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
+             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              
              {/* Abas de Método */}
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
@@ -824,14 +860,13 @@ const CheckoutPage = () => {
                </div>
              )}
              
-             <Button className="w-full py-4 mt-6 text-lg" onClick={processCardPayment} disabled={processing}>
+             <Button className="w-full py-4 mt-6 text-lg" onClick={processCardPayment} disabled={loading || processing}>
                  {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Pagar ${formatBRL(finalTotal)}`)}
              </Button>
              <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
           </div>
         </div>
 
-        {/* Resumo do Pedido (Lateral) */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
@@ -848,9 +883,16 @@ const CheckoutPage = () => {
                   )}
 
                   <div className="flex gap-2 pt-2">
-                     <input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
+                     <input className="border p-2 rounded-lg flex-1 text-xs" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
+
+                  {/* MENSAGEM DO CUPOM (Feedback Visual) */}
+                  {couponMsg && (
+                      <div className={`text-xs p-2 rounded text-center font-medium ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {couponMsg.text}
+                      </div>
+                  )}
 
                   <div className="flex justify-between pt-4 border-t border-slate-100"><span className="font-bold text-lg">Total</span><span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span></div>
               </div>
@@ -1057,17 +1099,8 @@ const PartnerDashboard = () => {
   }, []);
   
   const handleConnect = () => {
-     // Garante que a URL base seja a atual do navegador (com ou sem www)
-     const currentBaseUrl = window.location.origin;
-     const redirect = `${currentBaseUrl}/partner/callback`;
-     
-     // Codifica a URL para evitar erros de caracteres especiais
-     const encodedRedirect = encodeURIComponent(redirect);
-     const clientId = import.meta.env.VITE_MP_CLIENT_ID;
-
-     console.log("Tentando conectar com:", { clientId, redirect }); // Debug no console
-
-     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
+     const redirect = `${BASE_URL}/partner/callback`;
+     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${import.meta.env.VITE_MP_CLIENT_ID}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${redirect}`;
   };
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
@@ -1075,14 +1108,10 @@ const PartnerDashboard = () => {
   // Filtragem Financeira
   const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
-  const pendingBalance = totalBalance; // 100% para o parceiro no MVP (pagamento direto)
+  const pendingBalance = totalBalance; 
 
   // Filtragem Operacional (Check-in)
-  // Correção: Adicionado (r.guestName || "Viajante") para evitar erro com reservas antigas sem nome
-  const dailyGuests = reservations.filter(r => 
-      r.date === filterDate && 
-      (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
   const dailyStats = dailyGuests.reduce((acc, curr) => ({
       adults: acc.adults + (curr.adults || 0),
       children: acc.children + (curr.children || 0),
@@ -1090,10 +1119,16 @@ const PartnerDashboard = () => {
       total: acc.total + (curr.adults || 0) + (curr.children || 0)
   }), { adults: 0, children: 0, pets: 0, total: 0 });
 
-  
-
-  // Cupons Stats
+  // Lógica de Cupons Detalhada
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
+  const couponBreakdown = reservations.reduce((acc, r) => {
+      if (r.discount > 0) {
+          // Se for venda antiga sem código salvo, mostra como "Outros"
+          const code = r.couponCode || "OUTROS"; 
+          acc[code] = (acc[code] || 0) + 1;
+      }
+      return acc;
+  }, {});
 
   const handleValidate = async (resId, codeInput) => {
      if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase()) {
@@ -1108,8 +1143,6 @@ const PartnerDashboard = () => {
   const handleScan = () => {
       const code = prompt("Simulação de Câmera: Digite o código do QR Code:");
       if (code) {
-          // No mundo real, o QR Code conteria o ID completo da reserva
-          // Aqui simulamos buscando a reserva pelo ID
           const res = reservations.find(r => r.id === code);
           if (res) handleValidate(res.id, res.id.slice(0,6));
           else alert("Reserva não encontrada.");
@@ -1140,12 +1173,26 @@ const PartnerDashboard = () => {
                  <p className="text-sm text-green-700 font-bold uppercase">Total Vendido</p>
                  <p className="text-4xl font-bold text-green-700">{formatBRL(totalBalance)}</p>
               </div>
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
-                 <div>
-                    <p className="text-sm text-slate-500 font-bold uppercase">Cupons Usados</p>
-                    <p className="text-4xl font-bold text-slate-900">{allCouponsUsed}</p>
+              
+              {/* Card de Cupons Melhorado */}
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                 <div className="flex justify-between items-start">
+                    <div>
+                        <p className="text-sm text-slate-500 font-bold uppercase">Cupons Usados</p>
+                        <p className="text-4xl font-bold text-slate-900">{allCouponsUsed}</p>
+                    </div>
+                    <Tag className="text-slate-300" size={48}/>
                  </div>
-                 <Tag className="text-slate-300" size={48}/>
+                 {/* Lista Detalhada */}
+                 <div className="mt-4 pt-4 border-t border-slate-200 space-y-1">
+                    {Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400">Nenhum cupom usado ainda.</p>}
+                    {Object.entries(couponBreakdown).map(([code, count]) => (
+                        <div key={code} className="flex justify-between text-xs text-slate-600">
+                            <span className="font-bold bg-white px-1 rounded border border-slate-200">{code}</span>
+                            <span>{count}x</span>
+                        </div>
+                    ))}
+                 </div>
               </div>
            </div>
         </div>
@@ -1233,20 +1280,30 @@ const PartnerNew = () => {
   const [cepLoading, setCepLoading] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
 
-  // States Novos
+  // States Novos e Ajustados
   const [coupons, setCoupons] = useState([]); 
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPerc, setNewCouponPerc] = useState('');
   const [dailyStock, setDailyStock] = useState({ adults: 50, children: 20, pets: 5 });
+  
+  // Novo formato de preços semanais: { 0: { adult: 50, child: 25, pet: 10 }, ... }
   const [weeklyPrices, setWeeklyPrices] = useState({});
+  const [cnpjError, setCnpjError] = useState(false);
 
   const [formData, setFormData] = useState({
     contactName: '', contactEmail: '', contactPhone: '', contactJob: '',
     cnpj: '', name: '', cep: '', street: '', number: '', district: '', city: '', state: '',
+    // Novos campos de contato do local
+    localEmail: '', localPhone: '', localWhatsapp: '',
     description: '', videoUrl: '', images: ['', '', '', '', '', ''],
-    priceAdult: '', priceChild: '', adultAgeStart: '12', childAgeStart: '2', childAgeEnd: '11',
-    availableDays: [0, 6], petAllowed: false, petSize: 'Pequeno porte', petFee: '',
+    // Preços Base (usados se não houver override no dia)
+    priceAdult: '', priceChild: '', petFee: '',
+    // Faixas Etárias e Regras
+    adultAgeStart: '12', 
+    childAgeStart: '2', childAgeEnd: '11',
     gratuitousness: '',
+    petAllowed: false, petSize: 'Pequeno porte',
+    availableDays: [0, 6], // Dias ativos (0=Dom, 1=Seg...)
     includedItems: '', notIncludedItems: '', usageRules: '', cancellationPolicy: '', observations: ''
   });
 
@@ -1254,7 +1311,7 @@ const PartnerNew = () => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
            setUser(u);
-           if (!id) setFormData(prev => ({ ...prev, contactName: u.displayName, contactEmail: u.email }));
+           if (!id) setFormData(prev => ({ ...prev, contactName: u.displayName || '', contactEmail: u.email }));
         } else navigate('/');
      });
      if (id) {
@@ -1284,8 +1341,30 @@ const PartnerNew = () => {
     }
   };
 
+  const handleCnpjChange = (e) => {
+      const val = e.target.value;
+      setFormData({...formData, cnpj: val});
+      // Validação visual simples de tamanho
+      const nums = val.replace(/\D/g, '');
+      if (nums.length > 0 && nums.length !== 14) setCnpjError(true);
+      else setCnpjError(false);
+  };
+
   const handleImageChange = (index, value) => { const newImages = [...formData.images]; newImages[index] = value; setFormData({...formData, images: newImages}); };
-  const toggleDay = (d) => { if(formData.availableDays.includes(d)) setFormData({...formData, availableDays: formData.availableDays.filter(x=>x!==d)}); else setFormData({...formData, availableDays: [...formData.availableDays,d]}); };
+  
+  const toggleDay = (dayIndex) => { 
+      const newDays = formData.availableDays.includes(dayIndex) 
+          ? formData.availableDays.filter(d => d !== dayIndex)
+          : [...formData.availableDays, dayIndex];
+      setFormData({...formData, availableDays: newDays});
+  };
+
+  const handleWeeklyPriceChange = (dayIndex, field, value) => {
+      setWeeklyPrices(prev => ({
+          ...prev,
+          [dayIndex]: { ...prev[dayIndex], [field]: value }
+      }));
+  };
   
   const addCoupon = () => {
      if(newCouponCode && newCouponPerc) {
@@ -1303,6 +1382,7 @@ const PartnerNew = () => {
   const handleSubmit = async (e) => {
     e.preventDefault(); 
     if (!validateCNPJ(formData.cnpj)) { alert("CNPJ inválido (deve ter 14 dígitos)."); return; }
+    if (!formData.localWhatsapp) { alert("O WhatsApp do local é obrigatório para suporte ao cliente."); return; }
     
     setLoading(true);
     const dataToSave = { 
@@ -1310,7 +1390,7 @@ const PartnerNew = () => {
         ownerId: user.uid, 
         coupons, 
         dailyStock, 
-        weeklyPrices,
+        weeklyPrices, // Salva a tabela de preços
         priceAdult: Number(formData.priceAdult), 
         slug: generateSlug(formData.name), 
         updatedAt: new Date() 
@@ -1323,16 +1403,16 @@ const PartnerNew = () => {
     } catch (err) { alert("Erro ao salvar."); } finally { setLoading(false); }
   };
 
-  const weekDays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const weekDays = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
   return (
-     <div className="max-w-3xl mx-auto py-12 px-4 animate-fade-in">
+     <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
         <h1 className="text-3xl font-bold mb-2 text-center text-slate-900">{id ? 'Editar Anúncio' : 'Cadastrar Novo Day Use'}</h1>
         <p className="text-center text-slate-500 mb-8">Preencha as informações com atenção para atrair mais viajantes.</p>
         
         <form onSubmit={handleSubmit} className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100 space-y-8">
            
-           {/* DADOS PESSOAIS */}
+           {/* 1. DADOS PESSOAIS */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
                   <h3 className="font-bold text-lg text-[#0097A8]">1. Dados do Responsável</h3>
@@ -1342,16 +1422,16 @@ const PartnerNew = () => {
               <div className="grid grid-cols-2 gap-4">
                  <div>
                      <label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label>
-                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-600" value={formData.contactName} readOnly />
+                     <input className="w-full border p-3 rounded-xl" value={formData.contactName} onChange={e=>setFormData({...formData, contactName: e.target.value})} placeholder="Seu nome" />
                  </div>
                  <div>
                      <label className="text-sm font-bold text-slate-700 block mb-1">E-mail de Cadastro</label>
-                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-600" value={formData.contactEmail} readOnly />
+                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-500" value={formData.contactEmail} readOnly />
                  </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                  <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">WhatsApp / Telefone</label>
+                     <label className="text-sm font-bold text-slate-700 block mb-1">Telefone Pessoal</label>
                      <input className="w-full border p-3 rounded-xl" placeholder="(00) 00000-0000" value={formData.contactPhone} onChange={e=>setFormData({...formData, contactPhone: e.target.value})} required/>
                  </div>
                  <div>
@@ -1369,21 +1449,43 @@ const PartnerNew = () => {
               </div>
            </div>
            
-           {/* DADOS DA EMPRESA */}
+           {/* 2. DADOS DA EMPRESA E LOCAL */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
                   <h3 className="font-bold text-lg text-[#0097A8]">2. Dados do Local</h3>
-                  <p className="text-xs text-slate-500">Informações principais do estabelecimento.</p>
+                  <p className="text-xs text-slate-500">Informações públicas do estabelecimento.</p>
               </div>
 
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">CNPJ</label>
-                  <input className="w-full border p-3 rounded-xl" placeholder="Apenas números" value={formData.cnpj} onChange={e=>setFormData({...formData, cnpj: e.target.value})} required/>
-                  <p className="text-[10px] text-slate-400 mt-1">O CNPJ será verificado para garantir a segurança da plataforma.</p>
+              <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                      <label className="text-sm font-bold text-slate-700 block mb-1">CNPJ</label>
+                      <input className={`w-full border p-3 rounded-xl ${cnpjError ? 'border-red-300 bg-red-50' : ''}`} placeholder="Apenas números" value={formData.cnpj} onChange={handleCnpjChange} required/>
+                      {cnpjError && <p className="text-xs text-red-500 mt-1">CNPJ deve ter 14 dígitos.</p>}
+                      {!cnpjError && formData.cnpj.length === 14 && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle size={10}/> Formato válido</p>}
+                  </div>
+                  <div>
+                      <label className="text-sm font-bold text-slate-700 block mb-1">Nome do Local (Fantasia)</label>
+                      <input className="w-full border p-3 rounded-xl" placeholder="Ex: Pousada Recanto das Águas" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} required/>
+                  </div>
               </div>
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Nome do Local (Fantasia)</label>
-                  <input className="w-full border p-3 rounded-xl" placeholder="Ex: Pousada Recanto das Águas" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} required/>
+
+              {/* Contatos do Local */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <p className="text-sm font-bold text-slate-700 mb-3">Contatos de Suporte ao Cliente</p>
+                  <div className="grid md:grid-cols-3 gap-4">
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 block mb-1">WhatsApp (Obrigatório)</label>
+                          <input className="w-full border p-2 rounded-lg" placeholder="(00) 00000-0000" value={formData.localWhatsapp} onChange={e=>setFormData({...formData, localWhatsapp: e.target.value})} required/>
+                      </div>
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 block mb-1">Telefone Fixo</label>
+                          <input className="w-full border p-2 rounded-lg" placeholder="(00) 0000-0000" value={formData.localPhone} onChange={e=>setFormData({...formData, localPhone: e.target.value})} />
+                      </div>
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 block mb-1">E-mail de Suporte</label>
+                          <input className="w-full border p-2 rounded-lg" placeholder="contato@local.com" value={formData.localEmail} onChange={e=>setFormData({...formData, localEmail: e.target.value})} />
+                      </div>
+                  </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4">
@@ -1412,15 +1514,15 @@ const PartnerNew = () => {
               </div>
            </div>
 
-           {/* SOBRE O DAY USE */}
+           {/* 3. SOBRE O DAY USE */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
                   <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3>
-                  <p className="text-xs text-slate-500">Venda seu peixe! Descreva o que torna seu local incrível.</p>
+                  <p className="text-xs text-slate-500">Descrição e imagens.</p>
               </div>
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-1">Descrição Completa</label>
-                  <textarea className="w-full border p-3 rounded-xl h-32" placeholder="Fale sobre as atrações, ambiente, piscinas, trilhas..." value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} required/>
+                  <textarea className="w-full border p-3 rounded-xl h-32" placeholder="Fale sobre as atrações..." value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} required/>
               </div>
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-1">Vídeo do YouTube (Opcional)</label>
@@ -1429,42 +1531,90 @@ const PartnerNew = () => {
               
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-2">Galeria de Fotos (Links)</label>
-                  <p className="text-xs text-slate-400 mb-2">Cole links diretos de imagens (terminados em .jpg ou .png). A primeira será a capa.</p>
-                  {formData.images.map((img, i) => (
-                    <div key={i} className="mb-2">
-                        <input className="w-full border p-2 rounded-lg text-sm" placeholder={i === 0 ? `URL da Foto Principal (Capa)` : `URL da Foto ${i+1}`} value={img} onChange={e=>handleImageChange(i, e.target.value)} required={i===0}/>
-                    </div>
-                  ))}
+                  <div className="grid gap-2">
+                    {formData.images.map((img, i) => (
+                        <input key={i} className="w-full border p-2 rounded-lg text-sm" placeholder={i === 0 ? `URL da Foto Principal (Capa)` : `URL da Foto ${i+1}`} value={img} onChange={e=>handleImageChange(i, e.target.value)} required={i===0}/>
+                    ))}
+                  </div>
               </div>
            </div>
            
-           {/* FUNCIONAMENTO E PREÇOS */}
-           <div className="space-y-4">
+           {/* 4. FUNCIONAMENTO E PREÇOS (TABELA) */}
+           <div className="space-y-6">
               <div className="border-b pb-2 mb-4">
                   <h3 className="font-bold text-lg text-[#0097A8]">4. Funcionamento e Valores</h3>
-                  <p className="text-xs text-slate-500">Defina quando abre, quanto custa e a capacidade.</p>
+                  <p className="text-xs text-slate-500">Defina os dias e preços específicos.</p>
+              </div>
+
+              {/* Tabela de Dias e Preços */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left text-slate-600 border rounded-xl overflow-hidden">
+                    <thead className="text-xs text-slate-700 uppercase bg-slate-100">
+                        <tr>
+                            <th className="px-4 py-3">Dia</th>
+                            <th className="px-4 py-3">Adulto (R$)</th>
+                            <th className="px-4 py-3">Criança (R$)</th>
+                            <th className="px-4 py-3">Pet (R$)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {weekDays.map((day, index) => {
+                            const isActive = formData.availableDays.includes(index);
+                            return (
+                                <tr key={index} className={`border-b ${isActive ? 'bg-white' : 'bg-slate-50 opacity-60'}`}>
+                                    <td className="px-4 py-3 font-medium text-slate-900 flex items-center gap-2">
+                                        <input type="checkbox" checked={isActive} onChange={() => toggleDay(index)} className="accent-[#0097A8] w-4 h-4"/>
+                                        {day}
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input 
+                                            disabled={!isActive}
+                                            className="border p-2 rounded w-24" 
+                                            placeholder="Padrão" 
+                                            type="number"
+                                            value={weeklyPrices[index]?.adult || ''}
+                                            onChange={(e) => handleWeeklyPriceChange(index, 'adult', e.target.value)}
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input 
+                                            disabled={!isActive}
+                                            className="border p-2 rounded w-24" 
+                                            placeholder="Padrão" 
+                                            type="number"
+                                            value={weeklyPrices[index]?.child || ''}
+                                            onChange={(e) => handleWeeklyPriceChange(index, 'child', e.target.value)}
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input 
+                                            disabled={!isActive}
+                                            className="border p-2 rounded w-24" 
+                                            placeholder="Padrão" 
+                                            type="number"
+                                            value={weeklyPrices[index]?.pet || ''}
+                                            onChange={(e) => handleWeeklyPriceChange(index, 'pet', e.target.value)}
+                                        />
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
               </div>
               
-              <div className="bg-slate-50 p-4 rounded-xl mb-4 border border-slate-200">
-                 <label className="text-sm font-bold text-slate-700 block mb-2">Dias da Semana que Funciona</label>
-                 <div className="flex gap-2 flex-wrap mb-4">
-                     {weekDays.map((day, index) => (
-                        <div key={index} className="flex flex-col gap-1 items-center">
-                            <button key={day} type="button" onClick={() => toggleDay(index)} className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${formData.availableDays.includes(index) ? 'bg-[#0097A8] text-white shadow-md' : 'bg-white text-slate-400 hover:bg-slate-100 border'}`}>{day}</button>
-                            {formData.availableDays.includes(index) && (
-                                <input 
-                                    className="w-16 p-1 text-xs border rounded text-center" 
-                                    placeholder="Preço R$"
-                                    type="number"
-                                    title="Preço específico para este dia (opcional)"
-                                    value={weeklyPrices[index] || ''}
-                                    onChange={(e) => setWeeklyPrices({...weeklyPrices, [index]: e.target.value})}
-                                />
-                            )}
-                        </div>
-                     ))}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                 <p className="text-sm font-bold text-slate-700 mb-2">Preços Padrão (Base)</p>
+                 <p className="text-xs text-slate-500 mb-4">Esses valores serão usados caso você deixe os campos da tabela acima vazios.</p>
+                 <div className="grid grid-cols-3 gap-4">
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Adulto Base (R$)" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Criança Base (R$)" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Pet Base (R$)" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
                  </div>
-                 
+              </div>
+
+              {/* Capacidade */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                  <label className="text-sm font-bold text-slate-700 block mb-2">Capacidade Diária (Estoque)</label>
                  <div className="flex gap-4">
                     <div className="w-full">
@@ -1482,70 +1632,52 @@ const PartnerNew = () => {
                  </div>
               </div>
 
-              {/* Tabela de Preços e Idades */}
-              <div className="grid grid-cols-2 gap-4">
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Preço Base Adulto (R$)</label>
-                     <input className="w-full border p-3 rounded-xl" type="number" placeholder="0,00" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
-                 </div>
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Considerar Adulto a partir de:</label>
-                     <div className="flex items-center"><input className="w-full border p-3 rounded-xl" type="number" value={formData.adultAgeStart} onChange={e=>setFormData({...formData, adultAgeStart: e.target.value})} /><span className="ml-2 text-sm text-slate-500">anos</span></div>
-                 </div>
-              </div>
-              
-              <div className="grid grid-cols-3 gap-4">
-                 <div className="col-span-1">
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Preço Criança (R$)</label>
-                     <input className="w-full border p-3 rounded-xl" type="number" placeholder="0,00" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
-                 </div>
-                 <div className="col-span-2 grid grid-cols-2 gap-2">
-                    <div>
-                        <label className="text-sm font-bold text-slate-700 block mb-1">Idade Mín.</label>
-                        <input className="w-full border p-3 rounded-xl" type="number" placeholder="Ex: 5" value={formData.childAgeStart} onChange={e=>setFormData({...formData, childAgeStart: e.target.value})}/>
-                    </div>
-                    <div>
-                        <label className="text-sm font-bold text-slate-700 block mb-1">Idade Máx.</label>
-                        <input className="w-full border p-3 rounded-xl" type="number" placeholder="Ex: 11" value={formData.childAgeEnd} onChange={e=>setFormData({...formData, childAgeEnd: e.target.value})}/>
-                    </div>
-                 </div>
-              </div>
-              
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Política de Gratuidade</label>
-                  <input className="w-full border p-3 rounded-xl" placeholder="Ex: Crianças até 4 anos e idosos acima de 80 não pagam." value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Aceita Pets? Qual porte?</label>
-                      <select className="w-full border p-3 rounded-xl bg-white" value={formData.petSize} onChange={e=>setFormData({...formData, petSize: e.target.value})}>
-                          <option>Não aceita</option>
-                          <option>Pequeno porte</option>
-                          <option>Médio porte</option>
-                          <option>Grande porte</option>
-                          <option>Qualquer porte</option>
-                      </select>
+              {/* Regras de Idade e Gratuidade */}
+              <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                      <label className="text-sm font-bold text-slate-700">Regras de Idade</label>
+                      <div className="flex items-center gap-2">
+                          <span className="text-sm text-slate-600">Adulto: Acima de</span>
+                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.adultAgeStart} onChange={e=>setFormData({...formData, adultAgeStart: e.target.value})} />
+                          <span className="text-sm text-slate-600">anos</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                          <span className="text-sm text-slate-600">Criança: Entre</span>
+                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeStart} onChange={e=>setFormData({...formData, childAgeStart: e.target.value})} />
+                          <span className="text-sm text-slate-600">e</span>
+                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeEnd} onChange={e=>setFormData({...formData, childAgeEnd: e.target.value})} />
+                          <span className="text-sm text-slate-600">anos</span>
+                      </div>
                   </div>
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Preço por Pet (R$)</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="0,00" type="number" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
+                  
+                  <div className="space-y-3">
+                      <label className="text-sm font-bold text-slate-700">Pets e Gratuidade</label>
+                      <div>
+                          <span className="text-xs text-slate-500 block mb-1">Porte de Pet Aceito</span>
+                          <select className="border p-2 rounded w-full bg-white" value={formData.petSize} onChange={e=>setFormData({...formData, petSize: e.target.value})}>
+                              <option>Não aceita</option>
+                              <option>Pequeno</option>
+                              <option>Médio</option>
+                              <option>Grande</option>
+                              <option>Todos os portes</option>
+                          </select>
+                      </div>
+                      <div>
+                          <span className="text-xs text-slate-500 block mb-1">Política de Gratuidade</span>
+                          <input className="border p-2 rounded w-full" placeholder="Ex: Crianças até 2 anos free" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/>
+                      </div>
                   </div>
               </div>
 
               {/* CUPONS */}
-              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 mt-4">
-                 <div className="flex justify-between items-center mb-2">
-                    <label className="text-sm font-bold text-yellow-800">Criar Cupons de Desconto</label>
-                    <Tag size={16} className="text-yellow-600"/>
-                 </div>
+              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
+                 <p className="text-sm font-bold text-yellow-800 mb-2">Cupons de Desconto</p>
                  <div className="flex gap-2 mb-2">
                     <input className="border p-2 rounded-lg flex-1 text-sm uppercase" placeholder="CÓDIGO (Ex: VERAO10)" value={newCouponCode} onChange={e=>setNewCouponCode(e.target.value)} />
                     <input className="border p-2 rounded-lg w-24 text-sm" placeholder="Desconto %" type="number" value={newCouponPerc} onChange={e=>setNewCouponPerc(e.target.value)} />
                     <Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 hover:bg-yellow-700 border-none text-white">Adicionar</Button>
                  </div>
                  <div className="space-y-1">
-                    {coupons.length === 0 && <p className="text-xs text-yellow-600/60 italic">Nenhum cupom ativo.</p>}
                     {coupons.map((c, i) => (
                         <div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm">
                             <span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span>
@@ -1556,7 +1688,7 @@ const PartnerNew = () => {
               </div>
            </div>
 
-           {/* REGRAS E POLÍTICAS */}
+           {/* 5. UTILIZAÇÃO & REGRAS */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
                   <h3 className="font-bold text-lg text-[#0097A8]">5. Regras e Políticas</h3>
