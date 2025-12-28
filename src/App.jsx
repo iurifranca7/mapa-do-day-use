@@ -866,27 +866,84 @@ const PartnerCallbackPage = () => {
   const navigate = useNavigate();
   const code = searchParams.get('code');
   const [status, setStatus] = useState('processing'); 
+  
   useEffect(() => {
-    const exchangeToken = async () => {
-      if (!code || !auth.currentUser) { setStatus('error'); return; }
+    // Usamos o listener do Firebase para GARANTIR que o usuário foi carregado antes de processar
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!code) { 
+        setStatus('error'); 
+        return; 
+      }
+
+      // Se o Firebase terminou de carregar e não tem usuário, aí sim é erro
+      if (!user) {
+        console.error("Usuário não autenticado no retorno do callback.");
+        setStatus('error'); 
+        return; 
+      }
+
+      // Se temos usuário, prossegue com a troca do token
       try {
-        const res = await fetch('/api/exchange-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, redirectUri: `${BASE_URL}/partner/callback` }) });
+        // Pega a URL base dinamicamente (para funcionar com ou sem www)
+        const currentBaseUrl = window.location.origin;
+        const redirectUri = `${currentBaseUrl}/partner/callback`;
+
+        const res = await fetch('/api/exchange-token', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ code, redirectUri }) 
+        });
+        
         const data = await res.json();
+        
         if (res.ok) {
-          const userRef = doc(db, "users", auth.currentUser.uid);
-          await updateDoc(userRef, { mp_access_token: data.access_token, mp_user_id: data.user_id, mp_connected_at: new Date() });
-          setStatus('success'); setTimeout(() => navigate('/partner'), 2000);
-        } else { setStatus('error'); }
-      } catch (error) { setStatus('error'); }
-    };
-    exchangeToken();
+          const userRef = doc(db, "users", user.uid);
+          await updateDoc(userRef, { 
+              mp_access_token: data.access_token, 
+              mp_user_id: data.user_id, 
+              mp_connected_at: new Date() 
+          });
+          setStatus('success'); 
+          setTimeout(() => navigate('/partner'), 2000);
+        } else { 
+            console.error("Erro na troca de token:", data);
+            setStatus('error'); 
+        }
+      } catch (error) { 
+          console.error("Erro na requisição:", error);
+          setStatus('error'); 
+      }
+    });
+
+    // Limpa o listener ao desmontar
+    return () => unsubscribe();
   }, [code, navigate]);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-md w-full">
-        {status === 'processing' && <><div className="animate-spin w-12 h-12 border-4 border-[#0097A8] border-t-transparent rounded-full mx-auto mb-4"></div><h2 className="text-xl font-bold">Conectando...</h2></>}
-        {status === 'success' && <><CheckCircle size={32} className="text-green-600 mx-auto mb-4"/><h2 className="text-xl font-bold">Conta Conectada!</h2></>}
-        {status === 'error' && <><X size={32} className="text-red-600 mx-auto mb-4"/><h2 className="text-xl font-bold">Erro na Conexão</h2><Button onClick={()=>navigate('/partner')}>Voltar</Button></>}
+        {status === 'processing' && (
+            <>
+                <div className="animate-spin w-12 h-12 border-4 border-[#0097A8] border-t-transparent rounded-full mx-auto mb-4"></div>
+                <h2 className="text-xl font-bold">Conectando sua conta...</h2>
+                <p className="text-slate-500 text-sm mt-2">Estamos finalizando a configuração.</p>
+            </>
+        )}
+        {status === 'success' && (
+            <>
+                <CheckCircle size={32} className="text-green-600 mx-auto mb-4"/>
+                <h2 className="text-xl font-bold">Conta Conectada!</h2>
+                <p className="text-slate-500 text-sm mt-2">Redirecionando para o painel...</p>
+            </>
+        )}
+        {status === 'error' && (
+            <>
+                <X size={32} className="text-red-600 mx-auto mb-4"/>
+                <h2 className="text-xl font-bold">Erro na Conexão</h2>
+                <p className="text-slate-500 text-sm mt-2 mb-4">Não foi possível vincular sua conta do Mercado Pago.</p>
+                <Button onClick={()=>navigate('/partner')}>Voltar ao Painel</Button>
+            </>
+        )}
       </div>
     </div>
   );
