@@ -586,45 +586,39 @@ const CheckoutPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
+  
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [partnerToken, setPartnerToken] = useState(null);
   
-  // Lógica de Cupom
+  // Lógica de Cupom e Totais
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
-  const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-
-  // States para o formulário manual de cartão
-  const [paymentMethod, setPaymentMethod] = useState('card'); 
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardName, setCardName] = useState('');
-  const [cardExpiry, setCardExpiry] = useState(''); 
-  const [cardCvv, setCardCvv] = useState('');
-  const [docType, setDocType] = useState('CPF');
-  const [docNumber, setDocNumber] = useState('');
-  const [installments, setInstallments] = useState(1);
-  const [processing, setProcessing] = useState(false);
-  
-  const [showPixModal, setShowPixModal] = useState(false);
-  const [pixData, setPixData] = useState(null);
+  const [finalTotal, setFinalTotal] = useState(bookingData ? bookingData.total : 0);
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
+    
+    // Busca o token do parceiro para o split
     const fetchOwner = async () => {
-        const docRef = doc(db, "users", bookingData.item.ownerId);
-        const snap = await getDoc(docRef);
-        if(snap.exists() && snap.data().mp_access_token) setPartnerToken(snap.data().mp_access_token);
+        if (bookingData.item.ownerId) {
+            const docRef = doc(db, "users", bookingData.item.ownerId);
+            const snap = await getDoc(docRef);
+            if(snap.exists() && snap.data().mp_access_token) {
+                setPartnerToken(snap.data().mp_access_token);
+            }
+        }
     };
     fetchOwner();
+    
     const unsub = onAuthStateChanged(auth, u => setUser(u));
     return unsub;
   }, []);
 
   if (!bookingData) return null;
 
+  // Aplicação de Cupom
   const handleApplyCoupon = () => {
       if (!bookingData.item.coupons) { alert("Este local não possui cupons ativos."); return; }
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
@@ -635,16 +629,12 @@ const CheckoutPage = () => {
         alert(`Cupom ${found.code} aplicado! Desconto de ${found.percentage}%`);
       } else {
         alert("Cupom inválido ou expirado.");
+        setDiscount(0);
+        setFinalTotal(bookingData.total);
       }
   };
 
-  const handleExpiryChange = (e) => {
-    let value = e.target.value.replace(/\D/g, '');
-    if (value.length > 4) value = value.slice(0, 4);
-    if (value.length > 2) value = `${value.slice(0, 2)}/${value.slice(2)}`;
-    setCardExpiry(value);
-  };
-
+  // Salvar no Firebase após sucesso
   const handleConfirm = async () => {
     await addDoc(collection(db, "reservations"), {
       ...bookingData, 
@@ -657,89 +647,81 @@ const CheckoutPage = () => {
       guestName: user.displayName, 
       guestEmail: user.email
     });
-    setProcessing(false);
     setShowSuccess(true);
   };
 
-  const processCardPayment = async () => {
-     if(!partnerToken) { 
-        if(confirm("MODO TESTE: O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
-            handleConfirm();
-            return;
-        }
-        return; 
-     }
-     
-     setProcessing(true);
-     try {
-       if (paymentMethod === 'pix') {
-          const response = await fetch("/api/process-payment", { 
-             method: "POST", 
-             headers: { "Content-Type":"application/json" }, 
-             body: JSON.stringify({ 
-                payment_method_id: 'pix', 
-                transaction_amount: Number(finalTotal),
-                installments: 1,
-                payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
-                partnerAccessToken: partnerToken
-             }) 
-          });
-          const result = await response.json();
-          if(result.status === 'pending' && result.point_of_interaction) {
-             setPixData(result.point_of_interaction.transaction_data);
-             setProcessing(false);
-             setShowPixModal(true);
-          } else {
-             alert("Erro ao gerar Pix: " + (result.message || "Tente novamente"));
-             setProcessing(false);
-          }
-          return;
-       }
+  // Callback do Brick do Mercado Pago
+  // Callback do Brick do Mercado Pago (Versão Produção/Teste Real)
+  const onSubmit = async ({ formData }) => {
+    // Validação Real: Se não tem token, não pode processar o split.
+    if (!partnerToken) {
+       alert("Erro de Configuração: O estabelecimento (Parceiro) não conectou a conta do Mercado Pago para receber pagamentos.");
+       return Promise.reject(); // Avisa ao Brick que falhou
+    }
 
-       const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
-       const [month, year] = cardExpiry.split('/');
-       const tokenParams = {
-          cardNumber: cardNumber.replace(/\s/g, ''),
-          cardholderName: cardName,
-          cardExpirationMonth: month,
-          cardExpirationYear: '20' + year,
-          securityCode: cardCvv,
-          identification: { type: docType, number: docNumber }
-       };
-       const tokenObj = await mp.createCardToken(tokenParams);
-       const response = await fetch("/api/process-payment", { 
-          method: "POST", 
-          headers: { "Content-Type":"application/json" }, 
-          body: JSON.stringify({ 
-             token: tokenObj.id,
-             issuer_id: "visa", 
-             payment_method_id: "visa", 
-             transaction_amount: Number(finalTotal),
-             installments: Number(installments),
-             payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
-             partnerAccessToken: partnerToken
-          }) 
-       });
-       const result = await response.json();
-       if(result.status === 'approved' || result.status === 'in_process') handleConfirm();
-       else { alert("Pagamento recusado: " + (result.message || "Verifique os dados")); setProcessing(false); }
-     } catch (err) {
-        console.error(err);
-        if(confirm("Erro na comunicação com MP. Simular sucesso para teste?")) handleConfirm();
-        else setProcessing(false);
-     }
+    return new Promise((resolve, reject) => {
+      fetch("/api/process-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          formData, 
+          partnerAccessToken: partnerToken, 
+          amount: finalTotal 
+        }),
+      })
+      .then((response) => response.json())
+      .then((response) => {
+        if (response.status === 'approved' || response.status === 'in_process') {
+            handleConfirm();
+            resolve(); // Avisa ao Brick que foi sucesso
+        } else {
+            alert("Pagamento não aprovado: " + (response.detail || "Verifique os dados."));
+            reject(); // Avisa ao Brick que falhou
+        }
+      })
+      .catch((error) => {
+        console.error("Erro API:", error);
+        alert("Erro de comunicação com o servidor de pagamento.");
+        reject();
+      });
+    });
+  };
+
+  // Configuração Inicial do Brick
+  const initialization = {
+    amount: finalTotal, // Valor dinâmico (atualiza com cupom)
+    payer: {
+      email: user?.email || "email_generico@test.com",
+    },
+  };
+
+  const customization = {
+    paymentMethods: {
+      ticket: "all",
+      bankTransfer: "all",
+      creditCard: "all",
+      debitCard: "all",
+      mercadoPago: "all",
+    },
+    visual: {
+      style: {
+        theme: 'bootstrap', // Opções: 'default', 'dark', 'bootstrap', 'flat'
+      },
+      hidePaymentButton: false,
+    },
   };
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
-      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Tudo Certo!" message="Sua reserva foi confirmada." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
-      <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={handleConfirm} />
-      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false); setExpanded(true);}} hideRoleSelection={true} />
+      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado!" message="Sua reserva foi confirmada. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos"/>
+      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
+          
+          {/* Seção de Dados do Usuário */}
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
             {user ? (
@@ -750,48 +732,31 @@ const CheckoutPage = () => {
                </div>
             ) : (
                <div className="text-center py-8">
-                  <div className="bg-teal-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-teal-600"><User size={32}/></div>
                   <h3 className="font-bold text-slate-900 mb-2">Para continuar, identifique-se</h3>
                   <Button onClick={()=>setShowLogin(true)} className="w-full justify-center">Entrar ou Cadastrar</Button>
                </div>
             )}
           </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
+          {/* Seção de Pagamento (Brick) */}
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 overflow-hidden ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
+             <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CreditCard className="text-[#0097A8]"/> Pagamento Seguro</h3>
              
-             {/* Abas de Método */}
-             <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Cartão de Crédito</button>
-                 <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Pix</button>
-             </div>
-
-             {paymentMethod === 'card' ? (
-               <div className="space-y-4 animate-fade-in">
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
-                 <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
-                 </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
-               </div>
-             ) : (
-               <div className="text-center py-6 animate-fade-in">
-                  <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
-                  <p className="text-sm text-slate-600 mb-4">Ao clicar abaixo, geraremos um código QR para você pagar instantaneamente.</p>
-                  <div className="flex justify-center"><Badge type="green">Aprovação Imediata</Badge></div>
-               </div>
+             {user && (
+                 // A key={finalTotal} força o componente a recarregar se o valor mudar (cupom)
+                 <Payment
+                    key={finalTotal} 
+                    initialization={initialization}
+                    customization={customization}
+                    onSubmit={onSubmit}
+                 />
              )}
              
-             <Button className="w-full py-4 mt-6 text-lg" onClick={processCardPayment} disabled={loading || processing}>
-                 {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Pagar ${formatBRL(finalTotal)}`)}
-             </Button>
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
+             <p className="text-center text-xs text-slate-400 mt-6 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente criptografado pelo Mercado Pago</p>
           </div>
         </div>
 
+        {/* Resumo do Pedido (Lateral) */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
@@ -808,7 +773,7 @@ const CheckoutPage = () => {
                   )}
 
                   <div className="flex gap-2 pt-2">
-                     <input className="border p-2 rounded-lg flex-1 text-xs" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
+                     <input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
 
@@ -972,13 +937,19 @@ const PartnerDashboard = () => {
   const pendingBalance = totalBalance; // 100% para o parceiro no MVP (pagamento direto)
 
   // Filtragem Operacional (Check-in)
-  const dailyGuests = reservations.filter(r => r.date === filterDate && r.guestName.toLowerCase().includes(searchTerm.toLowerCase()));
+  // Correção: Adicionado (r.guestName || "Viajante") para evitar erro com reservas antigas sem nome
+  const dailyGuests = reservations.filter(r => 
+      r.date === filterDate && 
+      (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase())
+  );
   const dailyStats = dailyGuests.reduce((acc, curr) => ({
       adults: acc.adults + (curr.adults || 0),
       children: acc.children + (curr.children || 0),
       pets: acc.pets + (curr.pets || 0),
       total: acc.total + (curr.adults || 0) + (curr.children || 0)
   }), { adults: 0, children: 0, pets: 0, total: 0 });
+
+  
 
   // Cupons Stats
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
