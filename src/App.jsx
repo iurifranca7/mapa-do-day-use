@@ -925,8 +925,17 @@ const PartnerDashboard = () => {
   }, []);
   
   const handleConnect = () => {
-     const redirect = `${BASE_URL}/partner/callback`;
-     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${import.meta.env.VITE_MP_CLIENT_ID}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${redirect}`;
+     // Garante que a URL base seja a atual do navegador (com ou sem www)
+     const currentBaseUrl = window.location.origin;
+     const redirect = `${currentBaseUrl}/partner/callback`;
+     
+     // Codifica a URL para evitar erros de caracteres especiais
+     const encodedRedirect = encodeURIComponent(redirect);
+     const clientId = import.meta.env.VITE_MP_CLIENT_ID;
+
+     console.log("Tentando conectar com:", { clientId, redirect }); // Debug no console
+
+     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
   };
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
