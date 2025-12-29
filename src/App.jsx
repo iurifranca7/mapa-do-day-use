@@ -646,6 +646,8 @@ const DetailsPage = () => {
   );
 };
 
+// ... (mantenha os imports e códigos anteriores)
+
 const CheckoutPage = () => {
   useSEO("Pagamento", "Finalize sua reserva.", false);
   const navigate = useNavigate();
@@ -661,7 +663,7 @@ const CheckoutPage = () => {
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-  const [couponMsg, setCouponMsg] = useState(null); // Novo estado para mensagens de cupom
+  const [couponMsg, setCouponMsg] = useState(null);
 
   // States para o formulário manual de cartão
   const [paymentMethod, setPaymentMethod] = useState('card'); 
@@ -692,14 +694,12 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      setCouponMsg(null); // Limpa msg anterior
+      setCouponMsg(null); 
       if (!bookingData.item.coupons) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
       }
-      
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
-      
       if(found) {
         const discountVal = (bookingData.total * found.percentage) / 100;
         setDiscount(discountVal);
@@ -719,12 +719,11 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-const handleConfirm = async () => {
+  const handleConfirm = async () => {
     await addDoc(collection(db, "reservations"), {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null, // <--- ADICIONADO: Salva o código usado
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -747,16 +746,25 @@ const handleConfirm = async () => {
      
      setProcessing(true);
      try {
+       // --- CORREÇÃO AQUI (Pix empacotado em formData) ---
        if (paymentMethod === 'pix') {
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
-                payment_method_id: 'pix', 
-                transaction_amount: Number(finalTotal),
-                installments: 1,
-                payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
-                partnerAccessToken: partnerToken
+                // Empacotamos os dados dentro de 'formData' para casar com o backend
+                formData: {
+                    payment_method_id: 'pix', 
+                    transaction_amount: Number(finalTotal),
+                    installments: 1,
+                    payer: { 
+                        email: user.email, 
+                        first_name: user.displayName?.split(' ')[0] || "Viajante",
+                        identification: { type: docType, number: docNumber || '00000000000' } // Fallback básico se vazio
+                    }
+                },
+                partnerAccessToken: partnerToken,
+                amount: Number(finalTotal)
              }) 
           });
           const result = await response.json();
@@ -771,6 +779,7 @@ const handleConfirm = async () => {
           return;
        }
 
+       // --- CORREÇÃO AQUI (Cartão empacotado em formData) ---
        const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
        const [month, year] = cardExpiry.split('/');
        const tokenParams = {
@@ -782,17 +791,26 @@ const handleConfirm = async () => {
           identification: { type: docType, number: docNumber }
        };
        const tokenObj = await mp.createCardToken(tokenParams);
+       
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
-             token: tokenObj.id,
-             issuer_id: "visa", 
-             payment_method_id: "visa", 
-             transaction_amount: Number(finalTotal),
-             installments: Number(installments),
-             payer: { email: user.email, first_name: user.displayName?.split(' ')[0], identification: { type: docType, number: docNumber } },
-             partnerAccessToken: partnerToken
+             // Empacotamos os dados do cartão também
+             formData: {
+                 token: tokenObj.id,
+                 issuer_id: "visa", 
+                 payment_method_id: "visa", 
+                 transaction_amount: Number(finalTotal),
+                 installments: Number(installments),
+                 payer: { 
+                     email: user.email, 
+                     first_name: user.displayName?.split(' ')[0], 
+                     identification: { type: docType, number: docNumber } 
+                 }
+             },
+             partnerAccessToken: partnerToken,
+             amount: Number(finalTotal)
           }) 
        });
        const result = await response.json();
@@ -857,10 +875,16 @@ const handleConfirm = async () => {
                   <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
                   <p className="text-sm text-slate-600 mb-4">Ao clicar abaixo, geraremos um código QR para você pagar instantaneamente.</p>
                   <div className="flex justify-center"><Badge type="green">Aprovação Imediata</Badge></div>
+                  
+                  {/* Campo de CPF para Pix, caso necessário pelo banco */}
+                  <div className="text-left mt-4">
+                      <label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label>
+                      <input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
+                  </div>
                </div>
              )}
              
-             <Button className="w-full py-4 mt-6 text-lg" onClick={processCardPayment} disabled={loading || processing}>
+             <Button className="w-full py-4 mt-6 text-lg" onClick={processCardPayment} disabled={processing}>
                  {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Pagar ${formatBRL(finalTotal)}`)}
              </Button>
              <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
@@ -887,7 +911,7 @@ const handleConfirm = async () => {
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
 
-                  {/* MENSAGEM DO CUPOM (Feedback Visual) */}
+                  {/* MENSAGEM DO CUPOM */}
                   {couponMsg && (
                       <div className={`text-xs p-2 rounded text-center font-medium ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {couponMsg.text}
