@@ -1160,6 +1160,8 @@ const UserDashboard = () => {
   );
 };
 
+// ... (outros componentes)
+
 const PartnerDashboard = () => {
   const [items, setItems] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -1168,7 +1170,11 @@ const PartnerDashboard = () => {
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
   const [searchTerm, setSearchTerm] = useState("");
   const [validationCode, setValidationCode] = useState("");
+  
+  // States de Conexão
   const [mpConnected, setMpConnected] = useState(false);
+  const [tokenType, setTokenType] = useState(null); 
+  
   const [expandedStats, setExpandedStats] = useState(false);
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -1178,7 +1184,13 @@ const PartnerDashboard = () => {
         if(u) {
            setUser(u);
            const userDoc = await getDoc(doc(db, "users", u.uid));
-           if(userDoc.exists() && userDoc.data().mp_access_token) setMpConnected(true);
+           
+           if(userDoc.exists() && userDoc.data().mp_access_token) {
+               setMpConnected(true);
+               const token = userDoc.data().mp_access_token;
+               setTokenType(token.startsWith('TEST-') ? 'TEST' : 'PROD');
+           }
+
            const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
            const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
            
@@ -1190,27 +1202,36 @@ const PartnerDashboard = () => {
   }, []);
   
   const handleConnect = () => {
-     // Pega a URL atual do navegador (com ou sem www) para garantir que bata com o painel
      const currentBaseUrl = window.location.origin; 
      const redirect = `${currentBaseUrl}/partner/callback`;
-     
-     // Codifica a URL corretamente para passar como parâmetro
      const encodedRedirect = encodeURIComponent(redirect);
      const clientId = import.meta.env.VITE_MP_CLIENT_ID;
-
-     console.log("Conectando MP com:", { clientId, redirect });
-
      window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
   };
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
 
-  // Filtragem Financeira
+  // --- LÓGICA FINANCEIRA DETALHADA ---
   const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
+  
+  // 1. Total Bruto Vendido
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
-  const pendingBalance = totalBalance; 
+  
+  // 2. Comissão da Plataforma (15%)
+  const platformFee = totalBalance * 0.15;
 
-  // Filtragem Operacional (Check-in)
+  // 3. Taxas Estimadas do Mercado Pago (aprox. 4.99% para cartões/pix médio - Ajuste conforme sua negociação)
+  // Nota: O valor exato depende da parcela escolhida pelo cliente, isso é uma estimativa para conciliação.
+  const estimatedMPFees = totalBalance * 0.0499;
+
+  // 4. Líquido Estimado para o Parceiro
+  const netBalance = totalBalance - platformFee - estimatedMPFees;
+  
+  // Breakdown por Método
+  const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
+  const cardTotal = totalBalance - pixTotal; 
+
+  // Operacional
   const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
   const dailyStats = dailyGuests.reduce((acc, curr) => ({
       adults: acc.adults + (curr.adults || 0),
@@ -1219,7 +1240,6 @@ const PartnerDashboard = () => {
       total: acc.total + (curr.adults || 0) + (curr.children || 0)
   }), { adults: 0, children: 0, pets: 0, total: 0 });
 
-  // Cupons Stats
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
   const couponBreakdown = reservations.reduce((acc, r) => {
       if (r.discount > 0) {
@@ -1251,41 +1271,103 @@ const PartnerDashboard = () => {
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
-        <div className="flex justify-between items-end mb-8 border-b border-slate-200 pb-4">
-           <div><h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1><p className="text-slate-500">Acompanhe seu negócio.</p></div>
-           <div className="flex gap-2">
-              {!mpConnected ? <Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600">Conectar Mercado Pago</Button> : <div className="px-4 py-2 bg-green-100 text-green-700 rounded-xl font-bold flex gap-2 items-center"><CheckCircle size={18}/> Conta Conectada</div>}
+        
+        <div className="flex flex-col md:flex-row justify-between items-end mb-8 border-b border-slate-200 pb-4 gap-4">
+           <div>
+               <h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1>
+               <p className="text-slate-500">Visão geral do seu negócio.</p>
+           </div>
+           
+           <div className="flex gap-2 items-center">
+              {!mpConnected ? (
+                  <Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600">Conectar Mercado Pago</Button>
+              ) : (
+                  <div className="flex items-center gap-2">
+                      {tokenType === 'TEST' && <div className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full border border-yellow-200">⚠️ SANDBOX</div>}
+                      {tokenType === 'PROD' && <div className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200">✅ PRODUÇÃO</div>}
+                      <div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold flex gap-2 items-center border border-slate-200"><CheckCircle size={18} className="text-green-600"/> Conectado</div>
+                  </div>
+              )}
               <Button onClick={()=>navigate('/partner/new')}>+ Criar Anúncio</Button>
            </div>
         </div>
 
-        {/* Financeiro */}
+        {/* --- SEÇÃO FINANCEIRA (DETALHADA) --- */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
            <div className="flex justify-between mb-6">
-              <h2 className="text-xl font-bold flex gap-2"><DollarSign/> Financeiro</h2>
-              <select className="border p-2 rounded-lg" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>
-                 {['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'].map((m,i)=><option key={i} value={i}>{m}</option>)}
+              <h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2>
+              <select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>
+                 {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}
               </select>
            </div>
-           <div className="grid md:grid-cols-2 gap-8">
-              <div className="p-6 bg-green-50 rounded-2xl border border-green-200">
-                 <p className="text-sm text-green-700 font-bold uppercase">Total Vendido</p>
-                 <p className="text-4xl font-bold text-green-700">{formatBRL(totalBalance)}</p>
+
+           <div className="grid md:grid-cols-3 gap-6">
+              {/* CARD 1: EXTRATO FINANCEIRO */}
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between col-span-1 md:col-span-1">
+                 <div>
+                     <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
+                     <div className="space-y-1 mb-4">
+                        <div className="flex justify-between text-sm text-slate-600">
+                            <span>Vendas Brutas:</span>
+                            <span className="font-bold">{formatBRL(totalBalance)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-red-400">
+                            <span>Taxa Plataforma (15%):</span>
+                            <span>- {formatBRL(platformFee)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-red-400">
+                            <span>Taxas MP (Est.*):</span>
+                            <span>- {formatBRL(estimatedMPFees)}</span>
+                        </div>
+                     </div>
+                 </div>
+                 <div className="pt-3 border-t border-slate-200">
+                     <p className="text-xs text-green-700 font-bold uppercase mb-1">Líquido Estimado</p>
+                     <p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p>
+                     <p className="text-[10px] text-slate-400 mt-1">* Valores aproximados. Consulte o extrato oficial no Mercado Pago.</p>
+                 </div>
               </div>
               
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
-                 <div className="flex justify-between items-start">
+              {/* CARD 2: MÉTODOS DE PAGAMENTO */}
+              <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200">
+                 <p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p>
+                 <div className="space-y-4">
                     <div>
-                        <p className="text-sm text-slate-500 font-bold uppercase">Cupons Usados</p>
-                        <p className="text-4xl font-bold text-slate-900">{allCouponsUsed}</p>
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span>
+                            <span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span>
+                        </div>
+                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
+                            <div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div>
+                        </div>
                     </div>
-                    <Tag className="text-slate-300" size={48}/>
+                    
+                    <div>
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span>
+                            <span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span>
+                        </div>
+                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
+                            <div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div>
+                        </div>
+                    </div>
                  </div>
-                 <div className="mt-4 pt-4 border-t border-slate-200 space-y-1">
-                    {Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400">Nenhum cupom usado ainda.</p>}
+              </div>
+
+              {/* CARD 3: CUPONS */}
+              <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col">
+                 <div className="flex justify-between items-start mb-4">
+                    <div>
+                        <p className="text-xs text-yellow-800 font-bold uppercase">Cupons Usados</p>
+                        <p className="text-3xl font-bold text-slate-900">{allCouponsUsed}</p>
+                    </div>
+                    <Tag className="text-yellow-600" size={32}/>
+                 </div>
+                 <div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
+                    {Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400 italic">Nenhum cupom usado.</p>}
                     {Object.entries(couponBreakdown).map(([code, count]) => (
-                        <div key={code} className="flex justify-between text-xs text-slate-600">
-                            <span className="font-bold bg-white px-1 rounded border border-slate-200">{code}</span>
+                        <div key={code} className="flex justify-between text-xs text-slate-600 mb-1 border-b border-yellow-100 pb-1 last:border-0">
+                            <span className="font-bold bg-white px-1.5 py-0.5 rounded border border-yellow-200 text-yellow-900">{code}</span>
                             <span>{count}x</span>
                         </div>
                     ))}
@@ -1297,69 +1379,74 @@ const PartnerDashboard = () => {
         {/* Operacional Diário */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
            <div className="flex flex-col md:flex-row justify-between mb-8 gap-4">
-              <h2 className="text-xl font-bold flex gap-2"><List/> Lista de Presença</h2>
+              <h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2>
               <div className="flex gap-4">
-                 <input type="date" className="border p-2 rounded-lg" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
+                 <input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
                  <Button variant="outline" onClick={handleScan}><ScanLine size={18}/> Validar Ingresso</Button>
               </div>
            </div>
            
-           <div className="mb-6 bg-blue-50 rounded-xl p-4 border border-blue-100 cursor-pointer" onClick={()=>setExpandedStats(!expandedStats)}>
+           {/* Card Expansível de Totais */}
+           <div className="mb-6 bg-indigo-50 rounded-xl p-4 border border-indigo-100 cursor-pointer hover:bg-indigo-100 transition-colors" onClick={()=>setExpandedStats(!expandedStats)}>
                <div className="flex justify-between items-center">
-                   <span className="font-bold text-blue-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span>
-                   <ChevronDown size={16} className={`text-blue-900 transition-transform ${expandedStats ? 'rotate-180' : ''}`}/>
+                   <span className="font-bold text-indigo-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span>
+                   <ChevronDown size={16} className={`text-indigo-900 transition-transform ${expandedStats ? 'rotate-180' : ''}`}/>
                </div>
                {expandedStats && (
-                   <div className="mt-3 pt-3 border-t border-blue-200 grid grid-cols-3 gap-4 text-center text-sm">
-                       <div><p className="font-bold">{dailyStats.adults}</p><span>Adultos</span></div>
-                       <div><p className="font-bold">{dailyStats.children}</p><span>Crianças</span></div>
-                       <div><p className="font-bold">{dailyStats.pets}</p><span>Pets</span></div>
+                   <div className="mt-4 pt-4 border-t border-indigo-200 grid grid-cols-3 gap-4 text-center text-sm animate-fade-in">
+                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.adults}</p><span className="text-indigo-400 text-xs font-bold uppercase">Adultos</span></div>
+                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.children}</p><span className="text-indigo-400 text-xs font-bold uppercase">Crianças</span></div>
+                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.pets}</p><span className="text-indigo-400 text-xs font-bold uppercase">Pets</span></div>
                    </div>
                )}
            </div>
            
            <div className="space-y-4">
-              <input className="w-full border p-3 rounded-lg mb-4" placeholder="Buscar viajante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
+              <div className="relative">
+                  <Search size={18} className="absolute left-3 top-3.5 text-slate-400"/>
+                  <input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8] transition-all" placeholder="Buscar viajante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
+              </div>
               
-              {dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-8">Nenhum viajante para esta data.</p> : dailyGuests.map(r => (
-                 <div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-200 gap-4">
+              {dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado para esta data.</p> : dailyGuests.map(r => (
+                 <div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4">
                     <div className="flex-1">
                        <p className="font-bold text-lg text-slate-900">{r.guestName}</p>
-                       <p className="text-sm text-slate-500">Reserva #{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p>
-                       <div className="flex gap-2 mt-1 text-xs text-slate-600">
-                          <span className="bg-white px-2 py-1 rounded border">{r.adults} Adultos</span>
-                          {r.children > 0 && <span className="bg-white px-2 py-1 rounded border">{r.children} Crianças</span>}
-                          {r.pets > 0 && <span className="bg-white px-2 py-1 rounded border flex items-center gap-1"><PawPrint size={10}/> Pet</span>}
+                       <p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p>
+                       <div className="flex gap-2 mt-2 text-xs text-slate-600">
+                          <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>
+                          {r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}
+                          {r.pets > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium flex items-center gap-1"><PawPrint size={10}/> {r.pets} Pet</span>}
                        </div>
                     </div>
                     <div className="flex items-center gap-2">
                        {r.status === 'validated' ? (
-                          <div className="px-4 py-2 bg-green-100 text-green-700 font-bold rounded-lg flex items-center gap-2"><CheckCircle size={18}/> Validado</div>
+                          <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div>
                        ) : (
                           <div className="flex gap-2">
-                             <input id={`code-${r.id}`} className="border p-2 rounded-lg w-32 text-center uppercase" placeholder="Cód." maxLength={6}/>
-                             <Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2">Ok</Button>
+                             <input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/>
+                             <Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button>
                           </div>
                        )}
-                       <Button variant="outline" className="h-full py-2 px-3" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button>
+                       <Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button>
                     </div>
                  </div>
               ))}
            </div>
         </div>
         
+        {/* Meus Anúncios */}
         <div>
-           <h2 className="text-xl font-bold mb-6">Meus Anúncios</h2>
+           <h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2>
            <div className="grid md:grid-cols-2 gap-6">
               {items.map(i => (
-                 <div key={i.id} className="bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm">
-                    <img src={i.image} className="w-20 h-20 rounded-xl object-cover bg-slate-200"/>
+                 <div key={i.id} className="bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow">
+                    <img src={i.image} className="w-24 h-24 rounded-xl object-cover bg-slate-200"/>
                     <div className="flex-1">
-                       <h4 className="font-bold text-slate-900">{i.name}</h4>
-                       <p className="text-sm text-slate-500">{i.city}</p>
-                       <p className="text-sm font-bold text-[#0097A8] mt-1">{formatBRL(i.priceAdult)}</p>
+                       <h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4>
+                       <p className="text-sm text-slate-500 mb-2">{i.city}</p>
+                       <p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p>
                     </div>
-                    <Button variant="outline" className="px-4" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={16}/> Editar</Button>
+                    <Button variant="outline" className="px-4 h-fit" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={16}/> Editar</Button>
                  </div>
               ))}
            </div>
@@ -1586,7 +1673,7 @@ const PartnerNew = () => {
               <div className="grid grid-cols-2 gap-4">
                   <div>
                       <label className="text-sm font-bold text-slate-700 block mb-1">CEP</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="00000-000" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
+                      <input className="w-full border p-3 rounded-xl" placeholder="Digite APENAS números" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
                   </div>
                   <div>
                       <label className="text-sm font-bold text-slate-700 block mb-1">Número</label>
@@ -1612,8 +1699,8 @@ const PartnerNew = () => {
            {/* 3. SOBRE O DAY USE */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3>
-                  <p className="text-xs text-slate-500">Descrição e imagens.</p>
+                  <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre seu Estabelecimento</h3>
+                  <p className="text-xs text-slate-500">Forneça a descrição e imagens do local.</p>
               </div>
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-1">Descrição Completa</label>
@@ -1758,7 +1845,7 @@ const PartnerNew = () => {
                           </select>
                       </div>
                       <div>
-                          <span className="text-xs text-slate-500 block mb-1">Política de Gratuidade</span>
+                          <span className="text-xs text-slate-500 block mb-1">Você tem regras de gratuidade?</span>
                           <input className="border p-2 rounded w-full" placeholder="Ex: Crianças até 2 anos free" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/>
                       </div>
                   </div>
