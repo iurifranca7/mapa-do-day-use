@@ -299,9 +299,7 @@ const Accordion = ({ title, icon: Icon, children }) => {
 
 // --- LOGIN/CADASTRO ---
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
-  if (!isOpen) return null;
-
-  // Estados de Fluxo
+  // 1. Hooks (Sempre devem ser chamados no topo, antes de qualquer return)
   const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
@@ -315,27 +313,32 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const [code, setCode] = useState('');
   const [confirmObj, setConfirmObj] = useState(null);
 
-  // Efeito para Inicializar/Limpar Recaptcha
+  // Limpeza de Estado
   useEffect(() => {
-    // Se mudou para a tela de telefone, prepara o recaptcha
+    if (isOpen) {
+        setError(''); setInfo('');
+        setView(initialMode); setRole(initialRole);
+    }
+  }, [isOpen, initialMode, initialRole]);
+
+  // Efeito do Recaptcha (Só roda se estiver aberto e na tela certa)
+  useEffect(() => {
+    if (!isOpen) return;
+
     if (view === 'phone_start') {
-        // Aguarda o elemento estar no DOM
         const timer = setTimeout(() => {
-            if (!window.recaptchaVerifier) {
+            const container = document.getElementById('recaptcha-container');
+            if (container && !window.recaptchaVerifier) {
                 try {
-                    const container = document.getElementById('recaptcha-container');
-                    if (container) {
-                        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                            'size': 'invisible',
-                            'callback': () => console.log("Recaptcha verificado"),
-                            'expired-callback': () => setError("Recaptcha expirado. Tente novamente.")
-                        });
-                        // Pré-renderiza para evitar delay no clique
-                        window.recaptchaVerifier.render();
-                    }
+                    window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                        'size': 'invisible',
+                        'callback': () => console.log("Recaptcha verificado"),
+                        'expired-callback': () => setError("Recaptcha expirado. Tente novamente.")
+                    });
+                    // Tenta renderizar
+                    window.recaptchaVerifier.render().catch(e => console.log("Recaptcha render error", e));
                 } catch (e) {
                     console.error("Erro Recaptcha:", e);
-                    // Se der erro de duplicidade, limpa e tenta recriar (fallback)
                     if (window.recaptchaVerifier) window.recaptchaVerifier.clear();
                 }
             }
@@ -343,7 +346,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         return () => clearTimeout(timer);
     }
 
-    // Limpeza ao sair da tela de telefone
     return () => {
         if (window.recaptchaVerifier) {
             try { window.recaptchaVerifier.clear(); } catch(e){}
@@ -351,12 +353,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         }
     };
   }, [view, isOpen]);
-
-  // Reset de estados ao abrir
-  useEffect(() => {
-    setError(''); setInfo('');
-    setView(initialMode); setRole(initialRole);
-  }, [isOpen, initialMode, initialRole]);
 
   const ensureProfile = async (u) => {
     const ref = doc(db, "users", u.uid);
@@ -375,7 +371,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     return { ...u, role: userRole };
   };
 
-  // Handlers
   const handleGoogle = async () => {
     try {
        const res = await signInWithPopup(auth, googleProvider);
@@ -416,13 +411,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   };
 
   const handlePhoneStart = async (e) => {
-      e.preventDefault(); 
-      setLoading(true); setError('');
-      
+      e.preventDefault(); setLoading(true); setError('');
       const cleanPhone = phone.replace(/\D/g, '');
-      if (cleanPhone.length < 10) { 
-          setError("Número inválido."); setLoading(false); return; 
-      }
+      if (cleanPhone.length < 10) { setError("Número inválido."); setLoading(false); return; }
       
       const formatted = "+55" + cleanPhone;
       
@@ -435,17 +426,16 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       } catch (err) {
           console.error("Erro SMS:", err);
           let msg = "Erro ao enviar SMS.";
-          if (err.code === 'auth/captcha-check-failed') msg = "Erro de segurança (Captcha). Atualize a página.";
-          if (err.code === 'auth/invalid-phone-number') msg = "Número inválido.";
-          if (err.code === 'auth/quota-exceeded') msg = "Limite de SMS diário excedido.";
-          if (err.message && err.message.includes('401')) msg = "Domínio não autorizado (Erro 401). Verifique o Google Cloud Console.";
-          
+          // Tratamento de erro 401 específico
+          if (JSON.stringify(err).includes("401") || err.message?.includes("401")) {
+              msg = "Erro de Configuração (401): O domínio não está autorizado na Chave de API do Google Cloud.";
+          } else if (err.code === 'auth/captcha-check-failed') {
+              msg = "Erro de segurança (Captcha). Tente novamente.";
+          }
           setError(msg);
-          // Força reset do recaptcha
           if(window.recaptchaVerifier) {
               try{ window.recaptchaVerifier.clear(); }catch(e){}
               window.recaptchaVerifier = null;
-              // O useEffect vai tentar recriar se o usuário voltar para essa tela
           }
       } finally { setLoading(false); }
   };
@@ -467,6 +457,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       if (view === 'phone_verify') return 'Confirmar Código';
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
+
+  // 2. Retorno Condicional (Só agora, depois dos hooks)
+  if (!isOpen) return null;
 
   return (
     <ModalOverlay onClose={onClose}>
