@@ -736,6 +736,7 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
+     // 1. Validação de Token do Parceiro
      if(!partnerToken) { 
         if(confirm("MODO TESTE: O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
             handleConfirm();
@@ -744,23 +745,41 @@ const CheckoutPage = () => {
         return; 
      }
      
+     // 2. Sanitização de Dados (Limpeza)
+     const cleanDoc = docNumber.replace(/\D/g, ''); // Remove pontos e traços
+     const cleanEmail = user.email ? user.email.trim() : "comprador@email.com";
+     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Viajante";
+     const lastName = user.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+
      setProcessing(true);
+
      try {
-       // --- CORREÇÃO AQUI (Pix empacotado em formData) ---
+       // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
+          // Validação básica de CPF para Pix
+          if (cleanDoc.length !== 11 && cleanDoc.length !== 14) {
+              alert("Por favor, digite um CPF/CNPJ válido para o Pix.");
+              setProcessing(false);
+              return;
+          }
+
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
-                // Empacotamos os dados dentro de 'formData' para casar com o backend
+                // Enviando dentro de 'formData' para compatibilidade com o backend
                 formData: {
                     payment_method_id: 'pix', 
                     transaction_amount: Number(finalTotal),
                     installments: 1,
                     payer: { 
-                        email: user.email, 
-                        first_name: user.displayName?.split(' ')[0] || "Viajante",
-                        identification: { type: docType, number: docNumber || '00000000000' } // Fallback básico se vazio
+                        email: cleanEmail, 
+                        first_name: firstName,
+                        last_name: lastName,
+                        identification: { 
+                            type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
+                            number: cleanDoc 
+                        }
                     }
                 },
                 partnerAccessToken: partnerToken,
@@ -768,27 +787,39 @@ const CheckoutPage = () => {
              }) 
           });
           const result = await response.json();
+          
           if(result.status === 'pending' && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
              setProcessing(false);
              setShowPixModal(true);
           } else {
-             alert("Erro ao gerar Pix: " + (result.message || "Tente novamente"));
+             console.error("Erro MP:", result);
+             alert("Erro ao gerar Pix: " + (result.message || result.error || "Verifique os dados e tente novamente."));
              setProcessing(false);
           }
           return;
        }
 
-       // --- CORREÇÃO AQUI (Cartão empacotado em formData) ---
+       // --- FLUXO CARTÃO ---
        const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
        const [month, year] = cardExpiry.split('/');
+       
+       if (!month || !year || cardNumber.length < 13 || cleanDoc.length === 0) {
+           alert("Preencha todos os dados do cartão corretamente.");
+           setProcessing(false);
+           return;
+       }
+
        const tokenParams = {
           cardNumber: cardNumber.replace(/\s/g, ''),
           cardholderName: cardName,
           cardExpirationMonth: month,
           cardExpirationYear: '20' + year,
           securityCode: cardCvv,
-          identification: { type: docType, number: docNumber }
+          identification: { 
+              type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
+              number: cleanDoc 
+          }
        };
        const tokenObj = await mp.createCardToken(tokenParams);
        
@@ -796,17 +827,20 @@ const CheckoutPage = () => {
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
-             // Empacotamos os dados do cartão também
              formData: {
                  token: tokenObj.id,
-                 issuer_id: "visa", 
+                 issuer_id: "visa", // Idealmente dinâmico, mas ok para MVP
                  payment_method_id: "visa", 
                  transaction_amount: Number(finalTotal),
                  installments: Number(installments),
                  payer: { 
-                     email: user.email, 
-                     first_name: user.displayName?.split(' ')[0], 
-                     identification: { type: docType, number: docNumber } 
+                     email: cleanEmail, 
+                     first_name: firstName,
+                     last_name: lastName,
+                     identification: { 
+                        type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
+                        number: cleanDoc 
+                     }
                  }
              },
              partnerAccessToken: partnerToken,
@@ -815,14 +849,18 @@ const CheckoutPage = () => {
        });
        const result = await response.json();
        if(result.status === 'approved' || result.status === 'in_process') handleConfirm();
-       else { alert("Pagamento recusado: " + (result.message || "Verifique os dados")); setProcessing(false); }
+       else { 
+           console.error("Erro Pagamento:", result);
+           alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
+           setProcessing(false); 
+       }
      } catch (err) {
         console.error(err);
-        if(confirm("Erro na comunicação com MP. Simular sucesso para teste?")) handleConfirm();
+        if(confirm("Erro de comunicação (Possível bloqueio de AdBlock ou Internet). Tentar novamente?")) processCardPayment();
         else setProcessing(false);
      }
   };
-
+  
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
       <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Tudo Certo!" message="Sua reserva foi confirmada." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
