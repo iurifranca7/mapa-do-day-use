@@ -3,11 +3,11 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { 
   MapPin, Search, User, CheckCircle, 
-  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2
+  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone,
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO ---
@@ -129,75 +129,71 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
 
 const VoucherModal = ({ isOpen, onClose, trip }) => {
   if (!isOpen || !trip) return null;
-  
-  // URL para gerar QR Code dinâmico
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
   
-  // Montagem do Endereço e Link do Maps
-  // (Usa os dados do item salvo na reserva ou fallbacks se for antigo)
-  const placeName = trip.item?.name || trip.itemName || "Local do Passeio";
-  const address = trip.item ? `${trip.item.street}, ${trip.item.number} - ${trip.item.district || ''}, ${trip.item.city} - ${trip.item.state}` : "Endereço não disponível";
-  const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
+  // Acessa os dados do Day Use salvos na reserva
+  const itemData = trip.item || {};
 
-  // Formatação de Pagamento
+  const placeName = itemData.name || trip.itemName || "Local do Passeio";
+  const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
+  const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
   const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : `Cartão de Crédito ${trip.installments ? `(${trip.installments}x)` : '(À vista)'}`;
 
   return (
-    <ModalOverlay onClose={onClose}>
-      <div className="flex flex-col max-h-[90vh]">
-        {/* Cabeçalho Fixo */}
+    <>
+      <div className="fixed inset-0 bg-black/80 z-[9998] backdrop-blur-sm transition-opacity" onClick={onClose}></div>
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-md z-[9999] shadow-2xl rounded-3xl overflow-hidden bg-white max-h-[90vh] flex flex-col border border-slate-100 animate-fade-in">
         <div className="bg-[#0097A8] p-6 text-white text-center relative shrink-0">
-            <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1"><X size={20}/></button>
+            <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1 transition-colors"><X size={20}/></button>
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3"><Ticket size={24} /></div>
             <h2 className="text-xl font-bold">Voucher de Acesso</h2>
             <p className="text-cyan-100 text-sm">Apresente na portaria</p>
         </div>
-
-        {/* Conteúdo com Scroll */}
         <div className="p-8 text-sm text-slate-700 space-y-6 overflow-y-auto custom-scrollbar">
-            
-            {/* Status e QR Code */}
             <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl">
-                <div className="mb-4">
-                    <Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>
-                        {trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}
-                    </Badge>
-                </div>
-                {trip.status !== 'cancelled' && (
-                    <div className="flex justify-center mb-4">
-                        <img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" />
-                    </div>
-                )}
+                <div className="mb-4"><Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>{trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}</Badge></div>
+                {trip.status !== 'cancelled' && (<div className="flex justify-center mb-4"><img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" /></div>)}
                 <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mb-1">CÓDIGO DE VALIDAÇÃO</p>
                 <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
             </div>
-
-            {/* Informações Principais */}
             <div className="space-y-4">
-                <div className="flex justify-between border-b border-slate-100 pb-2">
-                    <span className="text-slate-500">Data do Passeio</span>
-                    <b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b>
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Titular</span><b className="text-slate-900">{trip.guestName}</b></div>
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Pagamento</span><b className="text-slate-900 capitalize">{paymentLabel}</b></div>
+            </div>
+            
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div>
+                    <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
+                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
+                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2"><LinkIcon size={14}/> Abrir no Maps / Waze</a>
                 </div>
-                <div className="flex justify-between border-b border-slate-100 pb-2">
-                    <span className="text-slate-500">Titular</span>
-                    <b className="text-slate-900">{trip.guestName}</b>
-                </div>
-                <div className="flex justify-between border-b border-slate-100 pb-2">
-                    <span className="text-slate-500">Pagamento</span>
-                    <b className="text-slate-900 capitalize">{paymentLabel}</b>
-                </div>
+
+                {/* --- SEÇÃO DE CONTATOS (ADICIONADA) --- */}
+                {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
+                    <div className="pt-3 border-t border-slate-200">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fale com o local</p>
+                        <div className="space-y-2">
+                            {itemData.localWhatsapp && (
+                                <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-green-600 hover:underline font-medium">
+                                    <MessageCircle size={16} /> WhatsApp: {itemData.localWhatsapp}
+                                </a>
+                            )}
+                            {itemData.localPhone && (
+                                <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 hover:underline">
+                                    <Phone size={16} /> Tel: {itemData.localPhone}
+                                </a>
+                            )}
+                            {itemData.localEmail && (
+                                <a href={`mailto:${itemData.localEmail}`} className="flex items-center gap-2 text-slate-600 hover:underline">
+                                    <Mail size={16} /> {itemData.localEmail}
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {/* Endereço e Rota */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
-                <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
-                <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2">
-                    <LinkIcon size={14}/> Abrir no Maps / Waze
-                </a>
-            </div>
-
-            {/* Resumo Financeiro */}
             <div className="bg-cyan-50 p-4 rounded-xl">
                <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
                <ul className="space-y-1 text-sm text-slate-700">
@@ -207,13 +203,13 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
                  <li className="flex justify-between pt-2 mt-2 border-t border-cyan-100 text-[#0097A8] font-bold text-lg"><span>Total Pago</span><span>{formatBRL(trip.total)}</span></li>
                </ul>
             </div>
-
             <Button className="w-full" onClick={() => window.print()}>Imprimir / Salvar PDF</Button>
         </div>
       </div>
-    </ModalOverlay>
+    </>
   );
 };
+
 const ImageGallery = ({ images, isOpen, onClose }) => {
   const [idx, setIdx] = useState(0);
   if (!isOpen) return null;
@@ -306,7 +302,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   if (!isOpen) return null;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [mode, setMode] = useState(initialMode); 
+  const [mode, setMode] = useState(initialMode); // 'login', 'register', 'forgot'
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -325,15 +321,24 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setMsg('');
     try {
+      if (mode === 'forgot') {
+         await sendPasswordResetEmail(auth, email);
+         setMsg("E-mail de recuperação enviado! Verifique sua caixa de entrada (e spam).");
+         setLoading(false);
+         return;
+      }
+
       let res;
       if (mode === 'login') res = await signInWithEmailAndPassword(auth, email, password);
       else res = await createUserWithEmailAndPassword(auth, email, password);
+      
       const userWithRole = await ensureProfile(res.user);
       onSuccess(userWithRole);
       if (closeOnSuccess) onClose();
     } catch (err) {
       if (err.code === 'auth/email-already-in-use') { setMsg(<span className="cursor-pointer font-bold text-[#0097A8] hover:underline" onClick={() => setMode('login')}>E-mail já cadastrado. Clique para entrar.</span>); }
       else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setMsg("Dados incorretos.");
+      else if (err.code === 'auth/missing-email') setMsg("Por favor, digite seu e-mail.");
       else setMsg("Erro: " + err.code);
     } finally { setLoading(false); }
   };
@@ -347,12 +352,26 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
      } catch (e) { setMsg("Erro no Google Login"); }
   };
 
+  // Títulos dinâmicos baseados no modo
+  const getTitle = () => {
+      if (mode === 'forgot') return 'Recuperar Senha';
+      return customTitle || (mode === 'login' ? 'Olá, novamente' : 'Criar conta');
+  };
+
+  const getSubtitle = () => {
+      if (mode === 'forgot') return 'Digite seu e-mail para receber o link.';
+      return customSubtitle || (mode === 'login' ? 'Acesse seu painel de Viajante ou Parceiro.' : 'Preencha seus dados para começar.');
+  };
+
   return (
     <ModalOverlay onClose={onClose}>
       <div className="p-8 text-center relative">
         <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 bg-slate-100 rounded-full p-1"><X size={20}/></button>
-        <h2 className={`text-2xl font-bold mb-2 ${mode==='register'?'text-[#007F8F]':'text-[#0097A8]'}`}>{customTitle || (mode === 'login' ? 'Olá, novamente' : 'Criar conta')}</h2>
-        <p className="text-slate-500 mb-6 text-sm">{customSubtitle || (mode === 'login' ? 'Acesse seu painel de Viajante ou Parceiro.' : 'Preencha seus dados para começar.')}</p>
+        
+        <h2 className={`text-2xl font-bold mb-2 ${mode==='register'?'text-[#007F8F]':'text-[#0097A8]'}`}>
+            {getTitle()}
+        </h2>
+        <p className="text-slate-500 mb-6 text-sm">{getSubtitle()}</p>
 
         {!hideRoleSelection && mode === 'register' && (
           <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
@@ -362,15 +381,46 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         )}
 
         <div className="space-y-4">
-          <Button variant="outline" className="w-full justify-center" onClick={handleGoogle}>Continuar com Google</Button>
-          <div className="relative flex py-2 items-center"><div className="flex-grow border-t border-slate-200"></div><span className="mx-4 text-xs font-bold text-slate-400">OU</span><div className="flex-grow border-t border-slate-200"></div></div>
+          {mode !== 'forgot' && (
+             <Button variant="outline" className="w-full justify-center" onClick={handleGoogle}>Continuar com Google</Button>
+          )}
+          
+          {mode !== 'forgot' && (
+             <div className="relative flex py-2 items-center"><div className="flex-grow border-t border-slate-200"></div><span className="mx-4 text-xs font-bold text-slate-400">OU</span><div className="flex-grow border-t border-slate-200"></div></div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4 text-left">
              <input className="w-full border border-slate-200 p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/>
-             <input className="w-full border border-slate-200 p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required/>
-             {msg && <div className="p-3 bg-yellow-50 text-yellow-800 text-sm rounded-lg flex items-center gap-2 animate-fade-in"><AlertCircle size={16} className="shrink-0"/> <span>{msg}</span></div>}
-             <Button type="submit" className="w-full justify-center" variant={mode === 'register' ? 'success' : 'primary'} disabled={loading}>{loading?'Processando...':(mode === 'login' ? 'Entrar' : 'Cadastrar')}</Button>
+             
+             {mode !== 'forgot' && (
+                <input className="w-full border border-slate-200 p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required/>
+             )}
+             
+             {msg && <div className={`p-3 text-sm rounded-lg flex items-center gap-2 animate-fade-in ${msg.includes('enviado') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'}`}><AlertCircle size={16} className="shrink-0"/> <span>{msg}</span></div>}
+             
+             <Button type="submit" className="w-full justify-center" variant={mode === 'register' ? 'success' : 'primary'} disabled={loading}>
+                 {loading ? 'Processando...' : (mode === 'forgot' ? 'Enviar Link de Recuperação' : (mode === 'login' ? 'Entrar' : 'Cadastrar'))}
+             </Button>
+
+             {/* Observação de Termos e Privacidade (Apenas no cadastro) */}
+             {mode === 'register' && (
+                <p className="text-[11px] text-slate-400 text-center leading-tight mt-3">
+                    Ao se cadastrar, você concorda com nossos <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>{onClose(); window.location.href='/termos-de-uso'}}>Termos de Uso</span> e <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>{onClose(); window.location.href='/politica-de-privacidade'}}>Política de Privacidade</span>.
+                </p>
+             )}
           </form>
-          <p className="text-sm text-slate-500 mt-6 cursor-pointer hover:text-[#0097A8]" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{mode === 'login' ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Fazer Login'}</p>
+
+          <div className="flex flex-col gap-2 mt-6">
+             {mode === 'login' && (
+                 <p className="text-xs text-slate-400 cursor-pointer hover:text-[#0097A8] font-bold text-center" onClick={() => { setMode('forgot'); setMsg(''); }}>
+                     Esqueci minha senha
+                 </p>
+             )}
+
+             <p className="text-sm text-slate-500 cursor-pointer hover:text-[#0097A8] text-center" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setMsg(''); }}>
+                {mode === 'login' ? 'Não tem conta? Cadastre-se' : (mode === 'forgot' ? 'Lembrou? Voltar para Login' : 'Já tem conta? Fazer Login')}
+             </p>
+          </div>
         </div>
       </div>
     </ModalOverlay>
@@ -1462,13 +1512,11 @@ const PartnerNew = () => {
   const [cepLoading, setCepLoading] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
 
-  // States Novos e Ajustados
+  // States Novos
   const [coupons, setCoupons] = useState([]); 
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPerc, setNewCouponPerc] = useState('');
   const [dailyStock, setDailyStock] = useState({ adults: 50, children: 20, pets: 5 });
-  
-  // Novo formato de preços semanais: { 0: { adult: 50, child: 25, pet: 10 }, ... }
   const [weeklyPrices, setWeeklyPrices] = useState({});
   const [cnpjError, setCnpjError] = useState(false);
 
@@ -1526,13 +1574,37 @@ const PartnerNew = () => {
   const handleCnpjChange = (e) => {
       const val = e.target.value;
       setFormData({...formData, cnpj: val});
-      // Validação visual simples de tamanho
       const nums = val.replace(/\D/g, '');
       if (nums.length > 0 && nums.length !== 14) setCnpjError(true);
       else setCnpjError(false);
   };
 
-  const handleImageChange = (index, value) => { const newImages = [...formData.images]; newImages[index] = value; setFormData({...formData, images: newImages}); };
+  // --- NOVA LÓGICA DE UPLOAD ---
+  const handleFileUpload = (index, e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Limite de segurança (aprox 800KB) para não estourar o banco gratuito no MVP
+      if (file.size > 800 * 1024) {
+        alert("A imagem é muito grande. Por favor, escolha uma foto menor (máx 800KB).");
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const newImages = [...formData.images];
+        newImages[index] = reader.result; // Salva como Base64
+        setFormData({ ...formData, images: newImages });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = (index) => {
+      const newImages = [...formData.images];
+      newImages[index] = '';
+      setFormData({ ...formData, images: newImages });
+  };
+  // -----------------------------
   
   const toggleDay = (dayIndex) => { 
       const newDays = formData.availableDays.includes(dayIndex) 
@@ -1572,7 +1644,7 @@ const PartnerNew = () => {
         ownerId: user.uid, 
         coupons, 
         dailyStock, 
-        weeklyPrices, // Salva a tabela de preços
+        weeklyPrices, 
         priceAdult: Number(formData.priceAdult), 
         slug: generateSlug(formData.name), 
         updatedAt: new Date() 
@@ -1608,7 +1680,7 @@ const PartnerNew = () => {
                  </div>
                  <div>
                      <label className="text-sm font-bold text-slate-700 block mb-1">E-mail de Cadastro</label>
-                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-500" value={formData.contactEmail} readOnly />
+                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-600" value={formData.contactEmail} readOnly />
                  </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1651,7 +1723,6 @@ const PartnerNew = () => {
                   </div>
               </div>
 
-              {/* Contatos do Local */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <p className="text-sm font-bold text-slate-700 mb-3">Contatos de Suporte ao Cliente</p>
                   <div className="grid md:grid-cols-3 gap-4">
@@ -1673,7 +1744,7 @@ const PartnerNew = () => {
               <div className="grid grid-cols-2 gap-4">
                   <div>
                       <label className="text-sm font-bold text-slate-700 block mb-1">CEP</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="Digite APENAS números" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
+                      <input className="w-full border p-3 rounded-xl" placeholder="00000-000" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
                   </div>
                   <div>
                       <label className="text-sm font-bold text-slate-700 block mb-1">Número</label>
@@ -1696,11 +1767,11 @@ const PartnerNew = () => {
               </div>
            </div>
 
-           {/* 3. SOBRE O DAY USE */}
+           {/* 3. SOBRE O DAY USE (COM UPLOAD DE FOTOS) */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre seu Estabelecimento</h3>
-                  <p className="text-xs text-slate-500">Forneça a descrição e imagens do local.</p>
+                  <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3>
+                  <p className="text-xs text-slate-500">Descrição e imagens.</p>
               </div>
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-1">Descrição Completa</label>
@@ -1711,11 +1782,33 @@ const PartnerNew = () => {
                   <input className="w-full border p-3 rounded-xl" placeholder="Cole o link do vídeo aqui" value={formData.videoUrl} onChange={e=>setFormData({...formData, videoUrl: e.target.value})} />
               </div>
               
+              {/* ÁREA DE UPLOAD DE IMAGENS */}
               <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-2">Galeria de Fotos (Links)</label>
-                  <div className="grid gap-2">
+                  <label className="text-sm font-bold text-slate-700 block mb-2">Galeria de Fotos</label>
+                  <p className="text-xs text-slate-500 mb-3">Carregue até 6 fotos. A primeira será a capa.</p>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     {formData.images.map((img, i) => (
-                        <input key={i} className="w-full border p-2 rounded-lg text-sm" placeholder={i === 0 ? `URL da Foto Principal (Capa)` : `URL da Foto ${i+1}`} value={img} onChange={e=>handleImageChange(i, e.target.value)} required={i===0}/>
+                        <div key={i} className="relative aspect-video bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#0097A8] transition-colors flex items-center justify-center overflow-hidden group">
+                            {img ? (
+                                <>
+                                    <img src={img} alt={`Foto ${i+1}`} className="w-full h-full object-cover" />
+                                    <button 
+                                        type="button"
+                                        onClick={() => removeImage(i)}
+                                        className="absolute inset-0 bg-black/50 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                                    >
+                                        <Trash2 size={24}/>
+                                    </button>
+                                </>
+                            ) : (
+                                <label className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-slate-400 hover:text-[#0097A8]">
+                                    <ImageIcon size={24} className="mb-1"/>
+                                    <span className="text-xs font-bold">{i === 0 ? "Capa" : `Foto ${i+1}`}</span>
+                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(i, e)} />
+                                </label>
+                            )}
+                        </div>
                     ))}
                   </div>
               </div>
@@ -1728,7 +1821,6 @@ const PartnerNew = () => {
                   <p className="text-xs text-slate-500">Defina os dias e preços específicos.</p>
               </div>
 
-              {/* Tabela de Dias e Preços */}
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-slate-600 border rounded-xl overflow-hidden">
                     <thead className="text-xs text-slate-700 uppercase bg-slate-100">
@@ -1795,7 +1887,6 @@ const PartnerNew = () => {
                  </div>
               </div>
 
-              {/* Capacidade */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                  <label className="text-sm font-bold text-slate-700 block mb-2">Capacidade Diária (Estoque)</label>
                  <div className="flex gap-4">
@@ -1814,7 +1905,6 @@ const PartnerNew = () => {
                  </div>
               </div>
 
-              {/* Regras de Idade e Gratuidade */}
               <div className="grid md:grid-cols-2 gap-6">
                   <div className="space-y-3">
                       <label className="text-sm font-bold text-slate-700">Regras de Idade</label>
@@ -1845,7 +1935,7 @@ const PartnerNew = () => {
                           </select>
                       </div>
                       <div>
-                          <span className="text-xs text-slate-500 block mb-1">Você tem regras de gratuidade?</span>
+                          <span className="text-xs text-slate-500 block mb-1">Política de Gratuidade</span>
                           <input className="border p-2 rounded w-full" placeholder="Ex: Crianças até 2 anos free" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/>
                       </div>
                   </div>
@@ -1917,10 +2007,125 @@ const PartnerNew = () => {
 // --- PAGINAS AUXILIARES ---
 const PartnerRegisterPage = () => { const navigate = useNavigate(); return <LoginModal isOpen={true} onClose={()=>navigate('/')} initialRole="partner" hideRoleSelection={true} closeOnSuccess={false} onSuccess={(u)=>navigate(u ? '/partner/new' : '/')} initialMode="register" customTitle="Criar conta" customSubtitle=" " />; };
 
+// ... (cookie consent)
+
+const CookieConsent = () => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    // Verifica se já aceitou anteriormente
+    const consent = localStorage.getItem('mapadodayuse_consent');
+    if (!consent) {
+      setIsVisible(true);
+    }
+  }, []);
+
+  const handleAccept = async () => {
+    setIsVisible(false);
+    localStorage.setItem('mapadodayuse_consent', 'true'); // Salva no navegador para não mostrar de novo
+    
+    // REGISTRO DE AUDITORIA: Salva o aceite no Firebase para segurança jurídica
+    try {
+      await addDoc(collection(db, "consents"), {
+        acceptedAt: new Date(),
+        userAgent: navigator.userAgent, // Identifica o dispositivo/navegador
+        screenSize: `${window.screen.width}x${window.screen.height}`,
+        type: 'cookie_policy_accepted'
+      });
+    } catch (e) {
+      console.error("Erro ao registrar consentimento:", e);
+    }
+  };
+
+  if (!isVisible) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 w-[90%] md:w-96 bg-white p-5 rounded-2xl shadow-2xl border border-slate-100 z-[10000] animate-fade-in flex flex-col gap-4">
+       <div className="flex items-start gap-3">
+          <Info className="text-[#0097A8] shrink-0 mt-1" size={20} />
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Utilizamos cookies para melhorar sua experiência. Ao continuar navegando, você concorda com nossa <span className="text-[#0097A8] font-bold cursor-pointer hover:underline" onClick={()=>window.location.href='/politica-de-privacidade'}>Política de Privacidade</span> e <span className="text-[#0097A8] font-bold cursor-pointer hover:underline" onClick={()=>window.location.href='/termos-de-uso'}>Termos de Uso</span>.
+          </p>
+       </div>
+       <div className="flex gap-2">
+          <Button className="w-full py-2 text-xs h-9" onClick={handleAccept}>Concordar e Continuar</Button>
+       </div>
+    </div>
+  );
+};
+
+const PrivacyPage = () => (
+  <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in text-slate-700">
+    <h1 className="text-3xl font-bold mb-6 text-slate-900">Política de Privacidade</h1>
+    <div className="space-y-4 text-sm leading-relaxed bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+      <p><strong>Última atualização: Dezembro de 2025</strong></p>
+      <p>A sua privacidade é importante para o <strong>Mapa do Day Use</strong>. Esta política descreve como coletamos, usamos e protegemos suas informações pessoais ao utilizar nossa plataforma de marketplace para reservas de Day Use.</p>
+      
+      <h2 className="text-xl font-bold text-slate-900 mt-6">1. Coleta de Dados</h2>
+      <p>Coletamos informações que você nos fornece diretamente, como:</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Dados de Identificação: Nome completo, CPF, e-mail e telefone/WhatsApp.</li>
+        <li>Dados de Pagamento: Informações transacionais processadas de forma segura via Mercado Pago (não armazenamos dados completos de cartão de crédito em nossos servidores).</li>
+      </ul>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">2. Uso das Informações</h2>
+      <p>Utilizamos seus dados para:</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Processar e confirmar suas reservas de Day Use.</li>
+        <li>Enviar vouchers e notificações sobre o status do seu pedido.</li>
+        <li>Facilitar a comunicação entre você e o estabelecimento parceiro.</li>
+        <li>Melhorar nossos serviços, suporte ao cliente e prevenir fraudes.</li>
+      </ul>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">3. Compartilhamento de Dados</h2>
+      <p>Seus dados pessoais (Nome, CPF e detalhes da reserva) são compartilhados com o <strong>Estabelecimento Parceiro</strong> onde você efetuou a reserva, exclusivamente para fins de identificação e liberação de acesso na portaria.</p>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">4. Segurança</h2>
+      <p>Adotamos medidas de segurança técnicas e administrativas para proteger seus dados. Os pagamentos são processados em ambiente criptografado pelo Mercado Pago.</p>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">5. Contato</h2>
+      <p>Para dúvidas sobre seus dados ou para exercer seus direitos de privacidade, entre em contato pelo e-mail: <strong>contato@mapadodayuse.com</strong>.</p>
+    </div>
+  </div>
+);
+
+const TermsPage = () => (
+  <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in text-slate-700">
+    <h1 className="text-3xl font-bold mb-6 text-slate-900">Termos de Uso</h1>
+    <div className="space-y-4 text-sm leading-relaxed bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+      <p><strong>Bem-vindo ao Mapa do Day Use!</strong> Ao utilizar nossa plataforma, você concorda com os seguintes termos e condições.</p>
+      
+      <h2 className="text-xl font-bold text-slate-900 mt-6">1. Natureza do Serviço</h2>
+      <p>O Mapa do Day Use é uma plataforma de <strong>intermediação</strong> que conecta viajantes a hotéis, pousadas e resorts que oferecem serviços de Day Use. Nós não somos proprietários, nem administramos os estabelecimentos listados.</p>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">2. Responsabilidades</h2>
+      <ul className="list-disc pl-5 space-y-1">
+        <li><strong>Da Plataforma:</strong> Garantir o funcionamento do sistema de reservas, processamento seguro de pagamentos e emissão de vouchers.</li>
+        <li><strong>Do Parceiro (Estabelecimento):</strong> Prestar o serviço de Day Use conforme descrito no anúncio, garantir a disponibilidade, segurança e a qualidade das instalações.</li>
+        <li><strong>Do Usuário:</strong> Fornecer dados verdadeiros, respeitar as regras internas de cada estabelecimento e comparecer na data agendada.</li>
+      </ul>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">3. Pagamentos e Tarifas</h2>
+      <p>Os pagamentos são realizados via Mercado Pago (Pix ou Cartão). O valor total pago inclui o serviço do parceiro e a taxa de serviço da plataforma. A confirmação da reserva está sujeita à aprovação do pagamento.</p>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">4. Cancelamento e Reembolso</h2>
+      <p>Cada estabelecimento possui sua própria política de cancelamento, descrita na página do anúncio. Em geral:</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Solicitações dentro do prazo legal de 7 dias (CDC) e com antecedência mínima da data de utilização podem ser reembolsadas.</li>
+        <li>Cancelamentos fora do prazo ou não comparecimento (No-Show) estão sujeitos às regras definidas pelo Parceiro, podendo não haver reembolso.</li>
+      </ul>
+
+      <h2 className="text-xl font-bold text-slate-900 mt-6">5. Alterações nos Termos</h2>
+      <p>Reservamo-nos o direito de alterar estes termos a qualquer momento para refletir mudanças na legislação ou em nossos serviços. O uso contínuo da plataforma implica na aceitação das novas condições.</p>
+    </div>
+  </div>
+);
+
 // --- ESTRUTURA PRINCIPAL ---
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [logoError, setLogoError] = useState(false); // Controla se a logo quebrou
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -1950,7 +2155,17 @@ const Layout = ({ children }) => {
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
            <div className="flex items-center gap-2 font-bold text-xl cursor-pointer text-slate-800" onClick={()=>navigate('/')}>
-              <img src="/logo.svg" alt="Logo" className="h-10 w-auto" onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='flex'}} />
+              {/* Lógica da Logo no Header */}
+              {!logoError ? (
+                 <img 
+                    src="/logo.svg" 
+                    alt="Logo" 
+                    className="h-10 w-auto" 
+                    onError={() => setLogoError(true)} 
+                 />
+              ) : (
+                 <MapIcon className="h-8 w-8 text-[#0097A8]" />
+              )}
               <span className="hidden sm:inline">Mapa do Day Use</span>
            </div>
            <div className="flex items-center gap-4">
@@ -1973,33 +2188,93 @@ const Layout = ({ children }) => {
       </header>
       <main className="flex-1 w-full max-w-full overflow-x-hidden">{children}</main>
       
-      <footer className="bg-white border-t border-slate-100 py-12 mt-auto">
-         <div className="max-w-6xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="text-center md:text-left"><div className="flex items-center justify-center md:justify-start gap-2 font-bold text-slate-900 mb-2"><MapPin size={18} className="text-[#0097A8]" /> Mapa do Day Use</div><p className="text-sm text-slate-500">© 2026 Belo Horizonte, MG.</p></div>
-            <div className="text-center text-sm text-slate-500">Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" className="font-bold text-slate-900 hover:text-[#0097A8] transition-colors">Iuri França</a> em BH.</div>
-            <a href="https://instagram.com/iurifrancast" target="_blank" className="p-3 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all hover:scale-110 shadow-sm hover:shadow-md"><Instagram size={24} /></a>
+      <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
+         <div className="max-w-7xl mx-auto px-4">
+            <div className="grid md:grid-cols-4 gap-8 mb-8">
+               
+               {/* Coluna 1: Marca e Contato */}
+               <div className="col-span-1 md:col-span-2">
+                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
+                     {/* Lógica da Logo no Footer */}
+                     {!logoError ? (
+                        <img 
+                           src="/logo.svg" 
+                           alt="Logo" 
+                           className="h-8 w-auto" 
+                           onError={() => setLogoError(true)} 
+                        />
+                     ) : (
+                        <MapIcon className="h-6 w-6 text-[#0097A8]" />
+                     )}
+                     <span className="hidden sm:inline">Mapa do Day Use</span>
+                  </div>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
+                     A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.
+                  </p>
+                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
+                     <Mail size={16} /> contato@mapadodayuse.com
+                  </a>
+               </div>
+               
+               {/* Coluna 2: Institucional */}
+               <div>
+                  <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
+                  <ul className="space-y-3 text-sm text-slate-500">
+                     <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
+                     <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
+                     <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
+                  </ul>
+               </div>
+
+               {/* Coluna 3: Redes Sociais */}
+               <div>
+                  <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
+                  <div className="flex gap-3">
+                     <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
+                        <Instagram size={20} />
+                     </a>
+                     <a href="https://tiktok.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-gray-100 text-slate-400 hover:text-black transition-all border border-slate-100 hover:border-gray-300">
+                        {/* SVG Manual do TikTok */}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+                     </a>
+                  </div>
+               </div>
+            </div>
+            
+            {/* Rodapé Inferior */}
+            <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
+               <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
+               <p className="flex items-center gap-1">
+                  Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" rel="noopener noreferrer" className="font-bold text-slate-600 hover:text-[#0097A8] transition-colors">Iuri França</a>
+               </p>
+            </div>
          </div>
       </footer>
+
+      {/*POPUP DE CONSENTIMENTO: */}
+      <CookieConsent />
+
     </div>
   );
 };
 
 const App = () => {
   return (
-      <Routes>
-        <Route path="/" element={<Layout><HomePage /></Layout>} />
-        <Route path="/:state/:slug" element={<Layout><DetailsPage /></Layout>} />
-        {/* Rota legado para compatibilidade com IDs antigos */}
-        <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
-        <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
-        <Route path="/minhas-viagens" element={<Layout><UserDashboard /></Layout>} />
-        <Route path="/profile" element={<Layout><UserProfile /></Layout>} />
-        <Route path="/partner" element={<Layout><PartnerDashboard /></Layout>} />
-        <Route path="/partner/new" element={<Layout><PartnerNew /></Layout>} />
-        <Route path="/partner/edit/:id" element={<Layout><PartnerNew /></Layout>} />
-        <Route path="/partner-register" element={<Layout><PartnerRegisterPage /></Layout>} />
-        <Route path="/partner/callback" element={<Layout><PartnerCallbackPage /></Layout>} />
-      </Routes>
+    <Routes>
+      <Route path="/" element={<Layout><HomePage /></Layout>} />
+      <Route path="/:state/:slug" element={<Layout><DetailsPage /></Layout>} />
+      <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
+      <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
+      <Route path="/minhas-viagens" element={<Layout><UserDashboard /></Layout>} />
+      <Route path="/profile" element={<Layout><UserProfile /></Layout>} />
+      <Route path="/partner" element={<Layout><PartnerDashboard /></Layout>} />
+      <Route path="/partner/new" element={<Layout><PartnerNew /></Layout>} />
+      <Route path="/partner/edit/:id" element={<Layout><PartnerNew /></Layout>} />
+      <Route path="/partner-register" element={<Layout><PartnerRegisterPage /></Layout>} />
+      <Route path="/partner/callback" element={<Layout><PartnerCallbackPage /></Layout>} />
+      <Route path="/politica-de-privacidade" element={<Layout><PrivacyPage /></Layout>} />
+      <Route path="/termos-de-uso" element={<Layout><TermsPage /></Layout>} />
+    </Routes>
   );
 };
 
