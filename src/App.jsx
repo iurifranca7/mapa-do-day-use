@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { 
   MapPin, Search, User, CheckCircle, 
@@ -300,28 +300,62 @@ const Accordion = ({ title, icon: Icon, children }) => {
 // --- LOGIN/CADASTRO ---
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
   if (!isOpen) return null;
-  
-  // Estados Gerais
-  const [mode, setMode] = useState(initialMode); // 'login', 'register', 'forgot', 'phone', 'phone-verify'
+
+  // Estados de Fluxo
+  const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState('');
-  
-  // Estados E-mail
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [confirmObj, setConfirmObj] = useState(null);
 
-  // Estados Telefone
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState(null);
+  // Efeito para Inicializar/Limpar Recaptcha
+  useEffect(() => {
+    // Se mudou para a tela de telefone, prepara o recaptcha
+    if (view === 'phone_start') {
+        // Aguarda o elemento estar no DOM
+        const timer = setTimeout(() => {
+            if (!window.recaptchaVerifier) {
+                try {
+                    const container = document.getElementById('recaptcha-container');
+                    if (container) {
+                        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                            'size': 'invisible',
+                            'callback': () => console.log("Recaptcha verificado"),
+                            'expired-callback': () => setError("Recaptcha expirado. Tente novamente.")
+                        });
+                        // Pré-renderiza para evitar delay no clique
+                        window.recaptchaVerifier.render();
+                    }
+                } catch (e) {
+                    console.error("Erro Recaptcha:", e);
+                    // Se der erro de duplicidade, limpa e tenta recriar (fallback)
+                    if (window.recaptchaVerifier) window.recaptchaVerifier.clear();
+                }
+            }
+        }, 500);
+        return () => clearTimeout(timer);
+    }
 
-  useEffect(() => { 
-      setMsg(''); 
-      setMode(initialMode); 
-      setRole(initialRole); 
-      setPhoneNumber('');
-      setVerificationCode('');
+    // Limpeza ao sair da tela de telefone
+    return () => {
+        if (window.recaptchaVerifier) {
+            try { window.recaptchaVerifier.clear(); } catch(e){}
+            window.recaptchaVerifier = null;
+        }
+    };
+  }, [view, isOpen]);
+
+  // Reset de estados ao abrir
+  useEffect(() => {
+    setError(''); setInfo('');
+    setView(initialMode); setRole(initialRole);
   }, [isOpen, initialMode, initialRole]);
 
   const ensureProfile = async (u) => {
@@ -333,7 +367,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         await setDoc(ref, { 
             email: u.email || "", 
             phone: u.phoneNumber || "",
-            name: u.displayName || (u.phoneNumber ? "Usuário Móvel" : u.email.split('@')[0]), 
+            name: u.displayName || (u.phoneNumber ? "Usuário Móvel" : u.email?.split('@')[0] || "Usuário"), 
             role: role, 
             createdAt: new Date() 
         }); 
@@ -341,188 +375,196 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     return { ...u, role: userRole };
   };
 
-  // --- LÓGICA E-MAIL ---
-  const handleSubmitEmail = async (e) => {
-    e.preventDefault(); setLoading(true); setMsg('');
+  // Handlers
+  const handleGoogle = async () => {
     try {
-      if (mode === 'forgot') {
-         await sendPasswordResetEmail(auth, email);
-         setMsg("E-mail de recuperação enviado! Verifique sua caixa de entrada.");
-         setLoading(false);
-         return;
-      }
-      let res;
-      if (mode === 'login') res = await signInWithEmailAndPassword(auth, email, password);
-      else res = await createUserWithEmailAndPassword(auth, email, password);
-      
-      const userWithRole = await ensureProfile(res.user);
-      onSuccess(userWithRole);
-      if (closeOnSuccess) onClose();
-    } catch (err) {
-      if (err.code === 'auth/email-already-in-use') setMsg("E-mail já cadastrado.");
-      else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setMsg("Dados incorretos.");
-      else setMsg("Erro: " + err.code);
-    } finally { setLoading(false); }
+       const res = await signInWithPopup(auth, googleProvider);
+       const userWithRole = await ensureProfile(res.user);
+       onSuccess(userWithRole);
+       if (closeOnSuccess) onClose();
+    } catch (e) { setError("Erro ao conectar com Google."); }
   };
 
-  // --- LÓGICA GOOGLE ---
-  const handleGoogle = async () => {
-     try {
-        const res = await signInWithPopup(auth, googleProvider);
+  const handleEmailAuth = async (e) => {
+    e.preventDefault(); setLoading(true); setError('');
+    try {
+        let res;
+        if (view === 'register') {
+            res = await createUserWithEmailAndPassword(auth, email, password);
+            try { await sendEmailVerification(res.user); } catch(e){}
+            alert(`Conta criada!`);
+        } else {
+            res = await signInWithEmailAndPassword(auth, email, password);
+        }
         const userWithRole = await ensureProfile(res.user);
         onSuccess(userWithRole);
         if (closeOnSuccess) onClose();
-     } catch (e) { setMsg("Erro no Google Login"); }
+    } catch (err) {
+        if (err.code === 'auth/email-already-in-use') setError("E-mail já cadastrado.");
+        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setError("Dados incorretos.");
+        else setError("Erro: " + err.code);
+    } finally { setLoading(false); }
   };
 
-  // --- LÓGICA TELEFONE ---
-  const setupRecaptcha = () => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        'size': 'invisible',
-        'callback': (response) => { /* Recaptcha resolvido */ }
-      });
-    }
-  };
-
-  const handleSendPhone = async (e) => {
-      e.preventDefault();
-      setLoading(true); setMsg('');
-      const formattedPhone = "+55" + phoneNumber.replace(/\D/g, ''); // Garante +55
-      
-      if (formattedPhone.length < 13) {
-          setMsg("Número inválido. Use DDD + Número.");
-          setLoading(false);
-          return;
-      }
-
-      setupRecaptcha();
-      const appVerifier = window.recaptchaVerifier;
-
+  const handleForgot = async (e) => {
+      e.preventDefault(); setLoading(true); setError(''); setInfo('');
       try {
-          const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
-          setConfirmationResult(confirmation);
-          setMode('phone-verify');
-      } catch (error) {
-          console.error(error);
-          setMsg("Erro ao enviar SMS. Verifique o número ou tente mais tarde.");
-          if (window.recaptchaVerifier) window.recaptchaVerifier.clear();
+          await sendPasswordResetEmail(auth, email);
+          setInfo("Link enviado para o seu e-mail.");
+      } catch (err) { setError("Erro ao enviar. Verifique o e-mail."); }
+      finally { setLoading(false); }
+  };
+
+  const handlePhoneStart = async (e) => {
+      e.preventDefault(); 
+      setLoading(true); setError('');
+      
+      const cleanPhone = phone.replace(/\D/g, '');
+      if (cleanPhone.length < 10) { 
+          setError("Número inválido."); setLoading(false); return; 
+      }
+      
+      const formatted = "+55" + cleanPhone;
+      
+      try {
+          if (!window.recaptchaVerifier) throw new Error("Recaptcha não inicializado. Aguarde e tente novamente.");
+          
+          const confirmation = await signInWithPhoneNumber(auth, formatted, window.recaptchaVerifier);
+          setConfirmObj(confirmation);
+          setView('phone_verify');
+      } catch (err) {
+          console.error("Erro SMS:", err);
+          let msg = "Erro ao enviar SMS.";
+          if (err.code === 'auth/captcha-check-failed') msg = "Erro de segurança (Captcha). Atualize a página.";
+          if (err.code === 'auth/invalid-phone-number') msg = "Número inválido.";
+          if (err.code === 'auth/quota-exceeded') msg = "Limite de SMS diário excedido.";
+          if (err.message && err.message.includes('401')) msg = "Domínio não autorizado (Erro 401). Verifique o Google Cloud Console.";
+          
+          setError(msg);
+          // Força reset do recaptcha
+          if(window.recaptchaVerifier) {
+              try{ window.recaptchaVerifier.clear(); }catch(e){}
+              window.recaptchaVerifier = null;
+              // O useEffect vai tentar recriar se o usuário voltar para essa tela
+          }
       } finally { setLoading(false); }
   };
 
-  const handleVerifyCode = async (e) => {
-      e.preventDefault();
-      setLoading(true); setMsg('');
+  const handlePhoneVerify = async (e) => {
+      e.preventDefault(); setLoading(true); setError('');
       try {
-          const res = await confirmationResult.confirm(verificationCode);
+          const res = await confirmObj.confirm(code);
           const userWithRole = await ensureProfile(res.user);
           onSuccess(userWithRole);
           if (closeOnSuccess) onClose();
-      } catch (error) {
-          setMsg("Código inválido.");
-      } finally { setLoading(false); }
+      } catch (err) { setError("Código inválido."); }
+      finally { setLoading(false); }
   };
 
-  // --- RENDERIZAÇÃO ---
   const getTitle = () => {
-      if (mode === 'forgot') return 'Recuperar Senha';
-      if (mode === 'phone') return 'Entrar com Celular';
-      if (mode === 'phone-verify') return 'Validar Código';
-      return customTitle || (mode === 'login' ? 'Olá, novamente' : 'Criar conta');
+      if (view === 'forgot') return 'Recuperar Senha';
+      if (view === 'phone_start') return 'Entrar com Celular';
+      if (view === 'phone_verify') return 'Confirmar Código';
+      return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
 
   return (
     <ModalOverlay onClose={onClose}>
-      <div className="p-8 text-center relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 bg-slate-100 rounded-full p-1"><X size={20}/></button>
+      <div className="bg-white w-full rounded-2xl shadow-xl overflow-hidden relative animate-fade-in">
         
-        <h2 className={`text-2xl font-bold mb-2 text-[#0097A8]`}>
-            {getTitle()}
-        </h2>
-        <p className="text-slate-500 mb-6 text-sm">{mode === 'phone-verify' ? `Enviamos um SMS para +55 ${phoneNumber}` : (customSubtitle || 'Acesse seu painel.')}</p>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+            <button onClick={onClose} className="p-1 rounded-full hover:bg-slate-100 transition-colors"><X size={18} className="text-slate-800"/></button>
+            <h2 className="font-bold text-slate-800 text-base">{getTitle()}</h2>
+            <div className="w-6"></div>
+        </div>
 
-        {!hideRoleSelection && (mode === 'register' || mode === 'phone') && (
-          <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
-               <button onClick={() => setRole('user')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${role === 'user' ? 'bg-white text-[#0097A8] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Viajante</button>
-               <button onClick={() => setRole('partner')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${role === 'partner' ? 'bg-white text-[#0097A8] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Parceiro</button>
-          </div>
-        )}
+        <div className="p-6">
+            
+            {!hideRoleSelection && (view === 'register' || view === 'login') && (
+               <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
+                   <button onClick={()=>setRole('user')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${role==='user'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Viajante</button>
+                   <button onClick={()=>setRole('partner')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${role==='partner'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Parceiro</button>
+               </div>
+            )}
 
-        <div className="space-y-4">
-          {/* BOTÃO GOOGLE (Apenas nos modos iniciais) */}
-          {(mode === 'login' || mode === 'register') && (
-             <Button variant="outline" className="w-full justify-center" onClick={handleGoogle}>Continuar com Google</Button>
-          )}
+            {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {error}</div>}
+            {info && <div className="mb-4 p-3 bg-green-50 text-green-700 text-xs rounded-lg flex items-center gap-2"><CheckCircle size={16}/> {info}</div>}
 
-          {/* DIVISOR */}
-          {(mode === 'login' || mode === 'register') && (
-             <div className="relative flex py-2 items-center"><div className="flex-grow border-t border-slate-200"></div><span className="mx-4 text-xs font-bold text-slate-400">OU</span><div className="flex-grow border-t border-slate-200"></div></div>
-          )}
+            {/* LOGIN / CADASTRO EMAIL */}
+            {(view === 'login' || view === 'register') && (
+                <form onSubmit={handleEmailAuth} className="space-y-4">
+                    <div className="border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-black focus-within:border-transparent">
+                        <input type="email" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500 border-b border-slate-200" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
+                        <input type="password" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
+                    </div>
+                    
+                    {view === 'register' && (
+                        <p className="text-[11px] text-slate-500 leading-tight">Ao continuar, concordo com os <span className="underline cursor-pointer" onClick={()=>window.open('/termos-de-uso')}>Termos</span> e <span className="underline cursor-pointer" onClick={()=>window.open('/politica-de-privacidade')}>Política de Privacidade</span>.</p>
+                    )}
 
-          {/* FORMULÁRIO DE E-MAIL */}
-          {(mode === 'login' || mode === 'register' || mode === 'forgot') && (
-            <form onSubmit={handleSubmitEmail} className="space-y-4 text-left">
-               <input className="w-full border border-slate-200 p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required/>
-               
-               {mode !== 'forgot' && (
-                  <input className="w-full border border-slate-200 p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required/>
-               )}
-               
-               <Button type="submit" className="w-full justify-center" disabled={loading}>
-                   {loading ? 'Processando...' : (mode === 'forgot' ? 'Enviar Link' : (mode === 'login' ? 'Entrar' : 'Cadastrar'))}
-               </Button>
-            </form>
-          )}
+                    <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Continuar' : 'Concordar e continuar')}</Button>
+                </form>
+            )}
 
-          {/* FORMULÁRIO DE TELEFONE */}
-          {mode === 'phone' && (
-             <form onSubmit={handleSendPhone} className="space-y-4 text-left">
-                <label className="text-xs font-bold text-slate-500 uppercase">Seu número com DDD</label>
-                <div className="flex items-center border border-slate-200 p-3 rounded-lg focus-within:ring-2 focus-within:ring-[#0097A8]">
-                   <span className="text-slate-400 mr-2">+55</span>
-                   <input className="w-full outline-none" placeholder="11 99999-9999" value={phoneNumber} onChange={e=>setPhoneNumber(e.target.value)} required type="tel"/>
-                </div>
-                {/* Container Oculto para o Recaptcha */}
-                <div id="recaptcha-container"></div>
-                <Button type="submit" className="w-full justify-center" disabled={loading}>{loading ? 'Enviando SMS...' : 'Enviar Código'}</Button>
-             </form>
-          )}
+            {/* RECUPERAR SENHA */}
+            {view === 'forgot' && (
+                <form onSubmit={handleForgot} className="space-y-4">
+                    <p className="text-sm text-slate-600">Insira seu e-mail para receber o link de redefinição.</p>
+                    <input className="w-full p-3 border border-slate-300 rounded-xl outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
+                    <Button type="submit" className="w-full" disabled={loading}>Enviar link</Button>
+                    <p className="text-center text-xs font-bold underline cursor-pointer mt-4" onClick={()=>setView('login')}>Voltar</p>
+                </form>
+            )}
 
-          {/* VALIDAÇÃO DE CÓDIGO SMS */}
-          {mode === 'phone-verify' && (
-             <form onSubmit={handleVerifyCode} className="space-y-4 text-left">
-                <input className="w-full border border-slate-200 p-3 rounded-lg text-center text-2xl tracking-widest" placeholder="000000" value={verificationCode} onChange={e=>setVerificationCode(e.target.value)} maxLength={6} required/>
-                <Button type="submit" className="w-full justify-center" disabled={loading}>{loading ? 'Validando...' : 'Confirmar'}</Button>
-                <p className="text-center text-xs text-slate-400 cursor-pointer" onClick={()=>setMode('phone')}>Enviar novamente</p>
-             </form>
-          )}
-          
-          {/* MENSAGEM DE ERRO/SUCESSO */}
-          {msg && <div className={`p-3 text-sm rounded-lg flex items-center gap-2 animate-fade-in ${msg.includes('enviado') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'}`}><AlertCircle size={16} className="shrink-0"/> <span>{msg}</span></div>}
+            {/* CELULAR (INÍCIO) */}
+            {view === 'phone_start' && (
+                <form onSubmit={handlePhoneStart} className="space-y-4">
+                    <div className="border border-slate-300 rounded-xl p-3 flex items-center focus-within:ring-2 focus-within:ring-black">
+                        <span className="text-slate-500 mr-2 border-r pr-2">+55</span>
+                        <input className="w-full outline-none" placeholder="(11) 99999-9999" value={phone} onChange={e=>setPhone(e.target.value)} type="tel" required autoFocus/>
+                    </div>
+                    {/* Container Recaptcha - Essencial */}
+                    <div id="recaptcha-container"></div>
+                    <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Enviando...' : 'Enviar Código'}</Button>
+                </form>
+            )}
 
-          {/* NAVEGAÇÃO ENTRE MODOS */}
-          <div className="flex flex-col gap-2 mt-6">
-             {mode === 'login' && (
-                 <>
-                    <p className="text-xs text-slate-400 cursor-pointer hover:text-[#0097A8] font-bold text-center" onClick={() => { setMode('forgot'); setMsg(''); }}>Esqueci minha senha</p>
-                    <p className="text-xs text-slate-400 cursor-pointer hover:text-[#0097A8] font-bold text-center" onClick={() => { setMode('phone'); setMsg(''); }}>Entrar com Celular</p>
-                 </>
-             )}
-             
-             {mode === 'register' && (
-                 <p className="text-[11px] text-slate-400 text-center leading-tight mt-3">
-                    Ao se cadastrar, você concorda com nossos <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>{onClose(); window.location.href='/termos-de-uso'}}>Termos de Uso</span> e <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>{onClose(); window.location.href='/politica-de-privacidade'}}>Política de Privacidade</span>.
-                 </p>
-             )}
+            {/* CELULAR (VERIFICAÇÃO) */}
+            {view === 'phone_verify' && (
+                <form onSubmit={handlePhoneVerify} className="space-y-4">
+                    <p className="text-sm text-slate-600">Digite o código enviado para <strong>+55 {phone}</strong></p>
+                    <input className="w-full border border-slate-300 p-3 rounded-xl text-center text-2xl tracking-[0.5em] font-mono outline-none" maxLength={6} value={code} onChange={e=>setCode(e.target.value)} required autoFocus/>
+                    <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Validando...' : 'Confirmar'}</Button>
+                    <p className="text-center text-xs text-slate-400 mt-4 cursor-pointer hover:underline" onClick={()=>setView('phone_start')}>Corrigir número</p>
+                </form>
+            )}
 
-             <p className="text-sm text-slate-500 cursor-pointer hover:text-[#0097A8] text-center mt-2" onClick={() => { 
-                 if(mode === 'login') setMode('register'); 
-                 else setMode('login'); 
-                 setMsg(''); 
-             }}>
-                {mode === 'login' ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Fazer Login'}
-             </p>
-          </div>
+            {/* BOTÕES SOCIAIS E TROCA DE MODO */}
+            {(view === 'login' || view === 'register') && (
+                <>
+                    <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou</span><div className="flex-grow border-t border-slate-200"></div></div>
+                    <div className="space-y-3">
+                        <button type="button" onClick={handleGoogle} className="w-full border-2 border-slate-200 rounded-xl py-3 flex items-center justify-between px-4 hover:bg-slate-50 transition-all"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" /><span className="text-sm font-semibold text-slate-700">Google</span><div className="w-5"></div></button>
+                        <button type="button" onClick={()=>setView('phone_start')} className="w-full border-2 border-slate-200 rounded-xl py-3 flex items-center justify-between px-4 hover:bg-slate-50 transition-all"><Phone size={20} className="text-slate-700"/><span className="text-sm font-semibold text-slate-700">Celular</span><div className="w-5"></div></button>
+                    </div>
+                    {view === 'login' ? (
+                        <div className="mt-4 text-center">
+                            <span className="text-xs text-slate-500 hover:underline cursor-pointer mr-4" onClick={()=>setView('forgot')}>Esqueceu a senha?</span>
+                            <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('register'); setError('');}}>Cadastre-se</span>
+                        </div>
+                    ) : (
+                        <div className="mt-4 text-center">
+                            <span className="text-xs text-slate-500">Já tem conta? </span>
+                            <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('login'); setError('');}}>Entrar</span>
+                        </div>
+                    )}
+                </>
+            )}
+            
+            {(view === 'phone_start' || view === 'phone_verify' || view === 'forgot') && (
+                <p className="text-center text-xs font-bold underline cursor-pointer mt-6" onClick={()=>setView('login')}>Voltar</p>
+            )}
+
         </div>
       </div>
     </ModalOverlay>
