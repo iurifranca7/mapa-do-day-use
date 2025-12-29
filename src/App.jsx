@@ -745,20 +745,24 @@ const CheckoutPage = () => {
         return; 
      }
      
-     // 2. Sanitização de Dados (Limpeza)
-     const cleanDoc = docNumber.replace(/\D/g, ''); // Remove pontos e traços
-     const cleanEmail = user.email ? user.email.trim() : "comprador@email.com";
-     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Viajante";
-     const lastName = user.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+     // 2. Sanitização de Dados
+     const cleanDoc = docNumber.replace(/\D/g, ''); 
+     
+     // TRUQUE PARA DEBUG: Se der erro de "user_allowed_only_in_test", 
+     // tente usar um e-mail fixo de teste aqui, ex: "test_user_123456@testuser.com"
+     // Para produção real, mantenha a lógica abaixo:
+     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "comprador_generico@mapadodayuse.com";
+     
+     const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
+     const lastName = user?.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      setProcessing(true);
 
      try {
        // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
-          // Validação básica de CPF para Pix
-          if (cleanDoc.length !== 11 && cleanDoc.length !== 14) {
-              alert("Por favor, digite um CPF/CNPJ válido para o Pix.");
+          if (cleanDoc.length < 11) {
+              alert("Por favor, digite um CPF/CNPJ válido.");
               setProcessing(false);
               return;
           }
@@ -767,7 +771,6 @@ const CheckoutPage = () => {
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
-                // Enviando dentro de 'formData' para compatibilidade com o backend
                 formData: {
                     payment_method_id: 'pix', 
                     transaction_amount: Number(finalTotal),
@@ -786,6 +789,7 @@ const CheckoutPage = () => {
                 amount: Number(finalTotal)
              }) 
           });
+          
           const result = await response.json();
           
           if(result.status === 'pending' && result.point_of_interaction) {
@@ -794,7 +798,13 @@ const CheckoutPage = () => {
              setShowPixModal(true);
           } else {
              console.error("Erro MP:", result);
-             alert("Erro ao gerar Pix: " + (result.message || result.error || "Verifique os dados e tente novamente."));
+             
+             // TRATAMENTO DE ERRO ESPECÍFICO
+             if (result.message && result.message.includes("user_allowed_only_in_test")) {
+                 alert("ERRO DE AMBIENTE: O sistema identificou que você está usando chaves de TESTE (Sandbox). \n\nPara prosseguir, você deve usar um e-mail de 'Comprador de Teste' criado no painel do Mercado Pago, ou configurar as credenciais de Produção corretamente.");
+             } else {
+                 alert("Erro ao gerar Pix: " + (result.message || "Verifique os dados."));
+             }
              setProcessing(false);
           }
           return;
@@ -829,7 +839,7 @@ const CheckoutPage = () => {
           body: JSON.stringify({ 
              formData: {
                  token: tokenObj.id,
-                 issuer_id: "visa", // Idealmente dinâmico, mas ok para MVP
+                 issuer_id: "visa", 
                  payment_method_id: "visa", 
                  transaction_amount: Number(finalTotal),
                  installments: Number(installments),
@@ -851,12 +861,16 @@ const CheckoutPage = () => {
        if(result.status === 'approved' || result.status === 'in_process') handleConfirm();
        else { 
            console.error("Erro Pagamento:", result);
-           alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
+           if (result.message && result.message.includes("user_allowed_only_in_test")) {
+                alert("ERRO DE AMBIENTE: Você está usando chaves de Teste. Use um e-mail de Teste do Mercado Pago.");
+           } else {
+                alert("Pagamento recusado: " + (result.message || "Verifique os dados.")); 
+           }
            setProcessing(false); 
        }
      } catch (err) {
         console.error(err);
-        if(confirm("Erro de comunicação (Possível bloqueio de AdBlock ou Internet). Tentar novamente?")) processCardPayment();
+        if(confirm("Erro de comunicação. Tentar novamente?")) processCardPayment();
         else setProcessing(false);
      }
   };
