@@ -860,7 +860,7 @@ const CheckoutPage = () => {
         else setProcessing(false);
      }
   };
-  
+
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
       <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Tudo Certo!" message="Sua reserva foi confirmada." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
@@ -1161,8 +1161,17 @@ const PartnerDashboard = () => {
   }, []);
   
   const handleConnect = () => {
-     const redirect = `${BASE_URL}/partner/callback`;
-     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${import.meta.env.VITE_MP_CLIENT_ID}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${redirect}`;
+     // Pega a URL atual do navegador (com ou sem www) para garantir que bata com o painel
+     const currentBaseUrl = window.location.origin; 
+     const redirect = `${currentBaseUrl}/partner/callback`;
+     
+     // Codifica a URL corretamente para passar como parâmetro
+     const encodedRedirect = encodeURIComponent(redirect);
+     const clientId = import.meta.env.VITE_MP_CLIENT_ID;
+
+     console.log("Conectando MP com:", { clientId, redirect });
+
+     window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
   };
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
@@ -1181,11 +1190,10 @@ const PartnerDashboard = () => {
       total: acc.total + (curr.adults || 0) + (curr.children || 0)
   }), { adults: 0, children: 0, pets: 0, total: 0 });
 
-  // Lógica de Cupons Detalhada
+  // Cupons Stats
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
   const couponBreakdown = reservations.reduce((acc, r) => {
       if (r.discount > 0) {
-          // Se for venda antiga sem código salvo, mostra como "Outros"
           const code = r.couponCode || "OUTROS"; 
           acc[code] = (acc[code] || 0) + 1;
       }
@@ -1236,7 +1244,6 @@ const PartnerDashboard = () => {
                  <p className="text-4xl font-bold text-green-700">{formatBRL(totalBalance)}</p>
               </div>
               
-              {/* Card de Cupons Melhorado */}
               <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
                  <div className="flex justify-between items-start">
                     <div>
@@ -1245,7 +1252,6 @@ const PartnerDashboard = () => {
                     </div>
                     <Tag className="text-slate-300" size={48}/>
                  </div>
-                 {/* Lista Detalhada */}
                  <div className="mt-4 pt-4 border-t border-slate-200 space-y-1">
                     {Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400">Nenhum cupom usado ainda.</p>}
                     {Object.entries(couponBreakdown).map(([code, count]) => (
@@ -1269,7 +1275,6 @@ const PartnerDashboard = () => {
               </div>
            </div>
            
-           {/* Card Expansível de Totais */}
            <div className="mb-6 bg-blue-50 rounded-xl p-4 border border-blue-100 cursor-pointer" onClick={()=>setExpandedStats(!expandedStats)}>
                <div className="flex justify-between items-center">
                    <span className="font-bold text-blue-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span>
@@ -1314,7 +1319,6 @@ const PartnerDashboard = () => {
            </div>
         </div>
         
-        {/* Meus Anúncios */}
         <div>
            <h2 className="text-xl font-bold mb-6">Meus Anúncios</h2>
            <div className="grid md:grid-cols-2 gap-6">
