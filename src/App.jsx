@@ -653,6 +653,7 @@ const CheckoutPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
+  
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -663,9 +664,9 @@ const CheckoutPage = () => {
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-  const [couponMsg, setCouponMsg] = useState(null); 
+  const [couponMsg, setCouponMsg] = useState(null);
 
-  // States para o formulário manual de cartão
+  // States Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
   const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
@@ -679,14 +680,24 @@ const CheckoutPage = () => {
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
 
+  // 1. Inicializa o Mercado Pago e Busca Token do Parceiro
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
+    
+    // Inicializa MP explicitamente aqui para garantir que o window.MercadoPago exista
+    try {
+        if (import.meta.env.VITE_MP_PUBLIC_KEY) {
+            initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY, { locale: 'pt-BR' });
+        }
+    } catch (e) { console.error("Erro ao iniciar MP:", e); }
+
     const fetchOwner = async () => {
         const docRef = doc(db, "users", bookingData.item.ownerId);
         const snap = await getDoc(docRef);
         if(snap.exists() && snap.data().mp_access_token) setPartnerToken(snap.data().mp_access_token);
     };
     fetchOwner();
+    
     const unsub = onAuthStateChanged(auth, u => setUser(u));
     return unsub;
   }, []);
@@ -750,17 +761,18 @@ const CheckoutPage = () => {
      
      // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
-     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "comprador_guest@mapadodayuse.com";
+     // Fallback para evitar erro se o usuário não tiver e-mail no Firebase (login anônimo ou erro)
+     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "cliente_sem_email@mapadodayuse.com";
      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
      const lastName = user?.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      setProcessing(true);
+
      try {
        // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
           if (cleanDoc.length < 11) { alert("CPF inválido."); setProcessing(false); return; }
 
-          // CORREÇÃO: Enviando dados "flat" (sem formData) para casar com a API manual
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
@@ -781,25 +793,35 @@ const CheckoutPage = () => {
           
           const result = await response.json();
           
-          if (response.ok && result.point_of_interaction) {
+          // Tratamento robusto de erros do backend
+          if (!response.ok) {
+             const errorMsg = result.message || result.error || "Erro desconhecido no servidor.";
+             console.error("Erro Backend:", result);
+             
+             if (errorMsg.includes("user_allowed_only_in_test")) {
+                 alert("ERRO DE AMBIENTE: Você está usando o mesmo e-mail do vendedor ou um e-mail de teste inválido em Produção. Tente usar uma aba anônima com um e-mail pessoal diferente.");
+             } else {
+                 alert(`Falha no Pix: ${errorMsg}`);
+             }
+             setProcessing(false);
+             return;
+          }
+          
+          if(result.status === 'pending' && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
              setProcessing(false);
              setShowPixModal(true);
           } else {
-             console.error("Erro MP:", result);
-             const msg = result.message?.includes("user_allowed_only_in_test") 
-                ? "Erro de Configuração: O token do parceiro parece ser de teste, mas a aplicação está em produção." 
-                : (result.message || "Erro ao gerar Pix.");
-             alert(msg);
+             alert("Erro ao gerar Pix. Tente novamente.");
              setProcessing(false);
           }
           return;
        }
 
        // --- FLUXO CARTÃO ---
-       // Verificação se o SDK carregou
+       // Verificação crítica do SDK
        if (!window.MercadoPago) {
-           alert("Erro: Sistema de pagamento não carregou. Recarregue a página.");
+           alert("O sistema de pagamento ainda está carregando ou foi bloqueado. Por favor, recarregue a página.");
            setProcessing(false);
            return;
        }
@@ -827,7 +849,6 @@ const CheckoutPage = () => {
 
        const tokenObj = await mp.createCardToken(tokenParams);
        
-       // CORREÇÃO: Enviando dados "flat" (sem formData)
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
@@ -850,20 +871,28 @@ const CheckoutPage = () => {
 
        const result = await response.json();
        
+       if (!response.ok) {
+           const errorMsg = result.message || result.error || "Erro no processamento.";
+           console.error("Erro Pagamento:", result);
+           if (errorMsg.includes("user_allowed_only_in_test")) {
+                alert("ERRO DE AMBIENTE: Tente usar um e-mail diferente para a compra (não use o mesmo do vendedor).");
+           } else {
+                alert(`Pagamento recusado: ${errorMsg}`); 
+           }
+           setProcessing(false);
+           return;
+       }
+
        if(result.status === 'approved' || result.status === 'in_process') {
            handleConfirm();
        } else { 
-           console.error("Erro Pagamento:", result);
-           if (result.message && result.message.includes("user_allowed_only_in_test")) {
-                alert("ERRO DE AMBIENTE: Token de teste detectado em ambiente de produção.");
-           } else {
-                alert("Pagamento recusado: " + (result.message || "Verifique os dados.")); 
-           }
+           alert("Pagamento não aprovado. Verifique os dados do cartão."); 
            setProcessing(false); 
        }
+
      } catch (err) {
-        console.error(err);
-        alert("Erro de comunicação com o servidor.");
+        console.error("Erro Catch:", err);
+        alert("Erro de comunicação. Verifique sua internet e tente novamente.");
         setProcessing(false);
      }
   };
@@ -934,6 +963,7 @@ const CheckoutPage = () => {
           </div>
         </div>
 
+        {/* Resumo Lateral */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
