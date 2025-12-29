@@ -657,7 +657,7 @@ const CheckoutPage = () => {
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  // Removido 'loading' duplicado, usaremos apenas 'processing' para o pagamento
+  // Removido 'loading', usamos 'processing'
   const [partnerToken, setPartnerToken] = useState(null);
   
   // Lógica de Cupom
@@ -687,39 +687,34 @@ const CheckoutPage = () => {
     if (/^5[1-5]/.test(cleanNum)) return 'master';
     if (/^3[47]/.test(cleanNum)) return 'amex';
     if (/^6/.test(cleanNum)) return 'elo'; 
+    if (/^3(?:0[0-5]|[68][0-9])/.test(cleanNum)) return 'diners'; // Diners
+    if (/^3(?:60|68|8)/.test(cleanNum)) return 'diners'; // Diners
     return 'visa'; // Fallback
   };
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // DEBUG: Verifica qual chave está carregada
-    const publicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
-    console.log("🔑 Chave Pública Carregada (Início):", publicKey?.substring(0, 10) + "...");
-    
-    // Inicialização do SDK do MP
+    // Inicialização do SDK do MP com logs para debug
     const initMP = () => {
-        if (window.MercadoPago && publicKey) {
+        if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
             try {
                 if (!window.mpInstance) {
-                    window.mpInstance = new window.MercadoPago(publicKey);
-                    console.log("✅ MercadoPago SDK inicializado com sucesso.");
+                    window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+                    console.log("✅ SDK MercadoPago pronto.");
                 }
             } catch (e) { console.error("Erro init MP:", e); }
-        } else {
-            console.warn("⚠️ SDK MercadoPago ou Chave Pública ausente.");
         }
     };
     initMP();
-    setTimeout(initMP, 1000); 
+    // Retry caso o script demore um pouco
+    setTimeout(initMP, 1500); 
 
     const fetchOwner = async () => {
         const docRef = doc(db, "users", bookingData.item.ownerId);
         const snap = await getDoc(docRef);
         if(snap.exists() && snap.data().mp_access_token) {
-            const token = snap.data().mp_access_token;
-            setPartnerToken(token);
-            console.log("🔑 Token do Parceiro (Início):", token.substring(0, 10) + "...");
+            setPartnerToken(snap.data().mp_access_token);
         }
     };
     fetchOwner();
@@ -775,9 +770,8 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-     // 1. Validação de Token do Parceiro
      if(!partnerToken) { 
-        if(confirm("MODO TESTE (Sem Parceiro): Deseja simular uma aprovação?")) {
+        if(confirm("MODO TESTE (Sem Parceiro): Deseja simular uma aprovação para testar o fluxo?")) {
             handleConfirm();
             return;
         }
@@ -785,8 +779,9 @@ const CheckoutPage = () => {
         return; 
      }
      
-     // 2. Sanitização de Dados
+     // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
+     // Fallback seguro para e-mail
      const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "cliente_guest@mapadodayuse.com";
      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
      const lastName = user?.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
@@ -802,9 +797,9 @@ const CheckoutPage = () => {
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
+                payment_method_id: 'pix', 
                 transaction_amount: Number(finalTotal),
                 description: `Day Use - ${bookingData.item.name}`,
-                payment_method_id: 'pix',
                 payer: { 
                     email: cleanEmail, 
                     first_name: firstName,
@@ -822,7 +817,8 @@ const CheckoutPage = () => {
              setShowPixModal(true);
           } else {
              console.error("Erro Pix:", result);
-             alert("Erro ao gerar Pix: " + (result.message || "Verifique os dados."));
+             const errorMsg = result.message || JSON.stringify(result);
+             alert(`Erro ao gerar Pix: ${errorMsg}`);
              setProcessing(false);
           }
           return;
@@ -830,14 +826,9 @@ const CheckoutPage = () => {
 
        // --- FLUXO CARTÃO ---
        if (!window.mpInstance) {
-           // Tenta recuperar a instância global ou recriar
-           if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
-               window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
-           } else {
-               alert("Sistema de pagamento indisponível. Recarregue a página.");
-               setProcessing(false);
-               return;
-           }
+           alert("Sistema de pagamento indisponível (SDK não carregou). Tente recarregar a página.");
+           setProcessing(false);
+           return;
        }
 
        const [month, year] = cardExpiry.split('/');
@@ -862,7 +853,7 @@ const CheckoutPage = () => {
 
        console.log("Gerando token...");
        const tokenObj = await window.mpInstance.createCardToken(tokenParams);
-       console.log("Token gerado com sucesso.");
+       console.log("Token gerado:", tokenObj.id);
        
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
@@ -885,20 +876,18 @@ const CheckoutPage = () => {
 
        const result = await response.json();
        
-       if(result.status === 'approved' || result.status === 'in_process') {
+       if (response.ok && (result.status === 'approved' || result.status === 'in_process')) {
            handleConfirm();
        } else { 
            console.error("Erro Pagamento:", result);
-           if (result.message && result.message.includes("user_allowed_only_in_test")) {
-               alert("ERRO: O sistema detectou chaves de TESTE. Se você está em produção, verifique se o parceiro reconectou a conta após a mudança para chaves reais.");
-           } else {
-               alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
-           }
+           // Mostra o erro real do MP para facilitar debug
+           const errorMsg = result.message || (result.api_response ? JSON.stringify(result.api_response) : "Erro desconhecido");
+           alert(`Pagamento recusado: ${errorMsg}`); 
            setProcessing(false); 
        }
      } catch (err) {
         console.error("Erro Catch:", err);
-        alert("Erro no processamento. Verifique o console.");
+        alert(`Erro de comunicação: ${err.message}`);
         setProcessing(false);
      }
   };
