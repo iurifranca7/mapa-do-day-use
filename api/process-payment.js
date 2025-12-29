@@ -1,78 +1,85 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 export default async function handler(req, res) {
-  // 1. Configuração de CORS (Permite que o seu front-end converse com essa API)
+  // Configuração de CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Em produção, troque '*' pelo seu domínio (ex: 'https://mapadodayuse.com')
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Responde imediatamente a requisições OPTIONS (Preflight do navegador)
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // 2. Apenas aceita método POST
   if (req.method === 'POST') {
     try {
-      // Recebe os dados enviados pelo Front-end
-      // formData: Dados criptografados do cartão/pix vindos do Brick
-      // partnerAccessToken: Token do dono do Day Use (para onde vai o dinheiro)
-      // amount: Valor final a ser cobrado (já com desconto de cupom, se houver)
-      const { formData, partnerAccessToken, amount } = req.body;
+      // Recebe os dados manuais enviados pelo Frontend
+      const { 
+        transaction_amount, 
+        token, 
+        description, 
+        installments, 
+        payment_method_id, 
+        payer, 
+        partnerAccessToken 
+      } = req.body;
 
       if (!partnerAccessToken) {
-        throw new Error("Token do parceiro não fornecido. O estabelecimento precisa conectar a conta.");
+        throw new Error("Token do parceiro não fornecido.");
       }
 
-      // 3. Inicializa o Mercado Pago agindo COMO O PARCEIRO
-      // Isso é fundamental para o Split: quem vende é o parceiro, não a plataforma.
+      // 1. Inicializa o cliente com o Token do Parceiro (Vendedor)
+      // Isso garante que o dinheiro principal vá para a conta dele
       const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
       const payment = new Payment(client);
 
-      // 4. Calcula a sua comissão (15%)
-      // O Mercado Pago desconta isso do valor total e envia para a conta da plataforma
-      const commission = Math.round(amount * 0.15 * 100) / 100;
+      // 2. Calcula comissão (15%)
+      const commission = Math.round(transaction_amount * 0.15 * 100) / 100;
 
-      // 5. Monta o objeto de pagamento
+      // 3. Monta o corpo do pagamento
       const paymentBody = {
-        ...formData, // Espalha os dados seguros do Brick (token, parcelas, método, etc.)
-        transaction_amount: Number(amount), // Garante que o valor cobrado é o correto
-        application_fee: commission,        // Define sua taxa de marketplace
-        description: "Reserva Day Use - Viajante", // Descrição na fatura
+        transaction_amount: Number(transaction_amount),
+        description: description || "Reserva Day Use",
+        payment_method_id,
+        application_fee: commission, // Taxa da plataforma
         payer: {
-          ...formData.payer,
-          // Garante que haja um e-mail, mesmo que o Brick não tenha enviado (fallback)
-          email: formData.payer.email || "email_generico@mapadodayuse.com" 
+          email: payer.email,
+          first_name: payer.first_name,
+          last_name: payer.last_name,
+          identification: payer.identification
         }
       };
 
-      // 6. Envia para o Mercado Pago
+      // Adiciona campos específicos de cartão se não for Pix
+      if (payment_method_id !== 'pix') {
+        paymentBody.token = token;
+        paymentBody.installments = Number(installments);
+        // issuer_id é recomendado, mas vamos simplificar para o MVP
+      }
+
+      // 4. Processa
       const result = await payment.create({ body: paymentBody });
 
-      // 7. Retorna o sucesso para o Front-end
       res.status(200).json({
         id: result.id,
         status: result.status,
         detail: result.status_detail,
+        point_of_interaction: result.point_of_interaction // Necessário para o Pix (QR Code)
       });
 
     } catch (error) {
       console.error("Erro no Processamento:", error);
-      
-      // Retorna erro detalhado para facilitar o debug no Front
       res.status(500).json({ 
         error: 'Erro ao processar pagamento', 
         message: error.message,
-        details: error.cause 
+        api_response: error.cause 
       });
     }
   } else {
-    // Bloqueia outros métodos (GET, PUT, etc.)
     res.status(405).json({ error: 'Method not allowed' });
   }
 }

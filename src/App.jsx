@@ -663,7 +663,7 @@ const CheckoutPage = () => {
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-  const [couponMsg, setCouponMsg] = useState(null);
+  const [couponMsg, setCouponMsg] = useState(null); // Estado para feedback visual
 
   // States para o formulário manual de cartão
   const [paymentMethod, setPaymentMethod] = useState('card'); 
@@ -694,17 +694,21 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      setCouponMsg(null); 
-      if (!bookingData.item.coupons) { 
+      setCouponMsg(null); // Limpa msg anterior
+      
+      // Verifica se o local tem cupons cadastrados
+      if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
       }
+      
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+      
       if(found) {
         const discountVal = (bookingData.total * found.percentage) / 100;
         setDiscount(discountVal);
         setFinalTotal(bookingData.total - discountVal);
-        setCouponMsg({ type: 'success', text: `Cupom ${found.code} aplicado com ${found.percentage}% de desconto` });
+        setCouponMsg({ type: 'success', text: `Cupom ${found.code} aplicado: ${found.percentage}% OFF` });
       } else {
         setDiscount(0);
         setFinalTotal(bookingData.total);
@@ -724,6 +728,7 @@ const CheckoutPage = () => {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
+      couponCode: couponCode ? couponCode.toUpperCase() : null, // Salva o cupom usado
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -736,7 +741,6 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-     // 1. Validação de Token do Parceiro
      if(!partnerToken) { 
         if(confirm("MODO TESTE: O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
             handleConfirm();
@@ -745,51 +749,34 @@ const CheckoutPage = () => {
         return; 
      }
      
-     // 2. Sanitização de Dados
+     // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
-     
-     // TRUQUE PARA DEBUG: Se der erro de "user_allowed_only_in_test", 
-     // tente usar um e-mail fixo de teste aqui, ex: "test_user_123456@testuser.com"
-     // Para produção real, mantenha a lógica abaixo:
-     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "comprador_generico@mapadodayuse.com";
-     
+     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "comprador_guest@mapadodayuse.com";
      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
      const lastName = user?.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      setProcessing(true);
-
      try {
        // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
-          if (cleanDoc.length < 11) {
-              alert("Por favor, digite um CPF/CNPJ válido.");
-              setProcessing(false);
-              return;
-          }
+          if (cleanDoc.length < 11) { alert("CPF inválido."); setProcessing(false); return; }
 
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
-                formData: {
-                    payment_method_id: 'pix', 
-                    transaction_amount: Number(finalTotal),
-                    installments: 1,
-                    payer: { 
-                        email: cleanEmail, 
-                        first_name: firstName,
-                        last_name: lastName,
-                        identification: { 
-                            type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
-                            number: cleanDoc 
-                        }
-                    }
+                payment_method_id: 'pix', 
+                transaction_amount: Number(finalTotal),
+                description: `Day Use - ${bookingData.item.name}`,
+                payer: { 
+                    email: cleanEmail, 
+                    first_name: firstName,
+                    last_name: lastName,
+                    identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
                 },
-                partnerAccessToken: partnerToken,
-                amount: Number(finalTotal)
+                partnerAccessToken: partnerToken
              }) 
           });
-          
           const result = await response.json();
           
           if(result.status === 'pending' && result.point_of_interaction) {
@@ -797,14 +784,10 @@ const CheckoutPage = () => {
              setProcessing(false);
              setShowPixModal(true);
           } else {
-             console.error("Erro MP:", result);
-             
-             // TRATAMENTO DE ERRO ESPECÍFICO
-             if (result.message && result.message.includes("user_allowed_only_in_test")) {
-                 alert("ERRO DE AMBIENTE: O sistema identificou que você está usando chaves de TESTE (Sandbox). \n\nPara prosseguir, você deve usar um e-mail de 'Comprador de Teste' criado no painel do Mercado Pago, ou configurar as credenciais de Produção corretamente.");
-             } else {
-                 alert("Erro ao gerar Pix: " + (result.message || "Verifique os dados."));
-             }
+             const msg = result.message?.includes("user_allowed_only_in_test") 
+                ? "Erro de Teste: Use um e-mail de comprador de teste." 
+                : (result.message || "Erro no Pix.");
+             alert(msg);
              setProcessing(false);
           }
           return;
@@ -826,40 +809,36 @@ const CheckoutPage = () => {
           cardExpirationMonth: month,
           cardExpirationYear: '20' + year,
           securityCode: cardCvv,
-          identification: { 
-              type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
-              number: cleanDoc 
-          }
+          identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
        };
+
        const tokenObj = await mp.createCardToken(tokenParams);
        
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
-             formData: {
-                 token: tokenObj.id,
-                 issuer_id: "visa", 
-                 payment_method_id: "visa", 
-                 transaction_amount: Number(finalTotal),
-                 installments: Number(installments),
-                 payer: { 
-                     email: cleanEmail, 
-                     first_name: firstName,
-                     last_name: lastName,
-                     identification: { 
-                        type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
-                        number: cleanDoc 
-                     }
-                 }
+             token: tokenObj.id,
+             issuer_id: "visa", 
+             payment_method_id: "visa", 
+             transaction_amount: Number(finalTotal),
+             installments: Number(installments),
+             description: `Day Use - ${bookingData.item.name}`,
+             payer: { 
+                 email: cleanEmail, 
+                 first_name: firstName, 
+                 last_name: lastName,
+                 identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
              },
-             partnerAccessToken: partnerToken,
-             amount: Number(finalTotal)
+             partnerAccessToken: partnerToken
           }) 
        });
+
        const result = await response.json();
-       if(result.status === 'approved' || result.status === 'in_process') handleConfirm();
-       else { 
+       
+       if(result.status === 'approved' || result.status === 'in_process') {
+           handleConfirm();
+       } else { 
            console.error("Erro Pagamento:", result);
            if (result.message && result.message.includes("user_allowed_only_in_test")) {
                 alert("ERRO DE AMBIENTE: Você está usando chaves de Teste. Use um e-mail de Teste do Mercado Pago.");
@@ -877,9 +856,9 @@ const CheckoutPage = () => {
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
-      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Tudo Certo!" message="Sua reserva foi confirmada." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
+      <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado!" message="Sua reserva foi confirmada. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
       <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={handleConfirm} />
-      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false); setExpanded(true);}} hideRoleSelection={true} />
+      <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
       
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
@@ -895,14 +874,13 @@ const CheckoutPage = () => {
                </div>
             ) : (
                <div className="text-center py-8">
-                  <div className="bg-teal-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-teal-600"><User size={32}/></div>
                   <h3 className="font-bold text-slate-900 mb-2">Para continuar, identifique-se</h3>
                   <Button onClick={()=>setShowLogin(true)} className="w-full justify-center">Entrar ou Cadastrar</Button>
                </div>
             )}
           </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              
              {/* Abas de Método */}
@@ -959,13 +937,13 @@ const CheckoutPage = () => {
                   )}
 
                   <div className="flex gap-2 pt-2">
-                     <input className="border p-2 rounded-lg flex-1 text-xs" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
+                     <input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
-
-                  {/* MENSAGEM DO CUPOM */}
+                  
+                  {/* Feedback Visual do Cupom */}
                   {couponMsg && (
-                      <div className={`text-xs p-2 rounded text-center font-medium ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      <div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {couponMsg.text}
                       </div>
                   )}
