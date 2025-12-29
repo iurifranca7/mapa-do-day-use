@@ -657,7 +657,7 @@ const CheckoutPage = () => {
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [loading, setLoading] = useState(false);
+  // Removido 'loading' duplicado, usaremos apenas 'processing' para o pagamento
   const [partnerToken, setPartnerToken] = useState(null);
   
   // Lógica de Cupom
@@ -680,39 +680,47 @@ const CheckoutPage = () => {
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
 
-  // Helper para detectar bandeira (Essencial para Produção)
+  // Helper para detectar bandeira
   const getPaymentMethodId = (number) => {
     const cleanNum = number.replace(/\D/g, '');
     if (/^4/.test(cleanNum)) return 'visa';
     if (/^5[1-5]/.test(cleanNum)) return 'master';
     if (/^3[47]/.test(cleanNum)) return 'amex';
-    if (/^6/.test(cleanNum)) return 'elo'; // Simplificado
-    if (/^3(?:0[0-5]|[68][0-9])/.test(cleanNum)) return 'diners';
+    if (/^6/.test(cleanNum)) return 'elo'; 
     return 'visa'; // Fallback
   };
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // Inicialização Robusta do MP
+    // DEBUG: Verifica qual chave está carregada
+    const publicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
+    console.log("🔑 Chave Pública Carregada (Início):", publicKey?.substring(0, 10) + "...");
+    
+    // Inicialização do SDK do MP
     const initMP = () => {
-        if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
+        if (window.MercadoPago && publicKey) {
             try {
-                // Cria instância global se não existir
                 if (!window.mpInstance) {
-                    window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+                    window.mpInstance = new window.MercadoPago(publicKey);
+                    console.log("✅ MercadoPago SDK inicializado com sucesso.");
                 }
             } catch (e) { console.error("Erro init MP:", e); }
+        } else {
+            console.warn("⚠️ SDK MercadoPago ou Chave Pública ausente.");
         }
     };
     initMP();
-    // Tenta novamente em 1s caso o script do index.html atrase
-    setTimeout(initMP, 1000);
+    setTimeout(initMP, 1000); 
 
     const fetchOwner = async () => {
         const docRef = doc(db, "users", bookingData.item.ownerId);
         const snap = await getDoc(docRef);
-        if(snap.exists() && snap.data().mp_access_token) setPartnerToken(snap.data().mp_access_token);
+        if(snap.exists() && snap.data().mp_access_token) {
+            const token = snap.data().mp_access_token;
+            setPartnerToken(token);
+            console.log("🔑 Token do Parceiro (Início):", token.substring(0, 10) + "...");
+        }
     };
     fetchOwner();
     const unsub = onAuthStateChanged(auth, u => setUser(u));
@@ -727,7 +735,9 @@ const CheckoutPage = () => {
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
       }
+      
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+      
       if(found) {
         const discountVal = (bookingData.total * found.percentage) / 100;
         setDiscount(discountVal);
@@ -765,9 +775,9 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-     // Validação de Token de Parceiro
+     // 1. Validação de Token do Parceiro
      if(!partnerToken) { 
-        if(confirm("MODO TESTE (MVP): O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
+        if(confirm("MODO TESTE (Sem Parceiro): Deseja simular uma aprovação?")) {
             handleConfirm();
             return;
         }
@@ -775,6 +785,7 @@ const CheckoutPage = () => {
         return; 
      }
      
+     // 2. Sanitização de Dados
      const cleanDoc = docNumber.replace(/\D/g, ''); 
      const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "cliente_guest@mapadodayuse.com";
      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
@@ -791,10 +802,9 @@ const CheckoutPage = () => {
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
              body: JSON.stringify({ 
-                payment_method_id: 'pix', 
                 transaction_amount: Number(finalTotal),
                 description: `Day Use - ${bookingData.item.name}`,
-                installments: 1,
+                payment_method_id: 'pix',
                 payer: { 
                     email: cleanEmail, 
                     first_name: firstName,
@@ -811,24 +821,25 @@ const CheckoutPage = () => {
              setProcessing(false);
              setShowPixModal(true);
           } else {
-             console.error("Erro MP:", result);
-             const msg = result.message?.includes("user_allowed_only_in_test") 
-                ? "Erro de Ambiente: A conta do vendedor pode não estar verificada para produção (KYC incompleto) ou o app não está 'Live'." 
-                : (result.message || "Erro ao gerar Pix.");
-             alert(msg);
+             console.error("Erro Pix:", result);
+             alert("Erro ao gerar Pix: " + (result.message || "Verifique os dados."));
              setProcessing(false);
           }
           return;
        }
 
        // --- FLUXO CARTÃO ---
-       if (!window.MercadoPago) {
-           alert("Sistema de pagamento carregando... Aguarde 3 segundos e tente novamente.");
-           setProcessing(false);
-           return;
+       if (!window.mpInstance) {
+           // Tenta recuperar a instância global ou recriar
+           if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
+               window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+           } else {
+               alert("Sistema de pagamento indisponível. Recarregue a página.");
+               setProcessing(false);
+               return;
+           }
        }
 
-       const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
        const [month, year] = cardExpiry.split('/');
        
        if (!month || !year || cardNumber.length < 13 || cleanDoc.length === 0) {
@@ -836,9 +847,6 @@ const CheckoutPage = () => {
            setProcessing(false);
            return;
        }
-
-       // Detecção Dinâmica da Bandeira
-       const detectedMethod = getPaymentMethodId(cardNumber);
 
        const tokenParams = {
           cardNumber: cardNumber.replace(/\s/g, ''),
@@ -852,17 +860,16 @@ const CheckoutPage = () => {
           }
        };
 
-       console.log("Gerando token...", tokenParams);
-       const tokenObj = await mp.createCardToken(tokenParams);
-       console.log("Token gerado:", tokenObj.id);
+       console.log("Gerando token...");
+       const tokenObj = await window.mpInstance.createCardToken(tokenParams);
+       console.log("Token gerado com sucesso.");
        
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
              token: tokenObj.id,
-             // Removemos issuer_id para deixar o MP decidir
-             payment_method_id: detectedMethod, // Envia a bandeira correta detectada
+             payment_method_id: getPaymentMethodId(cardNumber), 
              transaction_amount: Number(finalTotal),
              installments: Number(installments),
              description: `Day Use - ${bookingData.item.name}`,
@@ -882,12 +889,16 @@ const CheckoutPage = () => {
            handleConfirm();
        } else { 
            console.error("Erro Pagamento:", result);
-           alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
+           if (result.message && result.message.includes("user_allowed_only_in_test")) {
+               alert("ERRO: O sistema detectou chaves de TESTE. Se você está em produção, verifique se o parceiro reconectou a conta após a mudança para chaves reais.");
+           } else {
+               alert("Pagamento recusado: " + (result.message || "Verifique os dados do cartão.")); 
+           }
            setProcessing(false); 
        }
      } catch (err) {
         console.error("Erro Catch:", err);
-        alert("Erro técnico no pagamento. Verifique o console.");
+        alert("Erro no processamento. Verifique o console.");
         setProcessing(false);
      }
   };
@@ -958,7 +969,7 @@ const CheckoutPage = () => {
           </div>
         </div>
 
-        {/* Resumo Lateral (Igual ao anterior) */}
+        {/* Resumo Lateral */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
