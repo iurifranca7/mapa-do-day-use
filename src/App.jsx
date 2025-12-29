@@ -663,7 +663,7 @@ const CheckoutPage = () => {
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-  const [couponMsg, setCouponMsg] = useState(null); // Estado para feedback visual
+  const [couponMsg, setCouponMsg] = useState(null); 
 
   // States para o formulário manual de cartão
   const [paymentMethod, setPaymentMethod] = useState('card'); 
@@ -694,9 +694,7 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      setCouponMsg(null); // Limpa msg anterior
-      
-      // Verifica se o local tem cupons cadastrados
+      setCouponMsg(null); 
       if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
@@ -728,7 +726,7 @@ const CheckoutPage = () => {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null, // Salva o cupom usado
+      couponCode: couponCode ? couponCode.toUpperCase() : null, 
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -746,6 +744,7 @@ const CheckoutPage = () => {
             handleConfirm();
             return;
         }
+        alert("Erro: O estabelecimento precisa conectar a conta para receber pagamentos.");
         return; 
      }
      
@@ -761,6 +760,7 @@ const CheckoutPage = () => {
        if (paymentMethod === 'pix') {
           if (cleanDoc.length < 11) { alert("CPF inválido."); setProcessing(false); return; }
 
+          // CORREÇÃO: Enviando dados "flat" (sem formData) para casar com a API manual
           const response = await fetch("/api/process-payment", { 
              method: "POST", 
              headers: { "Content-Type":"application/json" }, 
@@ -768,6 +768,7 @@ const CheckoutPage = () => {
                 payment_method_id: 'pix', 
                 transaction_amount: Number(finalTotal),
                 description: `Day Use - ${bookingData.item.name}`,
+                installments: 1,
                 payer: { 
                     email: cleanEmail, 
                     first_name: firstName,
@@ -777,16 +778,18 @@ const CheckoutPage = () => {
                 partnerAccessToken: partnerToken
              }) 
           });
+          
           const result = await response.json();
           
-          if(result.status === 'pending' && result.point_of_interaction) {
+          if (response.ok && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
              setProcessing(false);
              setShowPixModal(true);
           } else {
+             console.error("Erro MP:", result);
              const msg = result.message?.includes("user_allowed_only_in_test") 
-                ? "Erro de Teste: Use um e-mail de comprador de teste." 
-                : (result.message || "Erro no Pix.");
+                ? "Erro de Configuração: O token do parceiro parece ser de teste, mas a aplicação está em produção." 
+                : (result.message || "Erro ao gerar Pix.");
              alert(msg);
              setProcessing(false);
           }
@@ -794,6 +797,13 @@ const CheckoutPage = () => {
        }
 
        // --- FLUXO CARTÃO ---
+       // Verificação se o SDK carregou
+       if (!window.MercadoPago) {
+           alert("Erro: Sistema de pagamento não carregou. Recarregue a página.");
+           setProcessing(false);
+           return;
+       }
+
        const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
        const [month, year] = cardExpiry.split('/');
        
@@ -809,11 +819,15 @@ const CheckoutPage = () => {
           cardExpirationMonth: month,
           cardExpirationYear: '20' + year,
           securityCode: cardCvv,
-          identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
+          identification: { 
+              type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
+              number: cleanDoc 
+          }
        };
 
        const tokenObj = await mp.createCardToken(tokenParams);
        
+       // CORREÇÃO: Enviando dados "flat" (sem formData)
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
@@ -841,7 +855,7 @@ const CheckoutPage = () => {
        } else { 
            console.error("Erro Pagamento:", result);
            if (result.message && result.message.includes("user_allowed_only_in_test")) {
-                alert("ERRO DE AMBIENTE: Você está usando chaves de Teste. Use um e-mail de Teste do Mercado Pago.");
+                alert("ERRO DE AMBIENTE: Token de teste detectado em ambiente de produção.");
            } else {
                 alert("Pagamento recusado: " + (result.message || "Verifique os dados.")); 
            }
@@ -849,8 +863,8 @@ const CheckoutPage = () => {
        }
      } catch (err) {
         console.error(err);
-        if(confirm("Erro de comunicação. Tentar novamente?")) processCardPayment();
-        else setProcessing(false);
+        alert("Erro de comunicação com o servidor.");
+        setProcessing(false);
      }
   };
 
@@ -880,7 +894,7 @@ const CheckoutPage = () => {
             )}
           </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 overflow-hidden ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              
              {/* Abas de Método */}
@@ -906,7 +920,6 @@ const CheckoutPage = () => {
                   <p className="text-sm text-slate-600 mb-4">Ao clicar abaixo, geraremos um código QR para você pagar instantaneamente.</p>
                   <div className="flex justify-center"><Badge type="green">Aprovação Imediata</Badge></div>
                   
-                  {/* Campo de CPF para Pix, caso necessário pelo banco */}
                   <div className="text-left mt-4">
                       <label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label>
                       <input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
@@ -941,7 +954,6 @@ const CheckoutPage = () => {
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
                   
-                  {/* Feedback Visual do Cupom */}
                   {couponMsg && (
                       <div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {couponMsg.text}
