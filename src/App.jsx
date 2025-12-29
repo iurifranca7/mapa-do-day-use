@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
 import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { 
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone,
@@ -129,47 +131,63 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
 
 const VoucherModal = ({ isOpen, onClose, trip }) => {
   if (!isOpen || !trip) return null;
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
   
-  // Acessa os dados do Day Use salvos na reserva
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
   const itemData = trip.item || {};
-
   const placeName = itemData.name || trip.itemName || "Local do Passeio";
   const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
   const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
   const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : `Cartão de Crédito ${trip.installments ? `(${trip.installments}x)` : '(À vista)'}`;
 
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/80 z-[9998] backdrop-blur-sm transition-opacity" onClick={onClose}></div>
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-md z-[9999] shadow-2xl rounded-3xl overflow-hidden bg-white max-h-[90vh] flex flex-col border border-slate-100 animate-fade-in">
-        <div className="bg-[#0097A8] p-6 text-white text-center relative shrink-0">
+  // Usa Portal para renderizar no body, ignorando transformações dos componentes pai
+  return createPortal(
+    <ModalOverlay onClose={onClose}>
+      <div className="flex flex-col w-full bg-white">
+        
+        {/* Cabeçalho "Sticky" - Fica fixo no topo ao rolar */}
+        <div className="sticky top-0 z-10 bg-[#0097A8] p-6 text-white text-center shadow-sm">
             <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1 transition-colors"><X size={20}/></button>
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3"><Ticket size={24} /></div>
             <h2 className="text-xl font-bold">Voucher de Acesso</h2>
             <p className="text-cyan-100 text-sm">Apresente na portaria</p>
         </div>
-        <div className="p-8 text-sm text-slate-700 space-y-6 overflow-y-auto custom-scrollbar">
+
+        {/* Conteúdo */}
+        <div className="p-8 text-sm text-slate-700 space-y-6">
+            
+            {/* QR Code e Status */}
             <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl">
-                <div className="mb-4"><Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>{trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}</Badge></div>
-                {trip.status !== 'cancelled' && (<div className="flex justify-center mb-4"><img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" /></div>)}
+                <div className="mb-4">
+                    <Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>
+                        {trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}
+                    </Badge>
+                </div>
+                {trip.status !== 'cancelled' && (
+                    <div className="flex justify-center mb-4">
+                        <img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" />
+                    </div>
+                )}
                 <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mb-1">CÓDIGO DE VALIDAÇÃO</p>
                 <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
             </div>
+
+            {/* Informações Principais */}
             <div className="space-y-4">
                 <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
                 <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Titular</span><b className="text-slate-900">{trip.guestName}</b></div>
                 <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Pagamento</span><b className="text-slate-900 capitalize">{paymentLabel}</b></div>
             </div>
-            
+
+            {/* Endereço e Contato */}
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
                 <div>
                     <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
                     <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
-                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2"><LinkIcon size={14}/> Abrir no Maps / Waze</a>
+                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2">
+                        <LinkIcon size={14}/> Abrir no Maps / Waze
+                    </a>
                 </div>
 
-                {/* --- SEÇÃO DE CONTATOS (ADICIONADA) --- */}
                 {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
                     <div className="pt-3 border-t border-slate-200">
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fale com o local</p>
@@ -194,6 +212,7 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
                 )}
             </div>
 
+            {/* Resumo Financeiro */}
             <div className="bg-cyan-50 p-4 rounded-xl">
                <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
                <ul className="space-y-1 text-sm text-slate-700">
@@ -203,10 +222,12 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
                  <li className="flex justify-between pt-2 mt-2 border-t border-cyan-100 text-[#0097A8] font-bold text-lg"><span>Total Pago</span><span>{formatBRL(trip.total)}</span></li>
                </ul>
             </div>
+
             <Button className="w-full" onClick={() => window.print()}>Imprimir / Salvar PDF</Button>
         </div>
       </div>
-    </>
+    </ModalOverlay>,
+    document.body
   );
 };
 
@@ -299,53 +320,63 @@ const Accordion = ({ title, icon: Icon, children }) => {
 
 // --- LOGIN/CADASTRO ---
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
-  // 1. Hooks (Sempre devem ser chamados no topo, antes de qualquer return)
+  // 1. HOOKS (Sempre devem ser chamados no topo, incondicionalmente)
   const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
-  // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [confirmObj, setConfirmObj] = useState(null);
 
-  // Limpeza de Estado
+  // Reset de estados quando o modal abre
   useEffect(() => {
     if (isOpen) {
         setError(''); setInfo('');
         setView(initialMode); setRole(initialRole);
+        setPhone(''); setCode('');
     }
   }, [isOpen, initialMode, initialRole]);
 
-  // Efeito do Recaptcha (Só roda se estiver aberto e na tela certa)
+  // Lógica do Recaptcha (Blindada)
   useEffect(() => {
-    if (!isOpen) return;
-
-    if (view === 'phone_start') {
-        const timer = setTimeout(() => {
-            const container = document.getElementById('recaptcha-container');
-            if (container && !window.recaptchaVerifier) {
-                try {
-                    window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                        'size': 'invisible',
-                        'callback': () => console.log("Recaptcha verificado"),
-                        'expired-callback': () => setError("Recaptcha expirado. Tente novamente.")
-                    });
-                    // Tenta renderizar
-                    window.recaptchaVerifier.render().catch(e => console.log("Recaptcha render error", e));
-                } catch (e) {
-                    console.error("Erro Recaptcha:", e);
-                    if (window.recaptchaVerifier) window.recaptchaVerifier.clear();
-                }
-            }
-        }, 500);
-        return () => clearTimeout(timer);
+    // Só executa se o modal estiver aberto E na tela de início do telefone
+    if (!isOpen || view !== 'phone_start') {
+        // Limpeza ao sair da tela
+        if (window.recaptchaVerifier) {
+            try { window.recaptchaVerifier.clear(); } catch(e){}
+            window.recaptchaVerifier = null;
+        }
+        return;
     }
 
+    const initRecaptcha = async () => {
+        // Delay para garantir que a div #recaptcha-container existe no DOM
+        await new Promise(r => setTimeout(r, 500));
+        
+        const container = document.getElementById('recaptcha-container');
+        
+        if (container && !window.recaptchaVerifier) {
+            try {
+                window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                    'size': 'invisible',
+                    'callback': () => console.log("Recaptcha resolvido"),
+                    'expired-callback': () => setError("Sessão expirada. Tente novamente.")
+                });
+                await window.recaptchaVerifier.render();
+            } catch (e) {
+                console.log("Recaptcha já inicializado ou erro:", e);
+            }
+        }
+    };
+
+    initRecaptcha();
+
+    // Cleanup ao desmontar ou mudar de view
     return () => {
         if (window.recaptchaVerifier) {
             try { window.recaptchaVerifier.clear(); } catch(e){}
@@ -411,14 +442,26 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   };
 
   const handlePhoneStart = async (e) => {
-      e.preventDefault(); setLoading(true); setError('');
+      e.preventDefault(); 
+      setLoading(true); setError('');
+      
       const cleanPhone = phone.replace(/\D/g, '');
-      if (cleanPhone.length < 10) { setError("Número inválido."); setLoading(false); return; }
+      if (cleanPhone.length < 10) { 
+          setError("Número inválido."); setLoading(false); return; 
+      }
       
       const formatted = "+55" + cleanPhone;
       
       try {
-          if (!window.recaptchaVerifier) throw new Error("Recaptcha não inicializado. Aguarde e tente novamente.");
+          if (!window.recaptchaVerifier) {
+              // Tenta recriar se falhou no useEffect (fallback)
+              const container = document.getElementById('recaptcha-container');
+              if(container) {
+                  window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' });
+              } else {
+                  throw new Error("Erro interno: Recaptcha container não encontrado.");
+              }
+          }
           
           const confirmation = await signInWithPhoneNumber(auth, formatted, window.recaptchaVerifier);
           setConfirmObj(confirmation);
@@ -426,13 +469,18 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       } catch (err) {
           console.error("Erro SMS:", err);
           let msg = "Erro ao enviar SMS.";
-          // Tratamento de erro 401 específico
-          if (JSON.stringify(err).includes("401") || err.message?.includes("401")) {
-              msg = "Erro de Configuração (401): O domínio não está autorizado na Chave de API do Google Cloud.";
-          } else if (err.code === 'auth/captcha-check-failed') {
-              msg = "Erro de segurança (Captcha). Tente novamente.";
+          
+          // Tratamento de erro 401/403 do Google Cloud
+          if (JSON.stringify(err).includes("403") || JSON.stringify(err).includes("401") || err.message?.includes("internal-error")) {
+              msg = "Bloqueio de Segurança (401/403): O domínio não está autorizado na Chave de API do Google Cloud (Browser Key).";
+          } else if (err.code === 'auth/quota-exceeded') {
+              msg = "Limite diário de SMS atingido.";
+          } else if (err.code === 'auth/invalid-phone-number') {
+              msg = "Número inválido.";
           }
+          
           setError(msg);
+          // Limpa para tentar de novo
           if(window.recaptchaVerifier) {
               try{ window.recaptchaVerifier.clear(); }catch(e){}
               window.recaptchaVerifier = null;
@@ -458,7 +506,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
 
-  // 2. Retorno Condicional (Só agora, depois dos hooks)
+  // 2. RETORNO CONDICIONAL (Só aqui no final, depois de todos os hooks)
   if (!isOpen) return null;
 
   return (
@@ -473,6 +521,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
         <div className="p-6">
             
+            {/* CONTAINER RECAPTCHA SEMPRE PRESENTE SE A VIEW FOR PHONE */}
+            {view === 'phone_start' && <div id="recaptcha-container" className="mb-4"></div>}
+
             {!hideRoleSelection && (view === 'register' || view === 'login') && (
                <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
                    <button onClick={()=>setRole('user')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${role==='user'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Viajante</button>
@@ -516,8 +567,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         <span className="text-slate-500 mr-2 border-r pr-2">+55</span>
                         <input className="w-full outline-none" placeholder="(11) 99999-9999" value={phone} onChange={e=>setPhone(e.target.value)} type="tel" required autoFocus/>
                     </div>
-                    {/* Container Recaptcha - Essencial */}
-                    <div id="recaptcha-container"></div>
                     <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Enviando...' : 'Enviar Código'}</Button>
                 </form>
             )}
@@ -1348,6 +1397,53 @@ const UserDashboard = () => {
 };
 
 // ... (outros componentes)
+const QrScannerModal = ({ isOpen, onClose, onScan }) => {
+  useEffect(() => {
+    if (isOpen) {
+      // Pequeno delay para garantir que a div "reader" existe no DOM
+      const timer = setTimeout(() => {
+        const scanner = new Html5QrcodeScanner(
+            "reader",
+            { fps: 10, qrbox: 250 },
+            /* verbose= */ false
+        );
+
+        scanner.render(
+            (decodedText) => {
+                // Sucesso na leitura
+                onScan(decodedText);
+                try { scanner.clear(); } catch(e) {} // Para a câmera ao ler
+            },
+            (errorMessage) => {
+                // Erro de leitura (comum enquanto procura, ignoramos para não poluir o console)
+            }
+        );
+
+        // Cleanup ao fechar o modal
+        return () => {
+             try { scanner.clear(); } catch(e) {}
+        };
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, onScan]);
+
+  if (!isOpen) return null;
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md mx-auto">
+        <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-lg text-slate-900">Escanear Ingresso</h3>
+            <button onClick={onClose}><X size={20} className="text-slate-500"/></button>
+        </div>
+        {/* Área onde a câmera será renderizada pela biblioteca */}
+        <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-100"></div>
+        <p className="text-xs text-center text-slate-400 mt-4">Aponte a câmera para o QR Code do voucher.</p>
+      </div>
+    </ModalOverlay>
+  );
+};
 
 const PartnerDashboard = () => {
   const [items, setItems] = useState([]);
@@ -1357,12 +1453,14 @@ const PartnerDashboard = () => {
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
   const [searchTerm, setSearchTerm] = useState("");
   const [validationCode, setValidationCode] = useState("");
-  
-  // States de Conexão
   const [mpConnected, setMpConnected] = useState(false);
   const [tokenType, setTokenType] = useState(null); 
-  
   const [expandedStats, setExpandedStats] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  
+  // NOVO: Estado para feedback visual do Check-in
+  const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', title: '', msg: '' }
+
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
 
@@ -1371,13 +1469,11 @@ const PartnerDashboard = () => {
         if(u) {
            setUser(u);
            const userDoc = await getDoc(doc(db, "users", u.uid));
-           
            if(userDoc.exists() && userDoc.data().mp_access_token) {
                setMpConnected(true);
                const token = userDoc.data().mp_access_token;
                setTokenType(token.startsWith('TEST-') ? 'TEST' : 'PROD');
            }
-
            const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
            const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
            
@@ -1398,27 +1494,15 @@ const PartnerDashboard = () => {
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
 
-  // --- LÓGICA FINANCEIRA DETALHADA ---
+  // Filtros e Cálculos (Mantidos)
   const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
-  
-  // 1. Total Bruto Vendido
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
-  
-  // 2. Comissão da Plataforma (15%)
-  const platformFee = totalBalance * 0.15;
-
-  // 3. Taxas Estimadas do Mercado Pago (aprox. 4.99% para cartões/pix médio - Ajuste conforme sua negociação)
-  // Nota: O valor exato depende da parcela escolhida pelo cliente, isso é uma estimativa para conciliação.
+  const platformFee = totalBalance * 0.20;
   const estimatedMPFees = totalBalance * 0.0499;
-
-  // 4. Líquido Estimado para o Parceiro
   const netBalance = totalBalance - platformFee - estimatedMPFees;
-  
-  // Breakdown por Método
   const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
   const cardTotal = totalBalance - pixTotal; 
 
-  // Operacional
   const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
   const dailyStats = dailyGuests.reduce((acc, curr) => ({
       adults: acc.adults + (curr.adults || 0),
@@ -1436,33 +1520,76 @@ const PartnerDashboard = () => {
       return acc;
   }, {});
 
+  // --- LÓGICA DE VALIDAÇÃO ATUALIZADA ---
   const handleValidate = async (resId, codeInput) => {
-     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase()) {
-        await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
-        alert("Check-in realizado com sucesso!");
-        setValidationCode("");
+     // Aceita tanto o código curto (visual) quanto o ID completo (QR)
+     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
+        try {
+            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
+            
+            // Sucesso Visual
+            const res = reservations.find(r => r.id === resId);
+            setFeedback({
+                type: 'success',
+                title: 'Check-in Realizado! 🎉',
+                msg: `Acesso liberado para ${res?.guestName || 'o visitante'}.`
+            });
+            
+            setValidationCode("");
+        } catch (e) {
+            console.error(e);
+            setFeedback({ type: 'error', title: 'Erro no Sistema', msg: 'Não foi possível validar. Tente novamente.' });
+        }
      } else {
-        alert("Código inválido!");
+        setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código digitado e tente novamente.' });
      }
   };
   
-  const handleScan = () => {
-      const code = prompt("Simulação de Câmera: Digite o código do QR Code:");
-      if (code) {
-          const res = reservations.find(r => r.id === code);
-          if (res) handleValidate(res.id, res.id.slice(0,6));
-          else alert("Reserva não encontrada.");
+  const onScanSuccess = (decodedText) => {
+      setShowScanner(false);
+      const res = reservations.find(r => r.id === decodedText);
+      
+      if (res) {
+          if (res.status === 'validated') {
+              setFeedback({ type: 'warning', title: 'Atenção!', msg: `O ingresso de ${res.guestName} JÁ FOI UTILIZADO anteriormente.` });
+          } else if (res.status === 'cancelled') {
+              setFeedback({ type: 'error', title: 'Ingresso Cancelado', msg: 'Esta reserva foi cancelada e não é válida.' });
+          } else {
+              handleValidate(res.id, res.id);
+          }
+      } else {
+          setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'Este QR Code não pertence a uma reserva válida.' });
       }
   };
 
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
+        <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
+        
+        {/* MODAL DE FEEDBACK DE VALIDAÇÃO (NOVO) */}
+        {feedback && (
+            <ModalOverlay onClose={() => setFeedback(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                    <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                        feedback.type === 'success' ? 'bg-green-100 text-green-600' : 
+                        feedback.type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
+                    }`}>
+                        {feedback.type === 'success' ? <CheckCircle size={40}/> : feedback.type === 'warning' ? <AlertCircle size={40}/> : <X size={40}/>}
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-2">{feedback.title}</h2>
+                    <p className="text-slate-600 mb-6">{feedback.msg}</p>
+                    <Button onClick={() => setFeedback(null)} className="w-full justify-center" variant={feedback.type === 'error' ? 'danger' : 'primary'}>
+                        Fechar
+                    </Button>
+                </div>
+            </ModalOverlay>
+        )}
         
         <div className="flex flex-col md:flex-row justify-between items-end mb-8 border-b border-slate-200 pb-4 gap-4">
            <div>
                <h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1>
-               <p className="text-slate-500">Visão geral do seu negócio.</p>
+               <p className="text-slate-500">Acompanhe seu negócio.</p>
            </div>
            
            <div className="flex gap-2 items-center">
@@ -1479,7 +1606,7 @@ const PartnerDashboard = () => {
            </div>
         </div>
 
-        {/* --- SEÇÃO FINANCEIRA (DETALHADA) --- */}
+        {/* Financeiro */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
            <div className="flex justify-between mb-6">
               <h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2>
@@ -1489,7 +1616,7 @@ const PartnerDashboard = () => {
            </div>
 
            <div className="grid md:grid-cols-3 gap-6">
-              {/* CARD 1: EXTRATO FINANCEIRO */}
+              {/* CARD 1 */}
               <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between col-span-1 md:col-span-1">
                  <div>
                      <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
@@ -1499,7 +1626,7 @@ const PartnerDashboard = () => {
                             <span className="font-bold">{formatBRL(totalBalance)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-red-400">
-                            <span>Taxa Plataforma (15%):</span>
+                            <span>Taxa Plataforma (20%):</span>
                             <span>- {formatBRL(platformFee)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-red-400">
@@ -1511,11 +1638,11 @@ const PartnerDashboard = () => {
                  <div className="pt-3 border-t border-slate-200">
                      <p className="text-xs text-green-700 font-bold uppercase mb-1">Líquido Estimado</p>
                      <p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p>
-                     <p className="text-[10px] text-slate-400 mt-1">* Valores aproximados. Consulte o extrato oficial no Mercado Pago.</p>
+                     <p className="text-[10px] text-slate-400 mt-1">* Valores aproximados.</p>
                  </div>
               </div>
               
-              {/* CARD 2: MÉTODOS DE PAGAMENTO */}
+              {/* CARD 2 */}
               <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200">
                  <p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p>
                  <div className="space-y-4">
@@ -1528,7 +1655,6 @@ const PartnerDashboard = () => {
                             <div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div>
                         </div>
                     </div>
-                    
                     <div>
                         <div className="flex justify-between items-center mb-1">
                             <span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span>
@@ -1541,7 +1667,7 @@ const PartnerDashboard = () => {
                  </div>
               </div>
 
-              {/* CARD 3: CUPONS */}
+              {/* CARD 3 */}
               <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col">
                  <div className="flex justify-between items-start mb-4">
                     <div>
@@ -1569,11 +1695,10 @@ const PartnerDashboard = () => {
               <h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2>
               <div className="flex gap-4">
                  <input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
-                 <Button variant="outline" onClick={handleScan}><ScanLine size={18}/> Validar Ingresso</Button>
+                 <Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button>
               </div>
            </div>
            
-           {/* Card Expansível de Totais */}
            <div className="mb-6 bg-indigo-50 rounded-xl p-4 border border-indigo-100 cursor-pointer hover:bg-indigo-100 transition-colors" onClick={()=>setExpandedStats(!expandedStats)}>
                <div className="flex justify-between items-center">
                    <span className="font-bold text-indigo-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span>
