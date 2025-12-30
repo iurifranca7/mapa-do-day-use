@@ -108,21 +108,81 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
   );
 };
 
-const PixModal = ({ isOpen, onClose, pixData, onConfirm }) => {
+const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken }) => {
+  const [checking, setChecking] = useState(false);
+
+  // Robô de Verificação Automática (Polling)
+  useEffect(() => {
+    let interval;
+    if (isOpen && paymentId && partnerToken) {
+      // Verifica a cada 5 segundos
+      interval = setInterval(() => {
+        checkStatus(false); // false = verificação silenciosa (sem alertas)
+      }, 5000);
+    }
+    // Limpa o robô ao fechar o modal
+    return () => clearInterval(interval);
+  }, [isOpen, paymentId, partnerToken]);
+
+  const checkStatus = async (isManual = true) => {
+      if (isManual) setChecking(true);
+      
+      try {
+          const response = await fetch('/api/check-payment-status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ paymentId, partnerAccessToken: partnerToken })
+          });
+          const data = await response.json();
+          
+          if (data.status === 'approved') {
+              if (isManual) alert("Pagamento confirmado com sucesso!");
+              onConfirm(); // Finaliza a reserva e fecha o modal
+              onClose();
+          } else {
+              if (isManual) alert(`O pagamento ainda está: ${data.status === 'pending' ? 'Pendente' : data.status}. Aguarde alguns instantes.`);
+          }
+      } catch (error) {
+          console.error("Erro ao verificar:", error);
+          if (isManual) alert("Erro ao verificar status. Tente novamente.");
+      } finally {
+          if (isManual) setChecking(false);
+      }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(pixData.qr_code);
+    alert("Código PIX copiado!");
+  };
+
   if (!isOpen || !pixData) return null;
-  const copyToClipboard = () => { navigator.clipboard.writeText(pixData.qr_code); alert("Código PIX copiado!"); };
+
   return (
     <ModalOverlay onClose={onClose}>
       <div className="p-6 text-center">
         <div className="w-16 h-16 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mx-auto mb-4"><Ticket size={32}/></div>
         <h2 className="text-xl font-bold text-slate-900 mb-2">Pagamento via PIX</h2>
+        
+        {/* Indicador Visual de Verificação Automática */}
+        <div className="flex items-center justify-center gap-2 mb-4 text-xs text-orange-500 font-bold bg-orange-50 p-2 rounded-lg animate-pulse">
+            <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+            Aguardando confirmação do banco...
+        </div>
+
         <p className="text-sm text-slate-500 mb-6">Escaneie o QR Code ou copie o código abaixo.</p>
-        {pixData.qr_code_base64 && <img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code Pix" className="mx-auto w-48 h-48 mb-6 border-2 border-slate-100 rounded-xl" />}
+        
+        {pixData.qr_code_base64 && (
+          <img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code Pix" className="mx-auto w-48 h-48 mb-6 border-2 border-slate-100 rounded-xl" />
+        )}
+        
         <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center gap-2 mb-6">
            <p className="text-xs text-slate-500 font-mono truncate flex-1">{pixData.qr_code}</p>
            <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><Copy size={16}/></button>
         </div>
-        <Button className="w-full mb-3" onClick={() => { onConfirm(); onClose(); }}>Já fiz o pagamento</Button>
+
+        <Button className="w-full mb-3" onClick={() => checkStatus(true)} disabled={checking}>
+            {checking ? 'Verificando...' : 'Já fiz o pagamento'}
+        </Button>
         <Button variant="ghost" className="w-full" onClick={onClose}>Cancelar</Button>
       </div>
     </ModalOverlay>
@@ -893,10 +953,9 @@ const CheckoutPage = () => {
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  // Removido 'loading', usamos 'processing'
   const [partnerToken, setPartnerToken] = useState(null);
   
-  // Lógica de Cupom
+  // Lógica de Cupom e Totais
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
@@ -915,6 +974,8 @@ const CheckoutPage = () => {
   
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
+  // NOVO STATE: Para guardar o ID do pagamento e verificar status
+  const [createdPaymentId, setCreatedPaymentId] = useState(null);
 
   // Helper para detectar bandeira
   const getPaymentMethodId = (number) => {
@@ -993,7 +1054,8 @@ const CheckoutPage = () => {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null, 
+      couponCode: couponCode ? couponCode.toUpperCase() : null,
+      paymentMethod: paymentMethod, // Salva se foi Pix ou Card
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -1049,12 +1111,17 @@ const CheckoutPage = () => {
           
           if (response.ok && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
+             // Salva o ID do pagamento para o modal poder consultar
+             setCreatedPaymentId(result.id); 
              setProcessing(false);
              setShowPixModal(true);
           } else {
              console.error("Erro Pix:", result);
-             const errorMsg = result.message || JSON.stringify(result);
-             alert(`Erro ao gerar Pix: ${errorMsg}`);
+             let errorMsg = result.message || JSON.stringify(result);
+             if (errorMsg.includes("user_allowed_only_in_test")) {
+                 errorMsg = "Erro de Ambiente: Conta de teste usada indevidamente. Use uma conta real.";
+             }
+             alert(`Não foi possível gerar o Pix: ${errorMsg}`);
              setProcessing(false);
           }
           return;
@@ -1116,7 +1183,6 @@ const CheckoutPage = () => {
            handleConfirm();
        } else { 
            console.error("Erro Pagamento:", result);
-           // Mostra o erro real do MP para facilitar debug
            const errorMsg = result.message || (result.api_response ? JSON.stringify(result.api_response) : "Erro desconhecido");
            alert(`Pagamento recusado: ${errorMsg}`); 
            setProcessing(false); 
@@ -1131,7 +1197,17 @@ const CheckoutPage = () => {
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
       <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado!" message="Sua reserva foi confirmada. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
-      <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={handleConfirm} />
+      
+      {/* MODAL PIX COM VERIFICAÇÃO AUTOMÁTICA */}
+      <PixModal 
+          isOpen={showPixModal} 
+          onClose={()=>setShowPixModal(false)} 
+          pixData={pixData} 
+          onConfirm={handleConfirm}
+          paymentId={createdPaymentId}
+          partnerToken={partnerToken}
+      />
+      
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
       
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
