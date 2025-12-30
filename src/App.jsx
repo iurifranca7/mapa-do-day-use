@@ -10,7 +10,7 @@ import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   MapPin, Search, User, CheckCircle, 
-  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone,
+  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
 } from 'lucide-react';
 
 const STATE_NAMES = {
@@ -1485,6 +1485,10 @@ const UserDashboard = () => {
   const [trips, setTrips] = useState([]);
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [user, setUser] = useState(null);
+  
+  // NOVOS ESTADOS PARA MODAIS
+  const [feedback, setFeedback] = useState(null); // { type: 'success'|'error', title: '', msg: '' }
+  const [confirmAction, setConfirmAction] = useState(null); // { id: string } para guardar o ID a cancelar
 
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, u => {
@@ -1497,48 +1501,64 @@ const UserDashboard = () => {
      return unsub;
   }, []);
 
-  const handleCancel = async (id) => {
-    if(confirm("Deseja realmente cancelar esta reserva? Essa ação não pode ser desfeita.")) {
-       // 1. Captura os dados da reserva para o e-mail antes de excluir
-       const tripToCancel = trips.find(t => t.id === id);
+  // 1. Solicita confirmação (Abre Modal)
+  const requestCancel = (id) => {
+      setConfirmAction({ id });
+  };
 
-       try {
-           await deleteDoc(doc(db, "reservations", id));
-           setTrips(trips.filter(t => t.id !== id));
-           
-           // 2. Envia E-mail de Cancelamento
-           if (tripToCancel) {
-               const emailHtml = `
-                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
-                    <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
-                        <h1 style="margin: 0; font-size: 24px;">Reserva Cancelada</h1>
-                    </div>
-                    <div style="padding: 20px;">
-                        <p>Olá, <strong>${tripToCancel.guestName || 'Viajante'}</strong>.</p>
-                        <p>Sua reserva foi cancelada conforme solicitado através da plataforma.</p>
-                        
-                        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #333;">${tripToCancel.itemName}</h3>
-                            <p style="margin: 5px 0;"><strong>📅 Data original:</strong> ${tripToCancel.date?.split('-').reverse().join('/')}</p>
-                            <p style="margin: 5px 0;"><strong>📍 Código:</strong> ${tripToCancel.id?.slice(0, 6).toUpperCase()}</p>
-                        </div>
+  // 2. Executa o cancelamento (Ação do Modal)
+  const executeCancel = async () => {
+    if (!confirmAction) return;
+    const { id } = confirmAction;
+    
+    // Captura os dados da reserva para o e-mail antes de excluir da lista visual
+    const tripToCancel = trips.find(t => t.id === id);
 
-                        <p style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
-                           <strong>Importante sobre Reembolso:</strong> O estorno de valores pagos depende da política de cancelamento específica deste estabelecimento e do prazo em que o cancelamento foi realizado. Entre em contato diretamente com o local para mais detalhes.
-                        </p>
-                    </div>
-                </div>
-               `;
-               // Dispara sem await para não travar a interface
-               sendEmail(tripToCancel.guestEmail, "Reserva Cancelada - Mapa do Day Use", emailHtml);
-           }
+    try {
+        await deleteDoc(doc(db, "reservations", id));
+        setTrips(trips.filter(t => t.id !== id));
+        
+        // Envia E-mail de Cancelamento
+        if (tripToCancel) {
+            const emailHtml = `
+             <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
+                 <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
+                     <h1 style="margin: 0; font-size: 24px;">Reserva Cancelada</h1>
+                 </div>
+                 <div style="padding: 20px;">
+                     <p>Olá, <strong>${tripToCancel.guestName || 'Viajante'}</strong>.</p>
+                     <p>Sua reserva foi cancelada conforme solicitado através da plataforma.</p>
+                     
+                     <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                         <h3 style="margin-top: 0; color: #333;">${tripToCancel.itemName}</h3>
+                         <p style="margin: 5px 0;"><strong>📅 Data original:</strong> ${tripToCancel.date?.split('-').reverse().join('/')}</p>
+                         <p style="margin: 5px 0;"><strong>📍 Código:</strong> ${tripToCancel.id?.slice(0, 6).toUpperCase()}</p>
+                     </div>
 
-           alert("Reserva cancelada com sucesso. Enviamos um comprovante para seu e-mail.");
+                     <p style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                        <strong>Importante sobre Reembolso:</strong> O estorno de valores pagos depende da política de cancelamento específica deste estabelecimento. Entre em contato diretamente com o local para mais detalhes.
+                     </p>
+                 </div>
+             </div>
+            `;
+            sendEmail(tripToCancel.guestEmail, "Reserva Cancelada - Mapa do Day Use", emailHtml);
+        }
 
-       } catch (error) {
-           console.error("Erro ao cancelar:", error);
-           alert("Houve um erro ao tentar cancelar. Tente novamente.");
-       }
+        setFeedback({ 
+            type: 'success', 
+            title: 'Cancelado', 
+            msg: 'Sua reserva foi cancelada. Enviamos um comprovante para seu e-mail.' 
+        });
+
+    } catch (error) {
+        console.error("Erro ao cancelar:", error);
+        setFeedback({ 
+            type: 'error', 
+            title: 'Erro', 
+            msg: 'Não foi possível cancelar a reserva. Tente novamente ou contate o suporte.' 
+        });
+    } finally {
+        setConfirmAction(null); // Fecha o modal de confirmação
     }
   };
 
@@ -1549,6 +1569,48 @@ const UserDashboard = () => {
   return (
      <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
         <VoucherModal isOpen={!!selectedVoucher} trip={selectedVoucher} onClose={() => setSelectedVoucher(null)} />
+        
+        {/* MODAL DE FEEDBACK (Sucesso/Erro) */}
+        {feedback && createPortal(
+            <ModalOverlay onClose={() => setFeedback(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                        feedback.type === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                    }`}>
+                        {feedback.type === 'success' ? <CheckCircle size={32}/> : <AlertCircle size={32}/>}
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">{feedback.title}</h2>
+                    <p className="text-slate-600 mb-6 text-sm">{feedback.msg}</p>
+                    <Button onClick={() => setFeedback(null)} className="w-full justify-center">Fechar</Button>
+                </div>
+            </ModalOverlay>,
+            document.body
+        )}
+
+        {/* MODAL DE CONFIRMAÇÃO DE CANCELAMENTO */}
+        {confirmAction && createPortal(
+            <ModalOverlay onClose={() => setConfirmAction(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                    <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Trash2 size={32}/>
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">Cancelar Reserva?</h2>
+                    <p className="text-slate-600 mb-6 text-sm">
+                        Tem certeza que deseja cancelar? Essa ação não pode ser desfeita e está sujeita às regras de reembolso do local.
+                    </p>
+                    <div className="flex gap-3">
+                        <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">
+                            Voltar
+                        </Button>
+                        <Button onClick={executeCancel} className="flex-1 justify-center bg-red-500 hover:bg-red-600 text-white border-none shadow-red-200">
+                            Sim, Cancelar
+                        </Button>
+                    </div>
+                </div>
+            </ModalOverlay>,
+            document.body
+        )}
+
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-bold text-slate-900">Meus Ingressos</h1>
         </div>
@@ -1562,7 +1624,6 @@ const UserDashboard = () => {
                       <h3 className="font-bold text-lg text-slate-900">{t.itemName}</h3>
                       <p className="text-sm text-slate-500 flex items-center gap-1 mt-1"><CalendarIcon size={14}/> {t.date}</p>
                       
-                      {/* RESUMO COMPLETO SOLICITADO */}
                       <div className="text-xs text-slate-500 mt-2 font-medium flex gap-3 flex-wrap">
                           <span className="flex items-center gap-1"><User size={12}/> {t.adults} Adultos</span>
                           {t.children > 0 && <span>• {t.children} Crianças</span>}
@@ -1576,7 +1637,6 @@ const UserDashboard = () => {
                           <span className="font-bold text-slate-900">{formatBRL(t.total)}</span>
                       </div>
 
-                      {/* CÓDIGO EVIDENTE NO CARD */}
                       <div className="mt-2 text-xs font-mono bg-slate-50 p-1 px-2 rounded w-fit border border-slate-200 text-slate-500">
                          #{t.id?.slice(0,6).toUpperCase()}
                       </div>
@@ -1585,7 +1645,7 @@ const UserDashboard = () => {
                  
                  <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
                     <Button variant="outline" className="px-4 py-2 h-auto text-xs" onClick={() => setSelectedVoucher(t)}>Ver Voucher</Button>
-                    {t.status !== 'cancelled' && <Button variant="danger" className="px-4 py-2 h-auto text-xs bg-white text-red-500 hover:bg-red-50 border-red-100" onClick={() => handleCancel(t.id)}>Cancelar</Button>}
+                    {t.status !== 'cancelled' && <Button variant="danger" className="px-4 py-2 h-auto text-xs bg-white text-red-500 hover:bg-red-50 border-red-100" onClick={() => requestCancel(t.id)}>Cancelar</Button>}
                  </div>
               </div>
            ))}
@@ -2064,12 +2124,24 @@ const PartnerDashboard = () => {
         
         {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"><h2 className="text-xl font-bold mb-4">{confirmAction.type === 'pause' ? 'Pausar Anúncio?' : 'Reativar Anúncio?'}</h2><div className="flex gap-2"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className={`flex-1 justify-center ${confirmAction.type === 'pause' ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>{confirmAction.type === 'pause' ? 'Pausar' : 'Reativar'}</Button></div></div></ModalOverlay>, document.body)}
         
-        {/* CABEÇALHO */}
-        <div className="flex flex-col md:flex-row justify-between items-end mb-8 border-b border-slate-200 pb-4 gap-4">
-           <div><h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1><p className="text-slate-500">Acompanhe seu negócio.</p></div>
-           <div className="flex gap-2 items-center">
-              {!mpConnected ? (<Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600">Conectar Mercado Pago</Button>) : (<div className="flex items-center gap-2">{tokenType === 'TEST' && <div className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full border border-yellow-200">⚠️ SANDBOX</div>}{tokenType === 'PROD' && <div className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200">✅ PRODUÇÃO</div>}<div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold flex gap-2 items-center border border-slate-200"><CheckCircle size={18} className="text-green-600"/> Conectado</div></div>)}
-              <Button onClick={()=>navigate('/partner/new')}>+ Criar Anúncio</Button>
+        {/* CABEÇALHO COM ALINHAMENTO CORRIGIDO */}
+        <div className="flex flex-col md:flex-row justify-between items-center md:items-end mb-8 border-b border-slate-200 pb-4 gap-4">
+           <div className="text-center md:text-left">
+               <h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1>
+               <p className="text-slate-500">Acompanhe seu negócio.</p>
+           </div>
+           
+           <div className="flex flex-col md:flex-row gap-2 items-center w-full md:w-auto">
+              {!mpConnected ? (
+                  <Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600 w-full md:w-auto text-sm">Conectar Mercado Pago</Button>
+              ) : (
+                  <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                      {tokenType === 'TEST' && <div className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full border border-yellow-200 text-center w-full md:w-auto">⚠️ SANDBOX</div>}
+                      {tokenType === 'PROD' && <div className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200 text-center w-full md:w-auto">✅ PRODUÇÃO</div>}
+                      <div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold flex gap-2 items-center justify-center border border-slate-200 w-full md:w-auto"><CheckCircle size={18} className="text-green-600"/> Conectado</div>
+                  </div>
+              )}
+              <Button onClick={()=>navigate('/partner/new')} className="w-full md:w-auto">+ Criar Anúncio</Button>
            </div>
         </div>
 
@@ -2525,11 +2597,43 @@ const PartnerNew = () => {
                   </div>
               </div>
               
+              {/* CUPONS (Responsivo) */}
               <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 mt-4">
-                 <div className="flex justify-between items-center mb-2"><label className="text-sm font-bold text-yellow-800">Criar Cupons</label><Tag size={16} className="text-yellow-600"/></div>
-                 <div className="flex gap-2 mb-2"><input className="border p-2 rounded-lg flex-1 text-sm uppercase" placeholder="CÓDIGO" value={newCouponCode} onChange={e=>setNewCouponCode(e.target.value)} /><input className="border p-2 rounded-lg w-24 text-sm" placeholder="%" type="number" value={newCouponPerc} onChange={e=>setNewCouponPerc(e.target.value)} /><Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 border-none">Add</Button></div>
-                 <div className="space-y-1">{coupons.map((c, i) => (<div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span><button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div>))}</div>
-              </div>
+                 <div className="flex justify-between items-center mb-2">
+                    <label className="text-sm font-bold text-yellow-800">Criar Cupons</label>
+                    <Tag size={16} className="text-yellow-600"/>
+                 </div>
+                 
+                 <div className="flex flex-col md:flex-row gap-2 mb-2">
+                    <input 
+                        className="border p-2 rounded-lg flex-1 text-sm uppercase w-full" 
+                        placeholder="CÓDIGO (Ex: VERAO10)" 
+                        value={newCouponCode} 
+                        onChange={e=>setNewCouponCode(e.target.value)} 
+                    />
+                    <div className="flex gap-2">
+                        <input 
+                            className="border p-2 rounded-lg w-24 text-sm" 
+                            placeholder="Desc %" 
+                            type="number" 
+                            value={newCouponPerc} 
+                            onChange={e=>setNewCouponPerc(e.target.value)} 
+                        />
+                        <Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 border-none flex-1 md:flex-none">
+                            Add
+                        </Button>
+                    </div>
+                 </div>
+                 
+                 <div className="space-y-1">
+                    {coupons.map((c, i) => (
+                        <div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm">
+                            <span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span>
+                            <button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                        </div>
+                    ))}
+                </div>
+               </div>
            </div>
 
            {/* 5. INCLUSÕES E REGRAS (CHECKLISTS) */}
@@ -2677,6 +2781,12 @@ const Layout = ({ children }) => {
   const [showLogin, setShowLogin] = useState(false);
   const [logoError, setLogoError] = useState(false); 
   const navigate = useNavigate();
+  const { pathname } = useLocation(); // Hook para saber a página atual
+
+  // 1. CORREÇÃO DE SCROLL: Rola para o topo sempre que a rota mudar
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -2721,8 +2831,7 @@ const Layout = ({ children }) => {
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
                     onError={(e) => {
-                        console.error("Erro ao carregar logo no Header. Verifique se o arquivo 'logo.png' está na pasta 'public'.");
-                        e.currentTarget.style.display = 'none'; // Garante que a imagem quebrada suma
+                        e.currentTarget.style.display = 'none';
                         setLogoError(true); 
                     }} 
                  />
@@ -2731,22 +2840,33 @@ const Layout = ({ children }) => {
               )}
            </div>
            
-           <div className="flex items-center gap-4">
+           <div className="flex items-center gap-2 md:gap-4">
               {!user ? (
                  <>
-                   <button onClick={()=>{navigate('/partner-register')}} className="text-sm font-bold text-slate-500 hover:text-[#0097A8] hidden md:block">Seja um parceiro</button>
-                   <Button variant="ghost" onClick={()=>setShowLogin(true)} className="font-bold">Entrar</Button>
+                   {/* 2. CORREÇÃO MOBILE: Removido 'hidden', ajustado tamanho da fonte */}
+                   <button onClick={()=>{navigate('/partner-register')}} className="text-xs md:text-sm font-bold text-slate-500 hover:text-[#0097A8] mr-2">Seja parceiro</button>
+                   <Button variant="ghost" onClick={()=>setShowLogin(true)} className="font-bold px-3 md:px-4">Entrar</Button>
                  </>
               ) : (
-                 <div className="flex gap-4 items-center">
-                    {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')}>Painel</Button>}
-                    {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')}>Portaria</Button>}
+                 <div className="flex gap-2 md:gap-4 items-center">
+                    {/* Botões do Header condicionados ao Perfil */}
+                    {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
+                    
+                    {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
+                    
                     {user.role !== 'partner' && user.role !== 'staff' && (
-                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')}>Meus Ingressos</Button>
+                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>
                     )}
-                    <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm" title={user.email}>
+
+                    {/* 3. CORREÇÃO DE CLIQUE NO AVATAR: Mudado de div para button para melhor resposta ao toque */}
+                    <button 
+                        className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform" 
+                        title={user.email}
+                        onClick={()=>navigate('/profile')}
+                    >
                         {user.email[0].toUpperCase()}
-                    </div>
+                    </button>
+                    
                     <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Sair"><LogOut size={20}/></button>
                  </div>
               )}
@@ -2758,8 +2878,6 @@ const Layout = ({ children }) => {
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
             <div className="grid md:grid-cols-4 gap-8 mb-8">
-               
-               {/* Coluna 1: Marca e Contato */}
                <div className="col-span-1 md:col-span-2">
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
@@ -2767,10 +2885,7 @@ const Layout = ({ children }) => {
                            src="/logo.png" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
-                           onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                                setLogoError(true);
-                           }} 
+                           onError={() => setLogoError(true)} 
                         />
                      ) : (
                         <MapIcon className="h-6 w-6 text-[#0097A8]" />
@@ -2784,18 +2899,15 @@ const Layout = ({ children }) => {
                   </a>
                </div>
                
-               {/* Coluna 2: Institucional */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
-                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
                      <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
                   </ul>
                </div>
 
-               {/* Coluna 3: Redes Sociais */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
                   <div className="flex gap-3">
@@ -2809,7 +2921,6 @@ const Layout = ({ children }) => {
                </div>
             </div>
             
-            {/* Rodapé Inferior */}
             <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
                <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
                <p className="flex items-center gap-1">
@@ -2861,6 +2972,7 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [items, setItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showMobileFilters, setShowMobileFilters] = useState(false); // Novo state para mobile
 
   // Filtros
   const [maxPrice, setMaxPrice] = useState("");
@@ -2870,7 +2982,7 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [selectedDays, setSelectedDays] = useState([]);
   const [selectedPets, setSelectedPets] = useState([]);
 
-  // SEO Dinâmico com Nome do Estado
+  // SEO
   const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
   const locationTitle = cityParam 
     ? `${cityParam.charAt(0).toUpperCase() + cityParam.slice(1).replace(/-/g, ' ')}, ${stateParam?.toUpperCase()}` 
@@ -2891,49 +3003,27 @@ const ListingPage = ({ stateParam, cityParam }) => {
     fetchItems();
   }, [stateParam]);
 
-  // Lógica de Filtragem Avançada
+  // Lógica de Filtragem (Mantida)
   useEffect(() => {
     let result = items;
-
-    // 1. Cidade
     if (cityParam) result = result.filter(i => generateSlug(i.city) === cityParam);
     else if (filterCity) result = result.filter(i => generateSlug(i.city) === filterCity);
-
-    // 2. Preço Máximo (Input manual)
     if (maxPrice) result = result.filter(i => Number(i.priceAdult) <= Number(maxPrice));
-
-    // 3. Comodidades (AND - tem que ter todas as selecionadas)
-    if (selectedAmenities.length > 0) {
-        result = result.filter(i => selectedAmenities.every(a => (i.amenities || []).includes(a)));
-    }
-
-    // 4. Pensão (OR - tem que ter pelo menos uma das selecionadas)
-    if (selectedMeals.length > 0) {
-        result = result.filter(i => selectedMeals.some(m => (i.meals || []).includes(m)));
-    }
-
-    // 5. Dias de Funcionamento (OR - funcionar em pelo menos um dos dias selecionados)
-    if (selectedDays.length > 0) {
-        result = result.filter(i => selectedDays.some(dayIdx => (i.availableDays || []).includes(dayIdx)));
-    }
-
-    // 6. Pets (Lógica específica de porte)
+    if (selectedAmenities.length > 0) result = result.filter(i => selectedAmenities.every(a => (i.amenities || []).includes(a)));
+    if (selectedMeals.length > 0) result = result.filter(i => selectedMeals.some(m => (i.meals || []).includes(m)));
+    if (selectedDays.length > 0) result = result.filter(i => selectedDays.some(dayIdx => (i.availableDays || []).includes(dayIdx)));
     if (selectedPets.length > 0) {
         result = result.filter(i => {
             if (selectedPets.includes("Não aceita animais")) return !i.petAllowed;
             if (!i.petAllowed) return false;
-            
-            // Se o filtro pede um porte específico, verifica se o local aceita esse porte ou "Todos/Qualquer"
-            // Ex: Filtro "Pequeno porte" -> Local aceita "Pequeno", "Médio" (implica pequeno), "Todos"
             return selectedPets.some(p => {
-                const size = p.split(' ')[3]; // "pequeno", "médio", "grande"
-                if (!size) return true; // Caso genérico
+                const size = p.split(' ')[3]; 
+                if (!size) return true; 
                 const localPetSize = (i.petSize || "").toLowerCase();
                 return localPetSize.includes(size) || localPetSize.includes("qualquer") || localPetSize.includes("todos");
             });
         });
     }
-
     setFilteredItems(result);
   }, [items, cityParam, filterCity, maxPrice, selectedAmenities, selectedMeals, selectedDays, selectedPets]);
 
@@ -2948,9 +3038,24 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
+        
+        {/* TÍTULO PRINCIPAL (Agora fora das colunas para aparecer sempre) */}
+        <div className="mb-6">
+            <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
+            <p className="text-slate-500">{filteredItems.length} opções encontradas</p>
+        </div>
+
         <div className="flex flex-col md:flex-row gap-8">
-            {/* BARRA LATERAL */}
-            <div className="w-full md:w-1/4 space-y-6 h-fit sticky top-24">
+            
+            {/* BOTÃO MOBILE PARA ABRIR FILTROS */}
+            <div className="md:hidden mb-4">
+                <Button variant="outline" className="w-full flex items-center justify-center gap-2" onClick={() => setShowMobileFilters(!showMobileFilters)}>
+                    <Filter size={18}/> {showMobileFilters ? "Fechar Filtros" : "Filtrar Busca"}
+                </Button>
+            </div>
+
+            {/* BARRA LATERAL (Escondida no mobile a menos que ativada) */}
+            <div className={`w-full md:w-1/4 space-y-6 h-fit sticky top-24 ${showMobileFilters ? 'block' : 'hidden md:block'}`}>
                 <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
                     <div className="flex justify-between items-center">
                         <h3 className="font-bold text-slate-900 flex items-center gap-2"><List size={18}/> Filtros</h3>
@@ -3017,8 +3122,6 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
             {/* LISTAGEM */}
             <div className="flex-1">
-                <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
-                <p className="text-slate-500 mb-6">{filteredItems.length} opções encontradas</p>
                 {filteredItems.length === 0 ? (
                     <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
                         <p className="text-slate-400">Nenhum local encontrado com esses filtros.</p>
@@ -3026,7 +3129,13 @@ const ListingPage = ({ stateParam, cityParam }) => {
                     </div>
                 ) : (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredItems.map(item => <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />)}
+                        {filteredItems.map(item => (
+                            <DayUseCard 
+                                key={item.id} 
+                                item={item} 
+                                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+                            />
+                        ))}
                     </div>
                 )}
             </div>
@@ -3039,31 +3148,36 @@ const RouteResolver = () => {
     const { state, cityOrSlug } = useParams();
     const [decision, setDecision] = useState(null); // 'listing', 'details', 'loading'
     
-    // Se não tiver o segundo parametro, é listagem de estado
-    if (!cityOrSlug) return <ListingPage stateParam={state} />;
-
-    // Se tiver, precisamos descobrir se é uma cidade ou um local
+    // CORREÇÃO: O useEffect agora roda SEMPRE, independentemente dos parâmetros.
+    // A lógica condicional fica DENTRO dele, respeitando as regras do React.
     useEffect(() => {
         const checkRoute = async () => {
-            // 1. Tenta achar um local com esse slug
+            // Caso 1: Se não tem o segundo parâmetro (ex: /mg), é listagem de estado
+            if (!cityOrSlug) {
+                setDecision('listing');
+                return;
+            }
+
+            // Caso 2: Tem segundo parâmetro, verifica se é um Local (Detalhes) ou Cidade (Listagem)
             const q = query(collection(db, "dayuses"));
             const snap = await getDocs(q);
             const foundItem = snap.docs.find(d => generateSlug(d.data().name) === cityOrSlug);
 
             if (foundItem) {
-                // É um local! Renderiza DetailsPage
                 setDecision('details');
             } else {
-                // Não é local, assume que é cidade (ListingPage vai tentar filtrar)
                 setDecision('listing');
             }
         };
         checkRoute();
     }, [state, cityOrSlug]);
 
-    if (!decision) return <div className="text-center py-20">Carregando...</div>;
+    // Exibe loading enquanto decide
+    if (!decision) return <div className="text-center py-20 text-slate-400 animate-pulse">Carregando...</div>;
 
+    // Renderiza com base na decisão
     if (decision === 'details') return <DetailsPage />;
+    
     return <ListingPage stateParam={state} cityParam={cityOrSlug} />;
 };
 
