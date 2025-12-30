@@ -44,6 +44,8 @@ try {
 const BASE_URL = import.meta.env.VITE_BASE_URL || window.location.origin;
 const BRAND_COLOR = "#0097A8";
 
+
+
 // --- ESTILOS GLOBAIS ---
 const GlobalStyles = () => (
   <style>{`
@@ -59,6 +61,24 @@ const GlobalStyles = () => (
 );
 
 // --- UTILITÁRIOS ---
+
+// Função para enviar e-mail (mailtrap)
+const sendEmail = async (to, subject, htmlContent) => {
+    try {
+        await fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                to: to,
+                subject: subject,
+                html: htmlContent
+            })
+        });
+        console.log(`E-mail enviado para ${to}`);
+    } catch (error) {
+        console.error("Falha ao enviar e-mail:", error);
+    }
+};
 const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 
 const generateSlug = (text) => {
@@ -1062,22 +1082,66 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  const handleConfirm = async () => {
-    await addDoc(collection(db, "reservations"), {
-      ...bookingData, 
-      total: finalTotal,
-      discount: discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null,
-      paymentMethod: paymentMethod, // Salva se foi Pix ou Card
-      userId: user.uid, 
-      ownerId: bookingData.item.ownerId,
-      createdAt: new Date(), 
-      status: 'confirmed', 
-      guestName: user.displayName, 
-      guestEmail: user.email
-    });
-    setProcessing(false);
-    setShowSuccess(true);
+    const handleConfirm = async () => {
+    try {
+        // 1. Salva no Firebase e captura a referência do documento criado
+        const docRef = await addDoc(collection(db, "reservations"), {
+          ...bookingData, 
+          total: finalTotal,
+          discount: discount,
+          couponCode: couponCode ? couponCode.toUpperCase() : null,
+          paymentMethod: paymentMethod,
+          userId: user.uid, 
+          ownerId: bookingData.item.ownerId,
+          createdAt: new Date(), 
+          status: 'confirmed', 
+          guestName: user.displayName, 
+          guestEmail: user.email
+        });
+
+        // 2. Pega o ID gerado para usar no voucher
+        const voucherId = docRef.id.slice(0, 6).toUpperCase();
+
+        // 3. Monta o HTML do E-mail (Bonito e organizado)
+        const emailHtml = `
+            <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
+                <div style="background-color: #0097A8; padding: 20px; text-align: center; color: white;">
+                    <h1 style="margin: 0; font-size: 24px;">Reserva Confirmada! 🎉</h1>
+                </div>
+                <div style="padding: 20px;">
+                    <p>Olá, <strong>${user.displayName}</strong>!</p>
+                    <p>Sua reserva para o Day Use foi realizada com sucesso. Estamos ansiosos para te receber!</p>
+                    
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #0097A8;">${bookingData.item.name}</h3>
+                        <p style="margin: 5px 0;"><strong>📅 Data:</strong> ${bookingData.date.split('-').reverse().join('/')}</p>
+                        <p style="margin: 5px 0;"><strong>📍 Código do Voucher:</strong> <span style="font-size: 18px; font-weight: bold; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px dashed #ccc;">${voucherId}</span></p>
+                    </div>
+
+                    <p>Para ver o QR Code de acesso e o endereço completo, acesse a área "Meus Ingressos" no site.</p>
+                    
+                    <div style="text-align: center; margin-top: 30px;">
+                        <a href="https://mapadodayuse.com/minhas-viagens" style="background-color: #0097A8; color: white; padding: 12px 24px; text-decoration: none; border-radius: 50px; font-weight: bold;">Ver Meu Voucher</a>
+                    </div>
+                </div>
+                <div style="background-color: #f1f1f1; padding: 10px; text-align: center; font-size: 12px; color: #666;">
+                    © 2026 Mapa do Day Use. Todos os direitos reservados.
+                </div>
+            </div>
+        `;
+
+        // 4. Dispara o envio do e-mail (Sem await para não travar a tela de sucesso)
+        sendEmail(user.email, "Sua reserva foi confirmada! 🎟️", emailHtml);
+
+        // 5. Finaliza a UI
+        setProcessing(false);
+        setShowSuccess(true);
+
+    } catch (error) {
+        console.error("Erro ao confirmar reserva:", error);
+        alert("Houve um erro ao salvar sua reserva. Por favor, contate o suporte.");
+        setProcessing(false);
+    }
   };
 
   const processCardPayment = async () => {
