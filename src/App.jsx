@@ -98,10 +98,40 @@ const validateCNPJ = (cnpj) => cnpj.replace(/[^\d]+/g, '').length === 14;
 const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/; const match = url.match(regExp); return (match && match[2].length === 11) ? match[2] : null; };
 
 // --- HOOK DE SEO (DEFINIDO NO INÍCIO PARA EVITAR ERROS) ---
-const useSEO = (title, description) => {
+const useSEO = (title, description, noIndex = false) => {
   useEffect(() => {
+    // 1. Título
     document.title = title ? `${title} | Mapa do Day Use` : "Mapa do Day Use";
-  }, [title, description]);
+    
+    // 2. Meta Description
+    let metaDesc = document.querySelector("meta[name='description']");
+    if (!metaDesc) {
+        metaDesc = document.createElement("meta");
+        metaDesc.name = "description";
+        document.head.appendChild(metaDesc);
+    }
+    metaDesc.content = description || "Encontre e reserve os melhores day uses perto de você.";
+
+    // 3. Meta Robots (Controle de Indexação)
+    let metaRobots = document.querySelector("meta[name='robots']");
+    if (!metaRobots) {
+        metaRobots = document.createElement("meta");
+        metaRobots.name = "robots";
+        document.head.appendChild(metaRobots);
+    }
+    
+    if (noIndex) {
+        metaRobots.content = "noindex, nofollow"; // BLOQUEIA GOOGLE
+    } else {
+        metaRobots.content = "index, follow"; // PERMITE GOOGLE
+    }
+
+    // Limpeza ao desmontar (volta ao padrão index para não afetar a próxima página)
+    return () => {
+        metaRobots.content = "index, follow";
+    };
+
+  }, [title, description, noIndex]);
 };
 
 // --- COMPONENTES VISUAIS ---

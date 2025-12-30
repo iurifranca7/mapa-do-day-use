@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /checkout
+Disallow: /minhas-viagens
+Disallow: /profile
+Disallow: /partner
+Disallow: /partner/*
+Disallow: /partner-register
+Disallow: /portaria
+Disallow: /api/
