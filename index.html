@@ -1,34 +1,29 @@
 <!doctype html>
 <html lang="pt-BR">
   <head>
-
     <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-J585RRVR40"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-J585RRVR40"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-J585RRVR40');
+    </script>
 
-  gtag('config', 'G-J585RRVR40');
-</script>
-
-<!-- Meta Pixel Code | iurifrancast-->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '1524512348663953');
-fbq('track', 'PageView');
-</script>
-<noscript><img height="1" width="1" style="display:none"
-src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
-/></noscript>
-<!-- End Meta Pixel Code | iurifrancast -->
+    <!-- Meta Pixel Code | iurifrancast (Parte do Script) -->
+    <script>
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '1524512348663953');
+    fbq('track', 'PageView');
+    </script>
+    <!-- End Meta Pixel Code -->
 
     <meta charset="UTF-8" />
     
@@ -37,7 +32,7 @@ src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
-    <!-- Meta Tags Padrão (Serão sobrescritas pelo React, mas bom ter de backup) -->
+    <!-- Meta Tags Padrão -->
     <title>Day Use em BH e Região | Mapa do Day Use</title>
     <meta name="description" content="Encontre e reserve os melhores day uses em hotéis, pousadas e resorts de Belo Horizonte e região. Piscinas, lazer e diversão perto de você. Confira!" />
     
@@ -46,11 +41,19 @@ src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-        <!-- ADICIONE ESTA LINHA AQUI: -->
+    <!-- SDK Mercado Pago -->
     <script src="https://sdk.mercadopago.com/js/v2"></script>
     
   </head>
   <body>
+    <!-- Meta Pixel Code (Parte NoScript movida para cá para corrigir o erro) -->
+    <noscript>
+      <img height="1" width="1" style="display:none"
+      src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
+      />
+    </noscript>
+    <!-- End Meta Pixel Code -->
+
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

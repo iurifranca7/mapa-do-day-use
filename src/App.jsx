@@ -4,13 +4,35 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification } from 'firebase/auth';
+import { initializeApp, getApp } from "firebase/app";
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification, getAuth } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { 
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone,
 } from 'lucide-react';
+
+const STATE_NAMES = {
+    'MG': 'Minas Gerais', 'SP': 'São Paulo', 'RJ': 'Rio de Janeiro', 'ES': 'Espírito Santo',
+    'BA': 'Bahia', 'SC': 'Santa Catarina', 'PR': 'Paraná', 'RS': 'Rio Grande do Sul',
+    'GO': 'Goiás', 'DF': 'Distrito Federal'
+};
+
+const AMENITIES_LIST = [
+    "Piscina", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cachoeira artificial",
+    "Acesso à represa / lago", "Bicicletas", "Quadriciclo", "Passeio a cavalo", "Caiaque / Stand up",
+    "Trilha", "Pesque e solte", "Fazendinha / Animais", "Espaço Kids", "Recreação infantil",
+    "Quadra de areia", "Campo de futebol", "Campo de vôlei e peteca", "Beach tennis / futvôlei",
+    "Academia", "Sauna", "Hidromassagem externa", "Hidromassagem / Banheira / Ofurô", "Massagem",
+    "Espaço para meditação", "Capela", "Redes e balanços", "Vista / Mirante", "Fogo de chão / Lareira",
+    "Churrasqueira", "Cozinha equipada", "Bar / Restaurante", "Sala de jogos", "Música ao vivo", 
+    "Estacionamento", "Wi-Fi"
+];
+
+const MEALS_LIST = ["Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas"];
+const WEEK_DAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
 
 // --- CONFIGURAÇÃO ---
 try {
@@ -110,6 +132,7 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
 
 const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken }) => {
   const [checking, setChecking] = useState(false);
+  const [statusMsg, setStatusMsg] = useState(null); // Novo estado para mensagens visuais
 
   // Robô de Verificação Automática (Polling)
   useEffect(() => {
@@ -117,15 +140,21 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
     if (isOpen && paymentId && partnerToken) {
       // Verifica a cada 5 segundos
       interval = setInterval(() => {
-        checkStatus(false); // false = verificação silenciosa (sem alertas)
+        checkStatus(false); 
       }, 5000);
     }
-    // Limpa o robô ao fechar o modal
-    return () => clearInterval(interval);
+    // Limpa estados ao fechar
+    return () => {
+        clearInterval(interval);
+        setStatusMsg(null);
+    };
   }, [isOpen, paymentId, partnerToken]);
 
   const checkStatus = async (isManual = true) => {
-      if (isManual) setChecking(true);
+      if (isManual) {
+          setChecking(true);
+          setStatusMsg(null); // Limpa msg anterior ao tentar de novo
+      }
       
       try {
           const response = await fetch('/api/check-payment-status', {
@@ -136,15 +165,24 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
           const data = await response.json();
           
           if (data.status === 'approved') {
-              if (isManual) alert("Pagamento confirmado com sucesso!");
-              onConfirm(); // Finaliza a reserva e fecha o modal
-              onClose();
+              setStatusMsg({ type: 'success', text: "Pagamento confirmado! Finalizando..." });
+              // Pequeno delay para o usuário ler a mensagem de sucesso antes de fechar
+              setTimeout(() => {
+                  onConfirm(); 
+                  onClose();
+              }, 1500);
           } else {
-              if (isManual) alert(`O pagamento ainda está: ${data.status === 'pending' ? 'Pendente' : data.status}. Aguarde alguns instantes.`);
+              if (isManual) {
+                  const statusText = data.status === 'pending' ? 'Pendente' : data.status;
+                  setStatusMsg({ 
+                      type: 'info', 
+                      text: `O banco ainda está processando (Status: ${statusText}). Aguarde mais alguns segundos e tente novamente.` 
+                  });
+              }
           }
       } catch (error) {
           console.error("Erro ao verificar:", error);
-          if (isManual) alert("Erro ao verificar status. Tente novamente.");
+          if (isManual) setStatusMsg({ type: 'error', text: "Não foi possível verificar o status agora. Tente novamente." });
       } finally {
           if (isManual) setChecking(false);
       }
@@ -152,7 +190,7 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(pixData.qr_code);
-    alert("Código PIX copiado!");
+    setStatusMsg({ type: 'success', text: "Código copia e cola copiado com sucesso!" });
   };
 
   if (!isOpen || !pixData) return null;
@@ -180,135 +218,23 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
            <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><Copy size={16}/></button>
         </div>
 
+        {/* ÁREA DE FEEDBACK VISUAL (Substitui o Alert) */}
+        {statusMsg && (
+            <div className={`text-xs p-3 rounded-xl mb-4 font-medium animate-fade-in ${
+                statusMsg.type === 'success' ? 'bg-green-100 text-green-700' :
+                statusMsg.type === 'error' ? 'bg-red-100 text-red-700' :
+                'bg-blue-50 text-blue-700'
+            }`}>
+                {statusMsg.text}
+            </div>
+        )}
+
         <Button className="w-full mb-3" onClick={() => checkStatus(true)} disabled={checking}>
             {checking ? 'Verificando...' : 'Já fiz o pagamento'}
         </Button>
         <Button variant="ghost" className="w-full" onClick={onClose}>Cancelar</Button>
       </div>
     </ModalOverlay>
-  );
-};
-
-const VoucherModal = ({ isOpen, onClose, trip }) => {
-  if (!isOpen || !trip) return null;
-  
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
-  const itemData = trip.item || {};
-  const placeName = itemData.name || trip.itemName || "Local do Passeio";
-  const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
-  const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
-  const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : `Cartão de Crédito ${trip.installments ? `(${trip.installments}x)` : '(À vista)'}`;
-
-  // Usa Portal para renderizar no body, ignorando transformações dos componentes pai
-  return createPortal(
-    <ModalOverlay onClose={onClose}>
-      <div className="flex flex-col w-full bg-white">
-        
-        {/* Cabeçalho "Sticky" - Fica fixo no topo ao rolar */}
-        <div className="sticky top-0 z-10 bg-[#0097A8] p-6 text-white text-center shadow-sm">
-            <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1 transition-colors"><X size={20}/></button>
-            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3"><Ticket size={24} /></div>
-            <h2 className="text-xl font-bold">Voucher de Acesso</h2>
-            <p className="text-cyan-100 text-sm">Apresente na portaria</p>
-        </div>
-
-        {/* Conteúdo */}
-        <div className="p-8 text-sm text-slate-700 space-y-6">
-            
-            {/* QR Code e Status */}
-            <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl">
-                <div className="mb-4">
-                    <Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>
-                        {trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}
-                    </Badge>
-                </div>
-                {trip.status !== 'cancelled' && (
-                    <div className="flex justify-center mb-4">
-                        <img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" />
-                    </div>
-                )}
-                <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mb-1">CÓDIGO DE VALIDAÇÃO</p>
-                <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
-            </div>
-
-            {/* Informações Principais */}
-            <div className="space-y-4">
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Titular</span><b className="text-slate-900">{trip.guestName}</b></div>
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Pagamento</span><b className="text-slate-900 capitalize">{paymentLabel}</b></div>
-            </div>
-
-            {/* Endereço e Contato */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                <div>
-                    <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
-                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
-                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2">
-                        <LinkIcon size={14}/> Abrir no Maps / Waze
-                    </a>
-                </div>
-
-                {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
-                    <div className="pt-3 border-t border-slate-200">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fale com o local</p>
-                        <div className="space-y-2">
-                            {itemData.localWhatsapp && (
-                                <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-green-600 hover:underline font-medium">
-                                    <MessageCircle size={16} /> WhatsApp: {itemData.localWhatsapp}
-                                </a>
-                            )}
-                            {itemData.localPhone && (
-                                <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 hover:underline">
-                                    <Phone size={16} /> Tel: {itemData.localPhone}
-                                </a>
-                            )}
-                            {itemData.localEmail && (
-                                <a href={`mailto:${itemData.localEmail}`} className="flex items-center gap-2 text-slate-600 hover:underline">
-                                    <Mail size={16} /> {itemData.localEmail}
-                                </a>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Resumo Financeiro */}
-            <div className="bg-cyan-50 p-4 rounded-xl">
-               <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
-               <ul className="space-y-1 text-sm text-slate-700">
-                 <li className="flex justify-between"><span>Adultos:</span> <b>{trip.adults}</b></li>
-                 {trip.children > 0 && <li className="flex justify-between"><span>Crianças:</span> <b>{trip.children}</b></li>}
-                 <li className="flex justify-between"><span>Pets:</span> <b>{trip.pets > 0 ? `${trip.pets}` : "Não"}</b></li>
-                 <li className="flex justify-between pt-2 mt-2 border-t border-cyan-100 text-[#0097A8] font-bold text-lg"><span>Total Pago</span><span>{formatBRL(trip.total)}</span></li>
-               </ul>
-            </div>
-
-            <Button className="w-full" onClick={() => window.print()}>Imprimir / Salvar PDF</Button>
-        </div>
-      </div>
-    </ModalOverlay>,
-    document.body
-  );
-};
-
-const ImageGallery = ({ images, isOpen, onClose }) => {
-  const [idx, setIdx] = useState(0);
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 cursor-pointer" onClick={onClose}>
-      <button onClick={onClose} className="absolute top-6 right-6 bg-white/10 hover:bg-white/30 text-white rounded-full p-3 transition-colors z-50">
-        <X size={32}/>
-      </button>
-      
-      <div className="relative w-full h-full flex items-center justify-center px-2 md:px-20" onClick={e => e.stopPropagation()}>
-         <button onClick={(e) => { e.stopPropagation(); setIdx((idx + images.length - 1) % images.length); }} className="absolute left-2 md:left-8 text-white hover:text-slate-300 transition-colors p-2 bg-black/30 rounded-full"><ChevronLeft size={40}/></button>
-         
-         <img src={images[idx]} className="max-h-[85vh] max-w-[95vw] object-contain rounded-lg shadow-2xl" alt="Galeria" />
-         
-         <button onClick={(e) => { e.stopPropagation(); setIdx((idx + 1) % images.length); }} className="absolute right-2 md:right-8 text-white hover:text-slate-300 transition-colors p-2 bg-black/30 rounded-full"><ChevronRight size={40}/></button>
-      </div>
-      <div className="absolute bottom-6 left-0 right-0 text-center text-white/70 text-sm">{idx + 1} / {images.length}</div>
-    </div>
   );
 };
 
@@ -745,18 +671,97 @@ const HomePage = () => {
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-bold text-slate-900">Lugares em destaque</h2><span className="text-sm text-slate-500">{filtered.length} locais encontrados</span></div>
         <div className="grid md:grid-cols-3 gap-8">
+          {/* USO DO NOVO CARD REUTILIZÁVEL */}
           {filtered.map(item => (
-             <div key={item.id} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full">
-                <div className="h-64 relative overflow-hidden"><img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"/><div className="absolute top-4 right-4 bg-white/90 px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1 text-slate-800"><Star size={12} className="text-yellow-500 fill-current"/> 5.0</div></div>
-                <div className="p-6 flex flex-col flex-1">
-                   <div className="mb-4"><h3 className="font-bold text-xl text-slate-900 leading-tight mb-1">{item.name}</h3><p className="text-sm text-slate-500 flex items-center gap-1"><MapPin size={14} className="text-[#0097A8]"/> {item.city || 'Localização'}</p></div>
-                   <div className="mt-auto pt-4 border-t border-slate-50 flex justify-between items-center"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">A partir de</p><p className="text-2xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p></div><span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">Reservar</span></div>
-                </div>
-             </div>
+             <DayUseCard 
+                key={item.id} 
+                item={item} 
+                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+             />
           ))}
         </div>
       </div>
     </div>
+  );
+};
+
+const ImageGallery = ({ images, isOpen, onClose }) => {
+  const [idx, setIdx] = useState(0);
+
+  // Bloqueia o scroll da página enquanto a galeria está aberta
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  // Usa Portal para renderizar direto no body (evita problemas de z-index/layout)
+  return createPortal(
+    <div 
+      className="fixed inset-0 z-[10000] bg-black/95 flex items-center justify-center backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      {/* Botão Fechar (Canto Superior Direito) */}
+      <button 
+        onClick={onClose} 
+        className="absolute top-6 right-6 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-2 transition-all z-50 border border-white/10"
+        title="Fechar Galeria"
+      >
+        <X size={24}/>
+      </button>
+      
+      {/* Área Principal */}
+      <div 
+        className="relative w-full h-full flex items-center justify-center p-4 md:p-12" 
+        onClick={e => e.stopPropagation()}
+      >
+         {/* Botão Anterior */}
+         {images.length > 1 && (
+             <button 
+                onClick={(e) => { 
+                    e.stopPropagation(); 
+                    setIdx((idx + images.length - 1) % images.length); 
+                }} 
+                className="absolute left-4 md:left-8 text-white hover:text-[#0097A8] bg-black/50 hover:bg-white p-3 rounded-full transition-all z-50 backdrop-blur-md border border-white/10 shadow-lg"
+             >
+                <ChevronLeft size={32}/>
+             </button>
+         )}
+         
+         {/* Imagem Central */}
+         <img 
+            src={images[idx]} 
+            className="max-h-[85vh] max-w-full object-contain rounded-xl shadow-2xl select-none" 
+            alt={`Foto ${idx + 1}`} 
+         />
+         
+         {/* Botão Próximo */}
+         {images.length > 1 && (
+             <button 
+                onClick={(e) => { 
+                    e.stopPropagation(); 
+                    setIdx((idx + 1) % images.length); 
+                }} 
+                className="absolute right-4 md:right-8 text-white hover:text-[#0097A8] bg-black/50 hover:bg-white p-3 rounded-full transition-all z-50 backdrop-blur-md border border-white/10 shadow-lg"
+             >
+                <ChevronRight size={32}/>
+             </button>
+         )}
+      </div>
+
+      {/* Contador no Rodapé */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/60 px-6 py-2 rounded-full border border-white/20 text-white text-sm font-bold backdrop-blur-md shadow-lg">
+         {idx + 1} / {images.length}
+      </div>
+    </div>,
+    document.body
   );
 };
 
@@ -788,27 +793,23 @@ const DetailsPage = () => {
     fetchItem();
   }, [slug, location.state]);
 
-  // Lógica de Preço Dinâmico (Adulto)
+  // Lógica de Preço
   useEffect(() => {
     if(item) {
         if (date) {
           const dayOfWeek = new Date(date + 'T12:00:00').getDay();
           const dayConfig = item.weeklyPrices?.[dayOfWeek];
           let price = item.priceAdult;
-          
           if (dayConfig && typeof dayConfig === 'object' && dayConfig.adult) price = dayConfig.adult;
           else if (dayConfig && !isNaN(dayConfig)) price = dayConfig;
-          
           setCurrentPrice(Number(price) || 0);
         } else {
-          // Calcula "A partir de"
           let minPrice = Number(item.priceAdult || 0);
           if (item.weeklyPrices) {
              Object.values(item.weeklyPrices).forEach(p => {
                  let val = 0;
                  if (typeof p === 'object' && p.adult) val = Number(p.adult);
                  else if (!isNaN(p)) val = Number(p);
-                 
                  if (val > 0 && val < minPrice) minPrice = val;
              });
           }
@@ -821,10 +822,8 @@ const DetailsPage = () => {
 
   if (!item) return <div className="text-center py-20 text-slate-400">Carregando detalhes...</div>;
   
-  // Recalcula preços extras (Criança e Pet) baseados no dia
   let childPrice = Number(item.priceChild || 0);
   let petFee = Number(item.petFee || 0);
-  
   if (date && item.weeklyPrices) {
       const dayOfWeek = new Date(date + 'T12:00:00').getDay();
       const dayConfig = item.weeklyPrices[dayOfWeek];
@@ -837,68 +836,24 @@ const DetailsPage = () => {
   const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee);
   const showPets = item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita') || petFee > 0;
   
-  const handleBook = () => navigate('/checkout', { 
-      state: { 
-          bookingData: { 
-              item, date, adults, children, pets, total, 
-              priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
-          } 
-      } 
-  });
+  const handleBook = () => navigate('/checkout', { state: { bookingData: { item, date, adults, children, pets, total, priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } } } });
 
-  const BookingBox = () => (
-    <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
-       <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">A partir de</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-       <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data: {date.split('-').reverse().join('/')}</p>}</div>
-       
-       <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-         
-         {/* Adultos */}
-         <div className="flex justify-between items-center">
-             <div>
-                 <span className="text-sm font-medium text-slate-700 block">Adultos</span>
-                 <span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span>
-                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span>
-             </div>
-             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div>
-         </div>
-         
-         {/* Crianças */}
-         <div className="flex justify-between items-center">
-             <div>
-                 <span className="text-sm font-medium text-slate-700 block">Crianças</span>
-                 <span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span>
-                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span>
-             </div>
-             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div>
-         </div>
-         
-         {/* Pets */}
-         {showPets && (
-             <div className="flex justify-between items-center">
-                 <div>
-                     <span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span>
-                     <span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span>
-                     <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span>
-                 </div>
-                 <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div>
-             </div>
-         )}
-       </div>
-
-       {/* Política de Gratuidade */}
-       {item.gratuitousness && (
-           <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800">
-               <span className="font-bold block mb-1">🎁 Gratuidade:</span>
-               {item.gratuitousness}
-           </div>
-       )}
-
-       <div className="pt-4 border-t border-dashed border-slate-200">
-          <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
-          <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
-          <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
-       </div>
+  // Mensagem de Pausado
+  const PausedMessage = () => (
+    <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
+        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-2">
+            <Ticket size={32} className="text-slate-400"/>
+        </div>
+        <div>
+            <h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Pausadas</h3>
+            <p className="text-slate-500 leading-relaxed text-sm">
+                Poxa! No momento, este local não está recebendo novas reservas. 
+                Mas não fique triste, temos opções incríveis bem pertinho de você!
+            </p>
+        </div>
+        <Button onClick={() => navigate('/')} className="w-full py-4 shadow-lg shadow-teal-100/50">
+            Ver outros Day Uses
+        </Button>
     </div>
   );
 
@@ -919,10 +874,33 @@ const DetailsPage = () => {
             </div>
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
+               
+               {/* Comodidades e Pensão */}
+               <div>
+                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
+                   {item.amenities && item.amenities.length > 0 && (
+                       <div className="mb-6">
+                           <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
+                           <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
+                               {item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}
+                           </div>
+                       </div>
+                   )}
+                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
+                       <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)
+                       </div>
+                       {item.meals && item.meals.length > 0 ? (
+                           <div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>
+                       ) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
+                   </div>
+               </div>
+
                {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
-               <div className="grid md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
-                  <div><h4 className="font-bold text-[#0097A8] mb-3 flex items-center gap-2"><CheckCircle size={18}/> Incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.includedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
-                  <div><h4 className="font-bold text-red-500 mb-3 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.notIncludedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
+               
+               <div className="pt-4 border-t border-slate-100">
+                  <h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4>
+                  <p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p>
                </div>
                <div className="pt-4 border-t border-slate-100">
                   <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4>
@@ -934,15 +912,50 @@ const DetailsPage = () => {
                </div>
             </div>
          </div>
+         
          <div className="lg:col-span-1 h-fit sticky top-24">
-            <BookingBox />
+            {item.paused ? <PausedMessage /> : (
+                <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
+                   <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
+                   
+                   <div>
+                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
+                       {/* O Calendário agora está renderizado direto no componente pai, evitando o reset */}
+                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />
+                       {date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
+                   </div>
+
+                   <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                     <div className="flex justify-between items-center">
+                         <div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div>
+                     </div>
+                     <div className="flex justify-between items-center">
+                         <div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div>
+                     </div>
+                     {showPets && (
+                         <div className="flex justify-between items-center">
+                             <div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div>
+                             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div>
+                         </div>
+                     )}
+                   </div>
+
+                   {item.gratuitousness && <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800"><span className="font-bold block mb-1">🎁 Gratuidade:</span>{item.gratuitousness}</div>}
+
+                   <div className="pt-4 border-t border-dashed border-slate-200">
+                      <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
+                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
+                      <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
+                   </div>
+                </div>
+            )}
          </div>
       </div>
     </div>
   );
 };
-
-// ... (mantenha os imports e códigos anteriores)
 
 const CheckoutPage = () => {
   useSEO("Pagamento", "Finalize sua reserva.", false);
@@ -1475,55 +1488,307 @@ const UserDashboard = () => {
 // ... (outros componentes)
 const QrScannerModal = ({ isOpen, onClose, onScan }) => {
   useEffect(() => {
+    let html5QrCode;
+    
     if (isOpen) {
-      // Pequeno delay para garantir que a div "reader" existe no DOM
-      const timer = setTimeout(() => {
-        const scanner = new Html5QrcodeScanner(
-            "reader",
-            { fps: 10, qrbox: 250 },
-            /* verbose= */ false
-        );
+      const startScanner = async () => {
+        // Pequeno delay para garantir que o modal abriu e a div "reader" existe
+        await new Promise(r => setTimeout(r, 300));
+        
+        const element = document.getElementById("reader");
+        if (!element) return;
 
-        scanner.render(
-            (decodedText) => {
-                // Sucesso na leitura
-                onScan(decodedText);
-                try { scanner.clear(); } catch(e) {} // Para a câmera ao ler
-            },
-            (errorMessage) => {
-                // Erro de leitura (comum enquanto procura, ignoramos para não poluir o console)
-            }
-        );
+        try {
+            html5QrCode = new Html5Qrcode("reader");
+            await html5QrCode.start(
+                { facingMode: "environment" }, // Usa câmera traseira
+                { fps: 10, qrbox: 250 },
+                (decodedText) => {
+                    // Sucesso
+                    onScan(decodedText);
+                    // Opcional: pausar ou fechar é controlado pelo pai (onClose)
+                },
+                (errorMessage) => {
+                    // Erro de leitura (ignoramos para não poluir console)
+                }
+            );
+        } catch (err) {
+            console.error("Erro ao iniciar câmera:", err);
+            // Se der erro de permissão ou suporte
+            const readerDiv = document.getElementById("reader");
+            if(readerDiv) readerDiv.innerHTML = `<p class="text-red-500 text-center p-4">Erro: Não foi possível acessar a câmera. Verifique as permissões do navegador.</p>`;
+        }
+      };
 
-        // Cleanup ao fechar o modal
-        return () => {
-             try { scanner.clear(); } catch(e) {}
-        };
-      }, 100);
-      return () => clearTimeout(timer);
+      startScanner();
+
+      // Cleanup: Para a câmera ao fechar o modal
+      return () => {
+         if (html5QrCode && html5QrCode.isScanning) {
+             html5QrCode.stop().then(() => html5QrCode.clear()).catch(console.error);
+         }
+      };
     }
-  }, [isOpen, onScan]);
+  }, [isOpen]); // Removido onScan das dependências para evitar reinicialização
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <ModalOverlay onClose={onClose}>
-      <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md mx-auto">
+      <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md mx-auto relative">
         <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-lg text-slate-900">Escanear Ingresso</h3>
-            <button onClick={onClose}><X size={20} className="text-slate-500"/></button>
+            <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2"><ScanLine size={20} className="text-[#0097A8]"/> Validar Ingresso</h3>
+            <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full transition-colors"><X size={20} className="text-slate-500"/></button>
         </div>
-        {/* Área onde a câmera será renderizada pela biblioteca */}
-        <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-100"></div>
-        <p className="text-xs text-center text-slate-400 mt-4">Aponte a câmera para o QR Code do voucher.</p>
+        
+        <div className="relative bg-black rounded-2xl overflow-hidden aspect-square border-4 border-slate-100 shadow-inner flex items-center justify-center">
+            <div id="reader" className="w-full h-full"></div>
+            {/* Overlay visual para guiar o usuário */}
+            <div className="absolute inset-0 border-[40px] border-black/30 pointer-events-none"></div>
+            <div className="absolute w-64 h-64 border-2 border-white/50 rounded-lg pointer-events-none"></div>
+            <div className="absolute top-4 text-white/80 text-xs font-bold bg-black/50 px-3 py-1 rounded-full pointer-events-none">Aponte para o QR Code</div>
+        </div>
+
+        <p className="text-xs text-center text-slate-400 mt-4">
+            A câmera será ativada automaticamente.
+        </p>
       </div>
-    </ModalOverlay>
+    </ModalOverlay>,
+    document.body
+  );
+};
+
+const VoucherModal = ({ isOpen, onClose, trip }) => {
+  if (!isOpen || !trip) return null;
+  
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
+  const itemData = trip.item || {};
+  const placeName = itemData.name || trip.itemName || "Local do Passeio";
+  const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
+  const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
+  const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : `Cartão de Crédito ${trip.installments ? `(${trip.installments}x)` : '(À vista)'}`;
+
+  // Utiliza Portal para garantir que o modal fique sobreposto corretamente (estilo 'fixed')
+  return createPortal(
+    <ModalOverlay onClose={onClose}>
+      <div className="flex flex-col w-full bg-white">
+        
+        {/* Cabeçalho Fixo */}
+        <div className="sticky top-0 z-10 bg-[#0097A8] p-6 text-white text-center shadow-sm">
+            <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1 transition-colors"><X size={20}/></button>
+            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3"><Ticket size={24} /></div>
+            <h2 className="text-xl font-bold">Voucher de Acesso</h2>
+            <p className="text-cyan-100 text-sm">Apresente na portaria</p>
+        </div>
+
+        {/* Conteúdo com Scroll */}
+        <div className="p-8 text-sm text-slate-700 space-y-6 overflow-y-auto custom-scrollbar">
+            
+            <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl">
+                <div className="mb-4">
+                    <Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>
+                        {trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}
+                    </Badge>
+                </div>
+                {trip.status !== 'cancelled' && (
+                    <div className="flex justify-center mb-4">
+                        <img src={qrCodeUrl} alt="QR Code" className="w-40 h-40 border-4 border-white shadow-sm rounded-lg" />
+                    </div>
+                )}
+                <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mb-1">CÓDIGO DE VALIDAÇÃO</p>
+                <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
+            </div>
+
+            <div className="space-y-4">
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Titular</span><b className="text-slate-900">{trip.guestName}</b></div>
+                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Pagamento</span><b className="text-slate-900 capitalize">{paymentLabel}</b></div>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div>
+                    <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
+                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
+                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2">
+                        <LinkIcon size={14}/> Abrir no Maps / Waze
+                    </a>
+                </div>
+
+                {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
+                    <div className="pt-3 border-t border-slate-200">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fale com o local</p>
+                        <div className="space-y-2">
+                            {itemData.localWhatsapp && (
+                                <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-green-600 hover:underline font-medium">
+                                    <MessageCircle size={16} /> WhatsApp: {itemData.localWhatsapp}
+                                </a>
+                            )}
+                            {itemData.localPhone && (
+                                <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 hover:underline">
+                                    <Phone size={16} /> Tel: {itemData.localPhone}
+                                </a>
+                            )}
+                            {itemData.localEmail && (
+                                <a href={`mailto:${itemData.localEmail}`} className="flex items-center gap-2 text-slate-600 hover:underline">
+                                    <Mail size={16} /> {itemData.localEmail}
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            <div className="bg-cyan-50 p-4 rounded-xl">
+               <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
+               <ul className="space-y-1 text-sm text-slate-700">
+                 <li className="flex justify-between"><span>Adultos:</span> <b>{trip.adults}</b></li>
+                 {trip.children > 0 && <li className="flex justify-between"><span>Crianças:</span> <b>{trip.children}</b></li>}
+                 <li className="flex justify-between"><span>Pets:</span> <b>{trip.pets > 0 ? `${trip.pets}` : "Não"}</b></li>
+                 <li className="flex justify-between pt-2 mt-2 border-t border-cyan-100 text-[#0097A8] font-bold text-lg"><span>Total Pago</span><span>{formatBRL(trip.total)}</span></li>
+               </ul>
+            </div>
+
+            <Button className="w-full" onClick={() => window.print()}>Imprimir / Salvar PDF</Button>
+        </div>
+      </div>
+    </ModalOverlay>,
+    document.body
+  );
+};
+
+const StaffDashboard = () => {
+  const [reservations, setReservations] = useState([]);
+  const [selectedRes, setSelectedRes] = useState(null);
+  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const [user, setUser] = useState(null);
+  const [ownerId, setOwnerId] = useState(null);
+
+  useEffect(() => {
+     const unsub = onAuthStateChanged(auth, async u => {
+        if(u) {
+           setUser(u);
+           // 1. Busca quem é o 'chefe' (Partner) desse Staff
+           const userDoc = await getDoc(doc(db, "users", u.uid));
+           if(userDoc.exists() && userDoc.data().ownerId) {
+               setOwnerId(userDoc.data().ownerId);
+               
+               // 2. Carrega apenas as reservas daquele parceiro
+               const qRes = query(collection(db, "reservations"), where("ownerId", "==", userDoc.data().ownerId));
+               onSnapshot(qRes, s => setReservations(s.docs.map(d => ({id: d.id, ...d.data()}))));
+           }
+        }
+     });
+     return unsub;
+  }, []);
+
+  const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
+  
+  const dailyStats = dailyGuests.reduce((acc, curr) => ({
+      adults: acc.adults + (curr.adults || 0),
+      children: acc.children + (curr.children || 0),
+      pets: acc.pets + (curr.pets || 0),
+      total: acc.total + (curr.adults || 0) + (curr.children || 0)
+  }), { adults: 0, children: 0, pets: 0, total: 0 });
+
+  const handleValidate = async (resId, codeInput) => {
+     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
+        try {
+            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
+            const res = reservations.find(r => r.id === resId);
+            setFeedback({ type: 'success', title: 'Acesso Liberado! 🎉', msg: `Bem-vindo(a), ${res?.guestName || 'Visitante'}.` });
+        } catch (e) {
+            setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' });
+        }
+     } else {
+        setFeedback({ type: 'error', title: 'Inválido', msg: 'Código incorreto.' });
+     }
+  };
+
+  const onScanSuccess = (decodedText) => {
+      setShowScanner(false);
+      const res = reservations.find(r => r.id === decodedText);
+      if (res) {
+          if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' });
+          else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' });
+          else handleValidate(res.id, res.id);
+      } else {
+          setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code não pertence a este local.' });
+      }
+  };
+
+  if (!user) return <div className="text-center py-20 text-slate-400">Carregando acesso...</div>;
+  if (!ownerId) return <div className="text-center py-20 text-red-400">Erro: Conta não vinculada a um parceiro. Peça ao administrador para recadastrar.</div>;
+
+  return (
+    <div className="max-w-4xl mx-auto py-8 px-4 animate-fade-in space-y-6">
+       <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
+       <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
+       
+       {feedback && createPortal(
+            <ModalOverlay onClose={() => setFeedback(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${feedback.type === 'success' ? 'bg-green-100 text-green-600' : feedback.type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>
+                        {feedback.type === 'success' ? <CheckCircle size={32}/> : <AlertCircle size={32}/>}
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">{feedback.title}</h2>
+                    <p className="text-slate-600 mb-6 text-sm">{feedback.msg}</p>
+                    <Button onClick={() => setFeedback(null)} className="w-full justify-center">Fechar</Button>
+                </div>
+            </ModalOverlay>, document.body
+       )}
+
+       <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+          <div>
+              <h1 className="text-2xl font-bold text-slate-900">Portaria</h1>
+              <p className="text-slate-500 text-sm">Controle de Acesso Diário</p>
+          </div>
+          <div className="text-right">
+              <p className="text-xs text-slate-400 font-bold uppercase">Hoje</p>
+              <p className="text-2xl font-bold text-[#0097A8]">{dailyStats.total} <span className="text-sm font-normal text-slate-400">pessoas</span></p>
+          </div>
+       </div>
+
+       <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+           <div className="flex gap-4 mb-6">
+              <input type="date" className="border p-3 rounded-xl text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
+              <Button className="flex-1" onClick={() => setShowScanner(true)}><ScanLine size={20}/> Ler QR Code</Button>
+           </div>
+           
+           <div className="relative mb-6">
+               <Search size={18} className="absolute left-3 top-3.5 text-slate-400"/>
+               <input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8]" placeholder="Buscar visitante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
+           </div>
+
+           <div className="space-y-3">
+              {dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-8">Nenhum ingresso para hoje.</p> : dailyGuests.map(r => (
+                 <div key={r.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-100">
+                    <div>
+                       <p className="font-bold text-slate-900">{r.guestName}</p>
+                       <div className="flex gap-2 text-xs text-slate-500 mt-1">
+                          <span className="bg-slate-50 px-1 rounded">{r.adults} Adt</span> <span className="bg-slate-50 px-1 rounded">{r.children} Cri</span>
+                       </div>
+                    </div>
+                    {r.status === 'validated' ? (
+                        <div className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> OK</div>
+                    ) : (
+                        <Button className="px-4 py-1.5 h-auto text-xs" onClick={()=>handleValidate(r.id, r.id.slice(0,6))}>Validar</Button>
+                    )}
+                 </div>
+              ))}
+           </div>
+       </div>
+    </div>
   );
 };
 
 const PartnerDashboard = () => {
   const [items, setItems] = useState([]);
   const [reservations, setReservations] = useState([]);
+  const [staffList, setStaffList] = useState([]); // NOVO: Lista de equipe
+  
   const [selectedRes, setSelectedRes] = useState(null);
   const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
@@ -1533,9 +1798,13 @@ const PartnerDashboard = () => {
   const [tokenType, setTokenType] = useState(null); 
   const [expandedStats, setExpandedStats] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  
-  // NOVO: Estado para feedback visual do Check-in
-  const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', title: '', msg: '' }
+  const [feedback, setFeedback] = useState(null); 
+  const [confirmAction, setConfirmAction] = useState(null);
+
+  // States para cadastro de equipe
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffPass, setStaffPass] = useState('');
+  const [staffLoading, setStaffLoading] = useState(false);
 
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -1550,11 +1819,17 @@ const PartnerDashboard = () => {
                const token = userDoc.data().mp_access_token;
                setTokenType(token.startsWith('TEST-') ? 'TEST' : 'PROD');
            }
+           
+           // Queries principais
            const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
            const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
            
+           // NOVO: Query para buscar a equipe
+           const qStaff = query(collection(db, "users"), where("ownerId", "==", u.uid));
+           
            onSnapshot(qDay, s => setItems(s.docs.map(d => ({id: d.id, ...d.data()}))));
            onSnapshot(qRes, s => setReservations(s.docs.map(d => ({id: d.id, ...d.data()}))));
+           onSnapshot(qStaff, s => setStaffList(s.docs.map(d => ({id: d.id, ...d.data()}))));
         }
      });
      return unsub;
@@ -1568,9 +1843,96 @@ const PartnerDashboard = () => {
      window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
   };
 
+  const togglePause = (item) => { setConfirmAction({ type: item.paused ? 'resume' : 'pause', item: item }); };
+  
+  const executeAction = async () => {
+      if (!confirmAction) return;
+      const { item, type } = confirmAction;
+      try {
+          await updateDoc(doc(db, "dayuses", item.id), { paused: type === 'pause' });
+          setFeedback({ type: 'success', title: 'Sucesso', msg: `Anúncio ${type === 'pause' ? 'pausado' : 'reativado'}.` });
+      } catch (error) {
+          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível atualizar.' });
+      } finally { setConfirmAction(null); }
+  };
+
+  const handleValidate = async (resId, codeInput) => {
+     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
+        try {
+            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
+            const res = reservations.find(r => r.id === resId);
+            setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: `Acesso liberado para ${res?.guestName}.` });
+            setValidationCode("");
+        } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); }
+     } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); }
+  };
+  
+  const onScanSuccess = (decodedText) => {
+      setShowScanner(false);
+      const res = reservations.find(r => r.id === decodedText);
+      if (res) {
+          if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' });
+          else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' });
+          else handleValidate(res.id, res.id);
+      } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' });
+  };
+
+  // --- GESTÃO DE EQUIPE ---
+  
+  const handleAddStaff = async (e) => {
+      e.preventDefault();
+      setStaffLoading(true);
+      try {
+          const secondaryApp = initializeApp(getApp().options, "Secondary");
+          const secondaryAuth = getAuth(secondaryApp);
+          
+          const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass);
+          
+          await setDoc(doc(db, "users", createdUser.user.uid), {
+              email: staffEmail,
+              role: 'staff',
+              ownerId: user.uid,
+              createdAt: new Date(),
+              name: "Portaria"
+          });
+          
+          await signOut(secondaryAuth);
+          setFeedback({ type: 'success', title: 'Equipe Cadastrada!', msg: `Usuário ${staffEmail} criado.` });
+          setStaffEmail(''); setStaffPass('');
+      } catch (err) {
+          console.error(err);
+          setFeedback({ type: 'error', title: 'Erro ao cadastrar', msg: err.code === 'auth/email-already-in-use' ? 'E-mail já existe.' : 'Verifique os dados.' });
+      } finally {
+          setStaffLoading(false);
+      }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+      if(confirm("Deseja realmente remover este acesso? O funcionário não conseguirá mais logar.")) {
+          try {
+              // Remove do banco de dados (o que bloqueia o acesso no Layout/StaffDashboard)
+              await deleteDoc(doc(db, "users", staffId));
+              setFeedback({ type: 'success', title: 'Removido', msg: 'Acesso revogado com sucesso.' });
+          } catch (e) {
+              setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível remover.' });
+          }
+      }
+  };
+
+  const handleResetStaffPassword = async (email) => {
+      if(confirm(`Enviar e-mail de redefinição de senha para ${email}?`)) {
+          try {
+              await sendPasswordResetEmail(auth, email);
+              setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'O funcionário receberá um link para criar uma nova senha.' });
+          } catch (e) {
+              setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível enviar o e-mail.' });
+          }
+      }
+  };
+
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
 
-  // Filtros e Cálculos (Mantidos)
+  // Cálculos Financeiros (Mantidos)
   const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
   const platformFee = totalBalance * 0.20;
@@ -1578,266 +1940,156 @@ const PartnerDashboard = () => {
   const netBalance = totalBalance - platformFee - estimatedMPFees;
   const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
   const cardTotal = totalBalance - pixTotal; 
-
   const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
-  const dailyStats = dailyGuests.reduce((acc, curr) => ({
-      adults: acc.adults + (curr.adults || 0),
-      children: acc.children + (curr.children || 0),
-      pets: acc.pets + (curr.pets || 0),
-      total: acc.total + (curr.adults || 0) + (curr.children || 0)
-  }), { adults: 0, children: 0, pets: 0, total: 0 });
-
+  const dailyStats = dailyGuests.reduce((acc, curr) => ({ adults: acc.adults + (curr.adults || 0), children: acc.children + (curr.children || 0), pets: acc.pets + (curr.pets || 0), total: acc.total + (curr.adults || 0) + (curr.children || 0) }), { adults: 0, children: 0, pets: 0, total: 0 });
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
-  const couponBreakdown = reservations.reduce((acc, r) => {
-      if (r.discount > 0) {
-          const code = r.couponCode || "OUTROS"; 
-          acc[code] = (acc[code] || 0) + 1;
-      }
-      return acc;
-  }, {});
-
-  // --- LÓGICA DE VALIDAÇÃO ATUALIZADA ---
-  const handleValidate = async (resId, codeInput) => {
-     // Aceita tanto o código curto (visual) quanto o ID completo (QR)
-     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
-        try {
-            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
-            
-            // Sucesso Visual
-            const res = reservations.find(r => r.id === resId);
-            setFeedback({
-                type: 'success',
-                title: 'Check-in Realizado! 🎉',
-                msg: `Acesso liberado para ${res?.guestName || 'o visitante'}.`
-            });
-            
-            setValidationCode("");
-        } catch (e) {
-            console.error(e);
-            setFeedback({ type: 'error', title: 'Erro no Sistema', msg: 'Não foi possível validar. Tente novamente.' });
-        }
-     } else {
-        setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código digitado e tente novamente.' });
-     }
-  };
-  
-  const onScanSuccess = (decodedText) => {
-      setShowScanner(false);
-      const res = reservations.find(r => r.id === decodedText);
-      
-      if (res) {
-          if (res.status === 'validated') {
-              setFeedback({ type: 'warning', title: 'Atenção!', msg: `O ingresso de ${res.guestName} JÁ FOI UTILIZADO anteriormente.` });
-          } else if (res.status === 'cancelled') {
-              setFeedback({ type: 'error', title: 'Ingresso Cancelado', msg: 'Esta reserva foi cancelada e não é válida.' });
-          } else {
-              handleValidate(res.id, res.id);
-          }
-      } else {
-          setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'Este QR Code não pertence a uma reserva válida.' });
-      }
-  };
+  const couponBreakdown = reservations.reduce((acc, r) => { if (r.discount > 0) { const code = r.couponCode || "OUTROS"; acc[code] = (acc[code] || 0) + 1; } return acc; }, {});
 
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
         <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
         
-        {/* MODAL DE FEEDBACK DE VALIDAÇÃO (NOVO) */}
-        {feedback && (
-            <ModalOverlay onClose={() => setFeedback(null)}>
-                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                    <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                        feedback.type === 'success' ? 'bg-green-100 text-green-600' : 
-                        feedback.type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
-                    }`}>
-                        {feedback.type === 'success' ? <CheckCircle size={40}/> : feedback.type === 'warning' ? <AlertCircle size={40}/> : <X size={40}/>}
-                    </div>
-                    <h2 className="text-2xl font-bold text-slate-900 mb-2">{feedback.title}</h2>
-                    <p className="text-slate-600 mb-6">{feedback.msg}</p>
-                    <Button onClick={() => setFeedback(null)} className="w-full justify-center" variant={feedback.type === 'error' ? 'danger' : 'primary'}>
-                        Fechar
-                    </Button>
-                </div>
-            </ModalOverlay>
-        )}
+        {feedback && createPortal(<ModalOverlay onClose={() => setFeedback(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${feedback.type === 'success' ? 'bg-green-100 text-green-600' : feedback.type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>{feedback.type === 'success' ? <CheckCircle size={32}/> : feedback.type === 'warning' ? <AlertCircle size={32}/> : <X size={32}/>}</div><h2 className="text-xl font-bold mb-2">{feedback.title}</h2><p className="mb-4 text-slate-600">{feedback.msg}</p><Button onClick={() => setFeedback(null)} className="w-full justify-center">Fechar</Button></div></ModalOverlay>, document.body)}
         
+        {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"><h2 className="text-xl font-bold mb-4">{confirmAction.type === 'pause' ? 'Pausar Anúncio?' : 'Reativar Anúncio?'}</h2><div className="flex gap-2"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className={`flex-1 justify-center ${confirmAction.type === 'pause' ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>{confirmAction.type === 'pause' ? 'Pausar' : 'Reativar'}</Button></div></div></ModalOverlay>, document.body)}
+        
+        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row justify-between items-end mb-8 border-b border-slate-200 pb-4 gap-4">
-           <div>
-               <h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1>
-               <p className="text-slate-500">Acompanhe seu negócio.</p>
-           </div>
-           
+           <div><h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1><p className="text-slate-500">Acompanhe seu negócio.</p></div>
            <div className="flex gap-2 items-center">
-              {!mpConnected ? (
-                  <Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600">Conectar Mercado Pago</Button>
-              ) : (
-                  <div className="flex items-center gap-2">
-                      {tokenType === 'TEST' && <div className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full border border-yellow-200">⚠️ SANDBOX</div>}
-                      {tokenType === 'PROD' && <div className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200">✅ PRODUÇÃO</div>}
-                      <div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold flex gap-2 items-center border border-slate-200"><CheckCircle size={18} className="text-green-600"/> Conectado</div>
-                  </div>
-              )}
+              {!mpConnected ? (<Button onClick={handleConnect} className="bg-blue-500 hover:bg-blue-600">Conectar Mercado Pago</Button>) : (<div className="flex items-center gap-2">{tokenType === 'TEST' && <div className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full border border-yellow-200">⚠️ SANDBOX</div>}{tokenType === 'PROD' && <div className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200">✅ PRODUÇÃO</div>}<div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold flex gap-2 items-center border border-slate-200"><CheckCircle size={18} className="text-green-600"/> Conectado</div></div>)}
               <Button onClick={()=>navigate('/partner/new')}>+ Criar Anúncio</Button>
            </div>
         </div>
 
-        {/* Financeiro */}
+        {/* FINANCEIRO */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
            <div className="flex justify-between mb-6">
               <h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2>
-              <select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>
-                 {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}
-              </select>
+              <select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select>
            </div>
-
            <div className="grid md:grid-cols-3 gap-6">
-              {/* CARD 1 */}
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between col-span-1 md:col-span-1">
-                 <div>
-                     <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
-                     <div className="space-y-1 mb-4">
-                        <div className="flex justify-between text-sm text-slate-600">
-                            <span>Vendas Brutas:</span>
-                            <span className="font-bold">{formatBRL(totalBalance)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs text-red-400">
-                            <span>Taxa Plataforma (20%):</span>
-                            <span>- {formatBRL(platformFee)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs text-red-400">
-                            <span>Taxas MP (Est.*):</span>
-                            <span>- {formatBRL(estimatedMPFees)}</span>
-                        </div>
-                     </div>
-                 </div>
-                 <div className="pt-3 border-t border-slate-200">
-                     <p className="text-xs text-green-700 font-bold uppercase mb-1">Líquido Estimado</p>
-                     <p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p>
-                     <p className="text-[10px] text-slate-400 mt-1">* Valores aproximados.</p>
-                 </div>
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                 <div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas:</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxa Plataforma (20%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est.*):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div>
+                 <div className="pt-3 border-t border-slate-200"><p className="text-xs text-green-700 font-bold uppercase mb-1">Líquido Estimado</p><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div>
               </div>
-              
-              {/* CARD 2 */}
               <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200">
                  <p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p>
                  <div className="space-y-4">
-                    <div>
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span>
-                            <span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span>
-                        </div>
-                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-                            <div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div>
-                        </div>
-                    </div>
-                    <div>
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span>
-                            <span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span>
-                        </div>
-                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-                            <div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div>
-                        </div>
-                    </div>
+                    <div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div></div>
+                    <div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div></div>
                  </div>
               </div>
-
-              {/* CARD 3 */}
               <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col">
-                 <div className="flex justify-between items-start mb-4">
-                    <div>
-                        <p className="text-xs text-yellow-800 font-bold uppercase">Cupons Usados</p>
-                        <p className="text-3xl font-bold text-slate-900">{allCouponsUsed}</p>
-                    </div>
-                    <Tag className="text-yellow-600" size={32}/>
-                 </div>
-                 <div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar">
-                    {Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400 italic">Nenhum cupom usado.</p>}
-                    {Object.entries(couponBreakdown).map(([code, count]) => (
-                        <div key={code} className="flex justify-between text-xs text-slate-600 mb-1 border-b border-yellow-100 pb-1 last:border-0">
-                            <span className="font-bold bg-white px-1.5 py-0.5 rounded border border-yellow-200 text-yellow-900">{code}</span>
-                            <span>{count}x</span>
-                        </div>
-                    ))}
-                 </div>
+                 <div className="flex justify-between items-start mb-4"><div><p className="text-xs text-yellow-800 font-bold uppercase">Cupons Usados</p><p className="text-3xl font-bold text-slate-900">{allCouponsUsed}</p></div><Tag className="text-yellow-600" size={32}/></div>
+                 <div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar">{Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400 italic">Nenhum cupom usado.</p>}{Object.entries(couponBreakdown).map(([code, count]) => (<div key={code} className="flex justify-between text-xs text-slate-600 mb-1 border-b border-yellow-100 pb-1 last:border-0"><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-yellow-200 text-yellow-900">{code}</span><span>{count}x</span></div>))}</div>
               </div>
            </div>
         </div>
 
-        {/* Operacional Diário */}
+        {/* LISTA DE PRESENÇA */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
            <div className="flex flex-col md:flex-row justify-between mb-8 gap-4">
               <h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2>
-              <div className="flex gap-4">
-                 <input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
-                 <Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button>
-              </div>
+              <div className="flex gap-4"><input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button></div>
            </div>
            
            <div className="mb-6 bg-indigo-50 rounded-xl p-4 border border-indigo-100 cursor-pointer hover:bg-indigo-100 transition-colors" onClick={()=>setExpandedStats(!expandedStats)}>
-               <div className="flex justify-between items-center">
-                   <span className="font-bold text-indigo-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span>
-                   <ChevronDown size={16} className={`text-indigo-900 transition-transform ${expandedStats ? 'rotate-180' : ''}`}/>
-               </div>
-               {expandedStats && (
-                   <div className="mt-4 pt-4 border-t border-indigo-200 grid grid-cols-3 gap-4 text-center text-sm animate-fade-in">
-                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.adults}</p><span className="text-indigo-400 text-xs font-bold uppercase">Adultos</span></div>
-                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.children}</p><span className="text-indigo-400 text-xs font-bold uppercase">Crianças</span></div>
-                       <div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.pets}</p><span className="text-indigo-400 text-xs font-bold uppercase">Pets</span></div>
-                   </div>
-               )}
+               <div className="flex justify-between items-center"><span className="font-bold text-indigo-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span><ChevronDown size={16} className={`text-indigo-900 transition-transform ${expandedStats ? 'rotate-180' : ''}`}/></div>
+               {expandedStats && (<div className="mt-4 pt-4 border-t border-indigo-200 grid grid-cols-3 gap-4 text-center text-sm animate-fade-in"><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.adults}</p><span className="text-indigo-400 text-xs font-bold uppercase">Adultos</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.children}</p><span className="text-indigo-400 text-xs font-bold uppercase">Crianças</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.pets}</p><span className="text-indigo-400 text-xs font-bold uppercase">Pets</span></div></div>)}
            </div>
            
            <div className="space-y-4">
-              <div className="relative">
-                  <Search size={18} className="absolute left-3 top-3.5 text-slate-400"/>
-                  <input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8] transition-all" placeholder="Buscar viajante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
-              </div>
-              
+              <div className="relative"><Search size={18} className="absolute left-3 top-3.5 text-slate-400"/><input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8] transition-all" placeholder="Buscar viajante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/></div>
               {dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado para esta data.</p> : dailyGuests.map(r => (
                  <div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4">
-                    <div className="flex-1">
-                       <p className="font-bold text-lg text-slate-900">{r.guestName}</p>
-                       <p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p>
-                       <div className="flex gap-2 mt-2 text-xs text-slate-600">
-                          <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>
-                          {r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}
-                          {r.pets > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium flex items-center gap-1"><PawPrint size={10}/> {r.pets} Pet</span>}
-                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       {r.status === 'validated' ? (
-                          <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div>
-                       ) : (
-                          <div className="flex gap-2">
-                             <input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/>
-                             <Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button>
-                          </div>
-                       )}
-                       <Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button>
-                    </div>
+                    <div className="flex-1"><p className="font-bold text-lg text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p><div className="flex gap-2 mt-2 text-xs text-slate-600">{r.adults > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>}{r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}{r.pets > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium flex items-center gap-1"><PawPrint size={10}/> {r.pets} Pet</span>}</div></div>
+                    <div className="flex items-center gap-2">{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : <div className="flex gap-2"><input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/><Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button></div>}<Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button></div>
                  </div>
               ))}
            </div>
         </div>
         
-        {/* Meus Anúncios */}
+        {/* MEUS ANÚNCIOS */}
         <div>
            <h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2>
            <div className="grid md:grid-cols-2 gap-6">
               {items.map(i => (
-                 <div key={i.id} className="bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow">
-                    <img src={i.image} className="w-24 h-24 rounded-xl object-cover bg-slate-200"/>
+                 <div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>
+                    {i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}
+                    <img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/>
                     <div className="flex-1">
                        <h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4>
                        <p className="text-sm text-slate-500 mb-2">{i.city}</p>
                        <p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p>
                     </div>
-                    <Button variant="outline" className="px-4 h-fit" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={16}/> Editar</Button>
+                    <div className="flex flex-col gap-2">
+                        <Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button>
+                        <button onClick={() => togglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button>
+                    </div>
                  </div>
               ))}
            </div>
+        </div>
+
+        {/* GESTÃO DE EQUIPE (PORTARIA) */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2>
+            <div className="grid md:grid-cols-2 gap-8">
+                
+                {/* LISTA DE FUNCIONÁRIOS */}
+                <div className="space-y-4">
+                    <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>
+                    {staffList.length === 0 ? (
+                        <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p>
+                    ) : (
+                        <ul className="space-y-3">
+                            {staffList.map(staff => (
+                                <li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">
+                                            {staff.email[0].toUpperCase()}
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-bold text-slate-700">{staff.email}</span>
+                                            <span className="text-[10px] text-slate-400">Portaria</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        <button onClick={() => handleResetStaffPassword(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Redefinir Senha">
+                                            <Lock size={16}/>
+                                        </button>
+                                        <button onClick={() => handleDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Remover Acesso">
+                                            <Trash2 size={16}/>
+                                        </button>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+
+                {/* FORMULÁRIO DE CADASTRO */}
+                <div>
+                    <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3>
+                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                        <form onSubmit={handleAddStaff} className="space-y-4">
+                            <input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required />
+                            <input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required />
+                            <Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button>
+                        </form>
+                        <p className="text-xs text-slate-400 mt-4 text-center">O usuário terá acesso restrito apenas à lista de presença e validação.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* SUPORTE */}
+        <div className="bg-slate-900 rounded-3xl p-8 text-center text-white mt-12 mb-8 shadow-2xl">
+            <h3 className="text-2xl font-bold mb-2">Precisa de ajuda?</h3>
+            <p className="text-slate-400 mb-6 max-w-md mx-auto">Fale diretamente com nosso suporte técnico.</p>
+            <a href="https://wa.me/5531920058081" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-[#25D366] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#20bd5a] transition-all transform hover:scale-105 shadow-lg"><MessageCircle size={22} /> Falar no WhatsApp</a>
         </div>
      </div>
   );
@@ -1850,7 +2102,7 @@ const PartnerNew = () => {
   const [cepLoading, setCepLoading] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
 
-  // States Novos
+  // States Avançados
   const [coupons, setCoupons] = useState([]); 
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPerc, setNewCouponPerc] = useState('');
@@ -1858,21 +2110,23 @@ const PartnerNew = () => {
   const [weeklyPrices, setWeeklyPrices] = useState({});
   const [cnpjError, setCnpjError] = useState(false);
 
+  // States para Checkboxes (Multi-select)
+  const [selectedAmenities, setSelectedAmenities] = useState([]);
+  const [selectedMeals, setSelectedMeals] = useState([]);
+  const [blockedDates, setBlockedDates] = useState([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+
   const [formData, setFormData] = useState({
     contactName: '', contactEmail: '', contactPhone: '', contactJob: '',
     cnpj: '', name: '', cep: '', street: '', number: '', district: '', city: '', state: '',
-    // Novos campos de contato do local
     localEmail: '', localPhone: '', localWhatsapp: '',
     description: '', videoUrl: '', images: ['', '', '', '', '', ''],
-    // Preços Base (usados se não houver override no dia)
     priceAdult: '', priceChild: '', petFee: '',
-    // Faixas Etárias e Regras
-    adultAgeStart: '12', 
-    childAgeStart: '2', childAgeEnd: '11',
+    adultAgeStart: '12', childAgeStart: '2', childAgeEnd: '11',
     gratuitousness: '',
     petAllowed: false, petSize: 'Pequeno porte',
-    availableDays: [0, 6], // Dias ativos (0=Dom, 1=Seg...)
-    includedItems: '', notIncludedItems: '', usageRules: '', cancellationPolicy: '', observations: ''
+    availableDays: [0, 6], 
+    notIncludedItems: '', usageRules: '', cancellationPolicy: '', observations: ''
   });
 
   useEffect(() => {
@@ -1890,99 +2144,118 @@ const PartnerNew = () => {
                 if(d.coupons) setCoupons(d.coupons);
                 if(d.dailyStock) setDailyStock(d.dailyStock);
                 if(d.weeklyPrices) setWeeklyPrices(d.weeklyPrices);
+                if(d.amenities) setSelectedAmenities(d.amenities);
+                if(d.meals) setSelectedMeals(d.meals);
+                if(d.blockedDates) setBlockedDates(d.blockedDates);
             }
         });
      }
      return unsub;
   }, [id]);
 
-  const handleCepBlur = async () => {
-    if (formData.cep?.replace(/\D/g, '').length === 8) {
-      setCepLoading(true);
-      try {
-        const response = await fetch(`https://viacep.com.br/ws/${formData.cep}/json/`);
-        const data = await response.json();
-        if (!data.erro) {
-          setFormData(prev => ({ ...prev, street: data.logradouro, district: data.bairro, city: data.localidade, state: data.uf }));
-        }
-      } catch (error) { console.error("Erro CEP:", error); } finally { setCepLoading(false); }
-    }
-  };
-
-  const handleCnpjChange = (e) => {
-      const val = e.target.value;
-      setFormData({...formData, cnpj: val});
-      const nums = val.replace(/\D/g, '');
-      if (nums.length > 0 && nums.length !== 14) setCnpjError(true);
-      else setCnpjError(false);
-  };
-
-  // --- NOVA LÓGICA DE UPLOAD ---
+  const handleCepBlur = async () => { if (formData.cep?.replace(/\D/g, '').length === 8) { setCepLoading(true); try { const response = await fetch(`https://viacep.com.br/ws/${formData.cep}/json/`); const data = await response.json(); if (!data.erro) setFormData(prev => ({ ...prev, street: data.logradouro, district: data.bairro, city: data.localidade, state: data.uf })); } catch (error) { console.error("Erro CEP:", error); } finally { setCepLoading(false); } } };
+  const handleCnpjChange = (e) => { const val = e.target.value; setFormData({...formData, cnpj: val}); const nums = val.replace(/\D/g, ''); if (nums.length > 0 && nums.length !== 14) setCnpjError(true); else setCnpjError(false); };
+  
+  // --- NOVA LÓGICA DE UPLOAD COM COMPRESSÃO ---
   const handleFileUpload = (index, e) => {
     const file = e.target.files[0];
     if (file) {
-      // Limite de segurança (aprox 800KB) para não estourar o banco gratuito no MVP
-      if (file.size > 800 * 1024) {
-        alert("A imagem é muito grande. Por favor, escolha uma foto menor (máx 800KB).");
-        return;
-      }
-      
+      // Feedback visual simples
+      const label = e.target.parentNode; 
+      if(label) label.style.opacity = '0.5';
+
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const newImages = [...formData.images];
-        newImages[index] = reader.result; // Salva como Base64
-        setFormData({ ...formData, images: newImages });
-      };
       reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          // Cria um canvas para redimensionar
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800; // Define largura máxima de 800px para ficar leve
+          const scaleSize = MAX_WIDTH / img.width;
+          
+          // Se a imagem já for pequena, mantém. Se for grande, reduz.
+          if (scaleSize < 1) {
+              canvas.width = MAX_WIDTH;
+              canvas.height = img.height * scaleSize;
+          } else {
+              canvas.width = img.width;
+              canvas.height = img.height;
+          }
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Converte para JPEG com 70% de qualidade (Base64 Otimizado)
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+
+          const newImages = [...formData.images];
+          newImages[index] = compressedDataUrl;
+          setFormData({ ...formData, images: newImages });
+          
+          if(label) label.style.opacity = '1';
+        };
+      };
     }
   };
 
-  const removeImage = (index) => {
-      const newImages = [...formData.images];
-      newImages[index] = '';
-      setFormData({ ...formData, images: newImages });
-  };
-  // -----------------------------
+  const removeImage = (index) => { const newImages = [...formData.images]; newImages[index] = ''; setFormData({ ...formData, images: newImages }); };
+  // --------------------------------------------
+
+  const toggleDay = (dayIndex) => { const newDays = formData.availableDays.includes(dayIndex) ? formData.availableDays.filter(d => d !== dayIndex) : [...formData.availableDays, dayIndex]; setFormData({...formData, availableDays: newDays}); };
+  const toggleBlockedDate = (dateStr) => { if (blockedDates.includes(dateStr)) setBlockedDates(blockedDates.filter(d => d !== dateStr)); else setBlockedDates([...blockedDates, dateStr]); };
   
-  const toggleDay = (dayIndex) => { 
-      const newDays = formData.availableDays.includes(dayIndex) 
-          ? formData.availableDays.filter(d => d !== dayIndex)
-          : [...formData.availableDays, dayIndex];
-      setFormData({...formData, availableDays: newDays});
+  const renderManagementCalendar = () => {
+      const year = calendarMonth.getFullYear();
+      const month = calendarMonth.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const firstDay = new Date(year, month, 1).getDay();
+      const days = [];
+      for (let i = 0; i < firstDay; i++) days.push(<div key={`empty-${i}`} className="h-10"></div>);
+      for (let d = 1; d <= daysInMonth; d++) {
+          const date = new Date(year, month, d);
+          const dateStr = date.toISOString().split('T')[0];
+          const isBlocked = blockedDates.includes(dateStr);
+          const dayOfWeek = date.getDay();
+          const isStandardOpen = formData.availableDays.includes(dayOfWeek);
+          const isOpen = isStandardOpen && !isBlocked;
+          days.push(<div key={d} onClick={() => toggleBlockedDate(dateStr)} className={`h-10 w-full rounded-lg flex items-center justify-center text-xs font-bold cursor-pointer transition-all border ${isBlocked ? 'bg-red-100 text-red-600 border-red-200' : isOpen ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-50 text-slate-300'}`} title={isBlocked ? "Bloqueado" : isOpen ? "Aberto" : "Fechado"}>{d}</div>);
+      }
+      return days;
   };
 
-  const handleWeeklyPriceChange = (dayIndex, field, value) => {
-      setWeeklyPrices(prev => ({
-          ...prev,
-          [dayIndex]: { ...prev[dayIndex], [field]: value }
-      }));
-  };
-  
-  const addCoupon = () => {
-     if(newCouponCode && newCouponPerc) {
-         setCoupons([...coupons, { code: newCouponCode.toUpperCase(), percentage: Number(newCouponPerc) }]);
-         setNewCouponCode(''); setNewCouponPerc('');
-     }
-  };
-
-  const removeCoupon = (idx) => {
-    const newCoupons = [...coupons];
-    newCoupons.splice(idx, 1);
-    setCoupons(newCoupons);
-  };
+  const handleWeeklyPriceChange = (dayIndex, field, value) => { setWeeklyPrices(prev => ({ ...prev, [dayIndex]: { ...prev[dayIndex], [field]: value } })); };
+  const toggleAmenity = (item) => { if (selectedAmenities.includes(item)) setSelectedAmenities(selectedAmenities.filter(i => i !== item)); else setSelectedAmenities([...selectedAmenities, item]); };
+  const toggleMeal = (item) => { if (selectedMeals.includes(item)) setSelectedMeals(selectedMeals.filter(i => i !== item)); else setSelectedMeals([...selectedMeals, item]); };
+  const addCoupon = () => { if(newCouponCode && newCouponPerc) { setCoupons([...coupons, { code: newCouponCode.toUpperCase(), percentage: Number(newCouponPerc) }]); setNewCouponCode(''); setNewCouponPerc(''); } };
+  const removeCoupon = (idx) => { const newC = [...coupons]; newC.splice(idx, 1); setCoupons(newC); };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); 
     if (!validateCNPJ(formData.cnpj)) { alert("CNPJ inválido (deve ter 14 dígitos)."); return; }
-    if (!formData.localWhatsapp) { alert("O WhatsApp do local é obrigatório para suporte ao cliente."); return; }
+    if (!formData.localWhatsapp) { alert("O WhatsApp do local é obrigatório."); return; }
     
     setLoading(true);
+
+    // CORREÇÃO: Mapeia o array de 'images' para campos individuais (image, image2...) 
+    // para garantir compatibilidade com a Home e a Página de Detalhes
+    const imageFields = {};
+    formData.images.forEach((img, index) => {
+        if (index === 0) imageFields.image = img; // Capa
+        else imageFields[`image${index + 1}`] = img; // image2, image3...
+    });
+
     const dataToSave = { 
         ...formData, 
+        ...imageFields, // Espalha as imagens nos campos corretos
         ownerId: user.uid, 
         coupons, 
         dailyStock, 
-        weeklyPrices, 
+        weeklyPrices,
+        blockedDates, 
+        amenities: selectedAmenities, 
+        meals: selectedMeals,         
         priceAdult: Number(formData.priceAdult), 
         slug: generateSlug(formData.name), 
         updatedAt: new Date() 
@@ -1992,7 +2265,10 @@ const PartnerNew = () => {
         if (id) await updateDoc(doc(db, "dayuses", id), dataToSave);
         else await addDoc(collection(db, "dayuses"), { ...dataToSave, createdAt: new Date() });
         navigate('/partner'); 
-    } catch (err) { alert("Erro ao salvar."); } finally { setLoading(false); }
+    } catch (err) { 
+        console.error("Erro ao salvar:", err);
+        alert("Erro ao salvar. Se as imagens forem muito pesadas, tente reduzir a quantidade."); 
+    } finally { setLoading(false); }
   };
 
   const weekDays = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -2000,130 +2276,56 @@ const PartnerNew = () => {
   return (
      <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
         <h1 className="text-3xl font-bold mb-2 text-center text-slate-900">{id ? 'Editar Anúncio' : 'Cadastrar Novo Day Use'}</h1>
-        <p className="text-center text-slate-500 mb-8">Preencha as informações com atenção para atrair mais viajantes.</p>
         
         <form onSubmit={handleSubmit} className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100 space-y-8">
            
            {/* 1. DADOS PESSOAIS */}
            <div className="space-y-4">
-              <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">1. Dados do Responsável</h3>
-                  <p className="text-xs text-slate-500">Quem administrará este anúncio.</p>
-              </div>
-              
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">1. Dados do Responsável</h3></div>
               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label>
-                     <input className="w-full border p-3 rounded-xl" value={formData.contactName} onChange={e=>setFormData({...formData, contactName: e.target.value})} placeholder="Seu nome" />
-                 </div>
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">E-mail de Cadastro</label>
-                     <input className="w-full border p-3 rounded-xl bg-slate-50 text-slate-600" value={formData.contactEmail} readOnly />
-                 </div>
+                 <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactName} readOnly />
+                 <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactEmail} readOnly />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Telefone Pessoal</label>
-                     <input className="w-full border p-3 rounded-xl" placeholder="(00) 00000-0000" value={formData.contactPhone} onChange={e=>setFormData({...formData, contactPhone: e.target.value})} required/>
-                 </div>
-                 <div>
-                     <label className="text-sm font-bold text-slate-700 block mb-1">Cargo na Empresa</label>
-                     <select className="w-full border p-3 rounded-xl bg-white" value={formData.contactJob} onChange={e=>setFormData({...formData, contactJob: e.target.value})} required>
-                        <option value="">Selecione...</option>
-                        <option>Sócio/Proprietário</option>
-                        <option>Gerente</option>
-                        <option>Coordenador</option>
-                        <option>Recepcionista</option>
-                        <option>Assistente</option>
-                        <option>Outros</option>
-                     </select>
-                 </div>
+                 <input className="w-full border p-3 rounded-xl" placeholder="Telefone Pessoal" value={formData.contactPhone} onChange={e=>setFormData({...formData, contactPhone: e.target.value})} required/>
+                 <select className="w-full border p-3 rounded-xl bg-white" value={formData.contactJob} onChange={e=>setFormData({...formData, contactJob: e.target.value})} required><option value="">Cargo...</option><option>Sócio/Proprietário</option><option>Gerente</option><option>Outros</option></select>
               </div>
            </div>
            
-           {/* 2. DADOS DA EMPRESA E LOCAL */}
+           {/* 2. DADOS DA EMPRESA */}
            <div className="space-y-4">
-              <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">2. Dados do Local</h3>
-                  <p className="text-xs text-slate-500">Informações públicas do estabelecimento.</p>
-              </div>
-
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">2. Dados do Local</h3></div>
               <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">CNPJ</label>
-                      <input className={`w-full border p-3 rounded-xl ${cnpjError ? 'border-red-300 bg-red-50' : ''}`} placeholder="Apenas números" value={formData.cnpj} onChange={handleCnpjChange} required/>
-                      {cnpjError && <p className="text-xs text-red-500 mt-1">CNPJ deve ter 14 dígitos.</p>}
-                      {!cnpjError && formData.cnpj.length === 14 && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle size={10}/> Formato válido</p>}
-                  </div>
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Nome do Local (Fantasia)</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="Ex: Pousada Recanto das Águas" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} required/>
-                  </div>
+                  <div><label className="text-xs font-bold text-slate-500">CNPJ</label><input className={`w-full border p-3 rounded-xl ${cnpjError ? 'bg-red-50' : ''}`} value={formData.cnpj} onChange={handleCnpjChange} required/></div>
+                  <div><label className="text-xs font-bold text-slate-500">Nome Fantasia</label><input className="w-full border p-3 rounded-xl" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} required/></div>
               </div>
-
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <p className="text-sm font-bold text-slate-700 mb-3">Contatos de Suporte ao Cliente</p>
                   <div className="grid md:grid-cols-3 gap-4">
-                      <div>
-                          <label className="text-xs font-bold text-slate-500 block mb-1">WhatsApp (Obrigatório)</label>
-                          <input className="w-full border p-2 rounded-lg" placeholder="(00) 00000-0000" value={formData.localWhatsapp} onChange={e=>setFormData({...formData, localWhatsapp: e.target.value})} required/>
-                      </div>
-                      <div>
-                          <label className="text-xs font-bold text-slate-500 block mb-1">Telefone Fixo</label>
-                          <input className="w-full border p-2 rounded-lg" placeholder="(00) 0000-0000" value={formData.localPhone} onChange={e=>setFormData({...formData, localPhone: e.target.value})} />
-                      </div>
-                      <div>
-                          <label className="text-xs font-bold text-slate-500 block mb-1">E-mail de Suporte</label>
-                          <input className="w-full border p-2 rounded-lg" placeholder="contato@local.com" value={formData.localEmail} onChange={e=>setFormData({...formData, localEmail: e.target.value})} />
-                      </div>
-                  </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">CEP</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="00000-000" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
-                  </div>
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Número</label>
-                      <input className="w-full border p-3 rounded-xl" placeholder="Nº" value={formData.number} onChange={e=>setFormData({...formData, number: e.target.value})} required/>
+                      <input className="w-full border p-2 rounded-lg" placeholder="WhatsApp (Obrigatório)" value={formData.localWhatsapp} onChange={e=>setFormData({...formData, localWhatsapp: e.target.value})} required/>
+                      <input className="w-full border p-2 rounded-lg" placeholder="Telefone Fixo" value={formData.localPhone} onChange={e=>setFormData({...formData, localPhone: e.target.value})} />
+                      <input className="w-full border p-2 rounded-lg" placeholder="E-mail de Suporte" value={formData.localEmail} onChange={e=>setFormData({...formData, localEmail: e.target.value})} />
                   </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Cidade</label>
-                      <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.city} readOnly/>
-                  </div>
-                  <div>
-                      <label className="text-sm font-bold text-slate-700 block mb-1">Estado</label>
-                      <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.state} readOnly/>
-                  </div>
+                  <input className="w-full border p-3 rounded-xl" placeholder="CEP" value={formData.cep} onChange={e=>setFormData({...formData, cep: e.target.value})} onBlur={handleCepBlur} required/>
+                  <input className="w-full border p-3 rounded-xl" placeholder="Número" value={formData.number} onChange={e=>setFormData({...formData, number: e.target.value})} required/>
               </div>
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Logradouro (Rua/Av)</label>
-                  <input className="w-full border p-3 rounded-xl" value={formData.street} onChange={e=>setFormData({...formData, street: e.target.value})} required/>
+              <div className="grid grid-cols-2 gap-4">
+                  <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.city} readOnly/>
+                  <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.state} readOnly/>
               </div>
+              <input className="w-full border p-3 rounded-xl" placeholder="Logradouro" value={formData.street} onChange={e=>setFormData({...formData, street: e.target.value})} required/>
            </div>
 
-           {/* 3. SOBRE O DAY USE (COM UPLOAD DE FOTOS) */}
+           {/* 3. SOBRE (COM UPLOAD OTIMIZADO) */}
            <div className="space-y-4">
-              <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3>
-                  <p className="text-xs text-slate-500">Descrição e imagens.</p>
-              </div>
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Descrição Completa</label>
-                  <textarea className="w-full border p-3 rounded-xl h-32" placeholder="Fale sobre as atrações..." value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} required/>
-              </div>
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Vídeo do YouTube (Opcional)</label>
-                  <input className="w-full border p-3 rounded-xl" placeholder="Cole o link do vídeo aqui" value={formData.videoUrl} onChange={e=>setFormData({...formData, videoUrl: e.target.value})} />
-              </div>
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3></div>
+              <textarea className="w-full border p-3 rounded-xl h-32" placeholder="Descrição completa..." value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} required/>
+              <input className="w-full border p-3 rounded-xl" placeholder="Link do YouTube (Op)" value={formData.videoUrl} onChange={e=>setFormData({...formData, videoUrl: e.target.value})} />
               
-              {/* ÁREA DE UPLOAD DE IMAGENS */}
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-2">Galeria de Fotos</label>
-                  <p className="text-xs text-slate-500 mb-3">Carregue até 6 fotos. A primeira será a capa.</p>
+                  <p className="text-xs text-slate-500 mb-3">Carregue até 6 fotos. O sistema otimiza automaticamente para não pesar.</p>
                   
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     {formData.images.map((img, i) => (
@@ -2152,190 +2354,88 @@ const PartnerNew = () => {
               </div>
            </div>
            
-           {/* 4. FUNCIONAMENTO E PREÇOS (TABELA) */}
+           {/* 4. FUNCIONAMENTO */}
            <div className="space-y-6">
-              <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">4. Funcionamento e Valores</h3>
-                  <p className="text-xs text-slate-500">Defina os dias e preços específicos.</p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-slate-600 border rounded-xl overflow-hidden">
-                    <thead className="text-xs text-slate-700 uppercase bg-slate-100">
-                        <tr>
-                            <th className="px-4 py-3">Dia</th>
-                            <th className="px-4 py-3">Adulto (R$)</th>
-                            <th className="px-4 py-3">Criança (R$)</th>
-                            <th className="px-4 py-3">Pet (R$)</th>
-                        </tr>
-                    </thead>
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">4. Funcionamento e Valores</h3></div>
+              <div className="overflow-x-auto border rounded-xl">
+                <table className="w-full text-sm text-left text-slate-600">
+                    <thead className="text-xs text-slate-700 uppercase bg-slate-100"><tr><th className="px-4 py-3">Dia</th><th className="px-4 py-3">Adulto</th><th className="px-4 py-3">Criança</th><th className="px-4 py-3">Pet</th></tr></thead>
                     <tbody>
                         {weekDays.map((day, index) => {
                             const isActive = formData.availableDays.includes(index);
                             return (
                                 <tr key={index} className={`border-b ${isActive ? 'bg-white' : 'bg-slate-50 opacity-60'}`}>
-                                    <td className="px-4 py-3 font-medium text-slate-900 flex items-center gap-2">
-                                        <input type="checkbox" checked={isActive} onChange={() => toggleDay(index)} className="accent-[#0097A8] w-4 h-4"/>
-                                        {day}
-                                    </td>
-                                    <td className="px-4 py-2">
-                                        <input 
-                                            disabled={!isActive}
-                                            className="border p-2 rounded w-24" 
-                                            placeholder="Padrão" 
-                                            type="number"
-                                            value={weeklyPrices[index]?.adult || ''}
-                                            onChange={(e) => handleWeeklyPriceChange(index, 'adult', e.target.value)}
-                                        />
-                                    </td>
-                                    <td className="px-4 py-2">
-                                        <input 
-                                            disabled={!isActive}
-                                            className="border p-2 rounded w-24" 
-                                            placeholder="Padrão" 
-                                            type="number"
-                                            value={weeklyPrices[index]?.child || ''}
-                                            onChange={(e) => handleWeeklyPriceChange(index, 'child', e.target.value)}
-                                        />
-                                    </td>
-                                    <td className="px-4 py-2">
-                                        <input 
-                                            disabled={!isActive}
-                                            className="border p-2 rounded w-24" 
-                                            placeholder="Padrão" 
-                                            type="number"
-                                            value={weeklyPrices[index]?.pet || ''}
-                                            onChange={(e) => handleWeeklyPriceChange(index, 'pet', e.target.value)}
-                                        />
-                                    </td>
+                                    <td className="px-4 py-3 font-medium text-slate-900 flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={() => toggleDay(index)} className="accent-[#0097A8] w-4 h-4"/>{day}</td>
+                                    <td className="px-4 py-2"><input disabled={!isActive} className="border p-2 rounded w-24" placeholder="Padrão" type="number" value={weeklyPrices[index]?.adult || ''} onChange={(e) => handleWeeklyPriceChange(index, 'adult', e.target.value)}/></td>
+                                    <td className="px-4 py-2"><input disabled={!isActive} className="border p-2 rounded w-24" placeholder="Padrão" type="number" value={weeklyPrices[index]?.child || ''} onChange={(e) => handleWeeklyPriceChange(index, 'child', e.target.value)}/></td>
+                                    <td className="px-4 py-2"><input disabled={!isActive} className="border p-2 rounded w-24" placeholder="Padrão" type="number" value={weeklyPrices[index]?.pet || ''} onChange={(e) => handleWeeklyPriceChange(index, 'pet', e.target.value)}/></td>
                                 </tr>
                             );
                         })}
                     </tbody>
                 </table>
               </div>
+
+              {/* Calendário de Gestão */}
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="flex justify-between items-center mb-4"><h4 className="font-bold text-slate-700 text-sm">Gerenciar Datas Específicas</h4><div className="flex gap-2"><button type="button" onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth()-1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft size={16}/></button><span className="text-sm font-bold capitalize">{calendarMonth.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</span><button type="button" onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth()+1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronRight size={16}/></button></div></div>
+                  <div className="grid grid-cols-7 gap-1 text-center text-xs mb-2 font-bold text-slate-400">{["D","S","T","Q","Q","S","S"].map(d=><span>{d}</span>)}</div>
+                  <div className="grid grid-cols-7 gap-1">{renderManagementCalendar()}</div>
+                  <div className="flex gap-4 mt-2 text-xs justify-center"><span className="flex items-center gap-1"><div className="w-3 h-3 bg-green-100 border border-green-200 rounded"></div> Aberto</span><span className="flex items-center gap-1"><div className="w-3 h-3 bg-red-100 border border-red-200 rounded"></div> Bloqueado</span><span className="flex items-center gap-1"><div className="w-3 h-3 bg-slate-50 border border-slate-200 rounded"></div> Fechado (Padrão)</span></div>
+              </div>
               
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                 <p className="text-sm font-bold text-slate-700 mb-2">Preços Padrão (Base)</p>
-                 <p className="text-xs text-slate-500 mb-4">Esses valores serão usados caso você deixe os campos da tabela acima vazios.</p>
+                 <p className="text-sm font-bold text-slate-700 mb-2">Preços Base</p>
                  <div className="grid grid-cols-3 gap-4">
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Adulto Base (R$)" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Criança Base (R$)" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Pet Base (R$)" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Adulto Base" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Criança Base" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Pet Base" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
                  </div>
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                 <label className="text-sm font-bold text-slate-700 block mb-2">Capacidade Diária (Estoque)</label>
+                 <label className="text-sm font-bold text-slate-700 block mb-2">Capacidade Diária</label>
                  <div className="flex gap-4">
-                    <div className="w-full">
-                        <span className="text-xs text-slate-500 block mb-1">Max. Adultos</span>
-                        <input className="border p-2 rounded w-full" type="number" value={dailyStock.adults} onChange={e=>setDailyStock({...dailyStock, adults: Number(e.target.value)})}/>
-                    </div>
-                    <div className="w-full">
-                        <span className="text-xs text-slate-500 block mb-1">Max. Crianças</span>
-                        <input className="border p-2 rounded w-full" type="number" value={dailyStock.children} onChange={e=>setDailyStock({...dailyStock, children: Number(e.target.value)})}/>
-                    </div>
-                    <div className="w-full">
-                        <span className="text-xs text-slate-500 block mb-1">Max. Pets</span>
-                        <input className="border p-2 rounded w-full" type="number" value={dailyStock.pets} onChange={e=>setDailyStock({...dailyStock, pets: Number(e.target.value)})}/>
-                    </div>
+                    <div className="w-full"><span className="text-xs text-slate-500">Max. Adultos</span><input className="border p-2 rounded w-full" type="number" value={dailyStock.adults} onChange={e=>setDailyStock({...dailyStock, adults: Number(e.target.value)})}/></div>
+                    <div className="w-full"><span className="text-xs text-slate-500">Max. Crianças</span><input className="border p-2 rounded w-full" type="number" value={dailyStock.children} onChange={e=>setDailyStock({...dailyStock, children: Number(e.target.value)})}/></div>
+                    <div className="w-full"><span className="text-xs text-slate-500">Max. Pets</span><input className="border p-2 rounded w-full" type="number" value={dailyStock.pets} onChange={e=>setDailyStock({...dailyStock, pets: Number(e.target.value)})}/></div>
                  </div>
               </div>
 
               <div className="grid md:grid-cols-2 gap-6">
                   <div className="space-y-3">
                       <label className="text-sm font-bold text-slate-700">Regras de Idade</label>
-                      <div className="flex items-center gap-2">
-                          <span className="text-sm text-slate-600">Adulto: Acima de</span>
-                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.adultAgeStart} onChange={e=>setFormData({...formData, adultAgeStart: e.target.value})} />
-                          <span className="text-sm text-slate-600">anos</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                          <span className="text-sm text-slate-600">Criança: Entre</span>
-                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeStart} onChange={e=>setFormData({...formData, childAgeStart: e.target.value})} />
-                          <span className="text-sm text-slate-600">e</span>
-                          <input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeEnd} onChange={e=>setFormData({...formData, childAgeEnd: e.target.value})} />
-                          <span className="text-sm text-slate-600">anos</span>
-                      </div>
+                      <div className="flex items-center gap-2"><span className="text-sm text-slate-600">Adulto: </span><input className="border p-2 rounded w-16 text-center" type="number" value={formData.adultAgeStart} onChange={e=>setFormData({...formData, adultAgeStart: e.target.value})} /><span className="text-sm text-slate-600">anos</span></div>
+                      <div className="flex items-center gap-2"><span className="text-sm text-slate-600">Criança:</span><input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeStart} onChange={e=>setFormData({...formData, childAgeStart: e.target.value})} /><span className="text-sm text-slate-600">a</span><input className="border p-2 rounded w-16 text-center" type="number" value={formData.childAgeEnd} onChange={e=>setFormData({...formData, childAgeEnd: e.target.value})} /><span className="text-sm text-slate-600">anos</span></div>
                   </div>
-                  
                   <div className="space-y-3">
                       <label className="text-sm font-bold text-slate-700">Pets e Gratuidade</label>
-                      <div>
-                          <span className="text-xs text-slate-500 block mb-1">Porte de Pet Aceito</span>
-                          <select className="border p-2 rounded w-full bg-white" value={formData.petSize} onChange={e=>setFormData({...formData, petSize: e.target.value})}>
-                              <option>Não aceita</option>
-                              <option>Pequeno</option>
-                              <option>Médio</option>
-                              <option>Grande</option>
-                              <option>Todos os portes</option>
-                          </select>
-                      </div>
-                      <div>
-                          <span className="text-xs text-slate-500 block mb-1">Política de Gratuidade</span>
-                          <input className="border p-2 rounded w-full" placeholder="Ex: Crianças até 2 anos free" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/>
-                      </div>
+                      <div><select className="border p-2 rounded w-full bg-white" value={formData.petSize} onChange={e=>setFormData({...formData, petSize: e.target.value})}><option>Não aceita</option><option>Pequeno</option><option>Médio</option><option>Grande</option><option>Todos os portes</option></select></div>
+                      <div><input className="border p-2 rounded w-full" placeholder="Política de Gratuidade" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/></div>
                   </div>
               </div>
-
-              {/* CUPONS */}
-              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
-                 <p className="text-sm font-bold text-yellow-800 mb-2">Cupons de Desconto</p>
-                 <div className="flex gap-2 mb-2">
-                    <input className="border p-2 rounded-lg flex-1 text-sm uppercase" placeholder="CÓDIGO (Ex: VERAO10)" value={newCouponCode} onChange={e=>setNewCouponCode(e.target.value)} />
-                    <input className="border p-2 rounded-lg w-24 text-sm" placeholder="Desconto %" type="number" value={newCouponPerc} onChange={e=>setNewCouponPerc(e.target.value)} />
-                    <Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 hover:bg-yellow-700 border-none text-white">Adicionar</Button>
-                 </div>
-                 <div className="space-y-1">
-                    {coupons.map((c, i) => (
-                        <div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm">
-                            <span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span>
-                            <button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                        </div>
-                    ))}
-                 </div>
+              
+              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 mt-4">
+                 <div className="flex justify-between items-center mb-2"><label className="text-sm font-bold text-yellow-800">Criar Cupons</label><Tag size={16} className="text-yellow-600"/></div>
+                 <div className="flex gap-2 mb-2"><input className="border p-2 rounded-lg flex-1 text-sm uppercase" placeholder="CÓDIGO" value={newCouponCode} onChange={e=>setNewCouponCode(e.target.value)} /><input className="border p-2 rounded-lg w-24 text-sm" placeholder="%" type="number" value={newCouponPerc} onChange={e=>setNewCouponPerc(e.target.value)} /><Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 border-none">Add</Button></div>
+                 <div className="space-y-1">{coupons.map((c, i) => (<div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span><button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div>))}</div>
               </div>
            </div>
 
-           {/* 5. UTILIZAÇÃO & REGRAS */}
+           {/* 5. INCLUSÕES E REGRAS (CHECKLISTS) */}
            <div className="space-y-4">
-              <div className="border-b pb-2 mb-4">
-                  <h3 className="font-bold text-lg text-[#0097A8]">5. Regras e Políticas</h3>
-                  <p className="text-xs text-slate-500">Transparência evita problemas futuros.</p>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                 <div>
-                     <label className="text-sm font-bold text-green-700 block mb-1">O que está INCLUSO?</label>
-                     <textarea className="w-full border p-3 rounded-xl h-24 bg-green-50/50" placeholder="Ex: Café da manhã, Piscina, Estacionamento..." value={formData.includedItems} onChange={e=>setFormData({...formData, includedItems: e.target.value})}/>
-                 </div>
-                 <div>
-                     <label className="text-sm font-bold text-red-600 block mb-1">O que NÃO está incluso?</label>
-                     <textarea className="w-full border p-3 rounded-xl h-24 bg-red-50/50" placeholder="Ex: Bebidas alcoólicas, Toalhas, Almoço..." value={formData.notIncludedItems} onChange={e=>setFormData({...formData, notIncludedItems: e.target.value})}/>
-                 </div>
-              </div>
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">5. O que está incluso?</h3></div>
+              <div><label className="text-sm font-bold text-slate-700 block mb-2">Comodidades</label><div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200 h-60 overflow-y-auto custom-scrollbar">{AMENITIES_LIST.map(a => (<label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleAmenity(a)} className="accent-[#0097A8] w-4 h-4 rounded"/>{a}</label>))}</div></div>
+              <div><label className="text-sm font-bold text-slate-700 block mb-2">Alimentação</label><div className="flex flex-wrap gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">{MEALS_LIST.map(m => (<label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleMeal(m)} className="accent-[#0097A8] w-4 h-4 rounded"/>{m}</label>))}</div></div>
+              <div><label className="text-sm font-bold text-red-600 block mb-1">O que NÃO está incluso?</label><textarea className="w-full border p-3 rounded-xl h-20 bg-red-50/30" placeholder="Ex: Bebidas..." value={formData.notIncludedItems} onChange={e=>setFormData({...formData, notIncludedItems: e.target.value})}/></div>
               
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Regras de Utilização do Local</label>
-                  <textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Proibido som automotivo, proibido entrada com bebidas..." value={formData.usageRules} onChange={e=>setFormData({...formData, usageRules: e.target.value})}/>
-              </div>
-              
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Política de Cancelamento e Reembolso</label>
-                  <textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Cancelamento grátis até 24h antes. Após isso, multa de 50%..." value={formData.cancellationPolicy} onChange={e=>setFormData({...formData, cancellationPolicy: e.target.value})}/>
-              </div>
-              
-              <div>
-                  <label className="text-sm font-bold text-slate-700 block mb-1">Observações Gerais (Opcional)</label>
-                  <textarea className="w-full border p-3 rounded-xl h-20" placeholder="Outras informações relevantes..." value={formData.observations} onChange={e=>setFormData({...formData, observations: e.target.value})}/>
-              </div>
+              <div><label className="text-sm font-bold text-slate-700 block mb-1">Regras de Utilização</label><textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Proibido som..." value={formData.usageRules} onChange={e=>setFormData({...formData, usageRules: e.target.value})}/></div>
+              <div><label className="text-sm font-bold text-slate-700 block mb-1">Política de Cancelamento</label><textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Até 24h antes..." value={formData.cancellationPolicy} onChange={e=>setFormData({...formData, cancellationPolicy: e.target.value})}/></div>
+              <div><label className="text-sm font-bold text-slate-700 block mb-1">Observações Gerais</label><textarea className="w-full border p-3 rounded-xl h-20" placeholder="Outras informações..." value={formData.observations} onChange={e=>setFormData({...formData, observations: e.target.value})}/></div>
            </div>
            
            <div className="pt-4 border-t">
-               <Button type="submit" className="w-full py-4 text-lg shadow-xl" disabled={loading}>
-                   {loading ? "Salvando anúncio..." : "Finalizar e Publicar"}
-               </Button>
+               <Button type="submit" className="w-full py-4 text-lg shadow-xl" disabled={loading}>{loading ? "Salvando..." : "Finalizar e Publicar"}</Button>
            </div>
         </form>
      </div>
@@ -2460,10 +2560,12 @@ const TermsPage = () => (
 );
 
 // --- ESTRUTURA PRINCIPAL ---
+// ...
+
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
-  const [logoError, setLogoError] = useState(false); // Controla se a logo quebrou
+  const [logoError, setLogoError] = useState(false); 
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -2475,6 +2577,14 @@ const Layout = ({ children }) => {
     });
   }, []);
 
+  // Efeito para definir o Favicon dinamicamente
+  useEffect(() => {
+    const link = document.querySelector("link[rel~='icon']");
+    if (link) {
+        link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
+    }
+  }, []);
+
   const handleLogout = async () => {
      await signOut(auth);
      navigate('/');
@@ -2483,6 +2593,7 @@ const Layout = ({ children }) => {
   const handleLoginSuccess = (userWithRole) => {
      setShowLogin(false);
      if (userWithRole.role === 'partner') navigate('/partner');
+     else if (userWithRole.role === 'staff') navigate('/portaria');
      else navigate('/minhas-viagens');
   };
 
@@ -2492,20 +2603,24 @@ const Layout = ({ children }) => {
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
-           <div className="flex items-center gap-2 font-bold text-xl cursor-pointer text-slate-800" onClick={()=>navigate('/')}>
-              {/* Lógica da Logo no Header */}
+           {/* LOGO NO HEADER */}
+           <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.svg" 
-                    alt="Logo" 
-                    className="h-10 w-auto" 
-                    onError={() => setLogoError(true)} 
+                    src="/logo.png" 
+                    alt="Mapa do Day Use" 
+                    className="h-10 w-auto object-contain" 
+                    onError={(e) => {
+                        console.error("Erro ao carregar logo no Header. Verifique se o arquivo 'logo.png' está na pasta 'public'.");
+                        e.currentTarget.style.display = 'none'; // Garante que a imagem quebrada suma
+                        setLogoError(true); 
+                    }} 
                  />
               ) : (
                  <MapIcon className="h-8 w-8 text-[#0097A8]" />
               )}
-              <span className="hidden sm:inline">Mapa do Day Use</span>
            </div>
+           
            <div className="flex items-center gap-4">
               {!user ? (
                  <>
@@ -2515,9 +2630,13 @@ const Layout = ({ children }) => {
               ) : (
                  <div className="flex gap-4 items-center">
                     {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')}>Painel</Button>}
-                    {/* Se for parceiro, não mostra link de ingressos. Se for user, mostra. */}
-                    {user.role !== 'partner' && <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')}>Meus Ingressos</Button>}
-                    <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm" title={user.email} onClick={()=>navigate('/profile')}>{user.email[0].toUpperCase()}</div>
+                    {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')}>Portaria</Button>}
+                    {user.role !== 'partner' && user.role !== 'staff' && (
+                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')}>Meus Ingressos</Button>
+                    )}
+                    <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm" title={user.email}>
+                        {user.email[0].toUpperCase()}
+                    </div>
                     <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Sair"><LogOut size={20}/></button>
                  </div>
               )}
@@ -2532,19 +2651,20 @@ const Layout = ({ children }) => {
                
                {/* Coluna 1: Marca e Contato */}
                <div className="col-span-1 md:col-span-2">
-                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {/* Lógica da Logo no Footer */}
+                  <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.svg" 
-                           alt="Logo" 
-                           className="h-8 w-auto" 
-                           onError={() => setLogoError(true)} 
+                           src="/logo.png" 
+                           alt="Mapa do Day Use" 
+                           className="h-8 w-auto object-contain" 
+                           onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                setLogoError(true);
+                           }} 
                         />
                      ) : (
                         <MapIcon className="h-6 w-6 text-[#0097A8]" />
                      )}
-                     <span className="hidden sm:inline">Mapa do Day Use</span>
                   </div>
                   <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
                      A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.
@@ -2558,6 +2678,7 @@ const Layout = ({ children }) => {
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
+                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
                      <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
@@ -2572,7 +2693,6 @@ const Layout = ({ children }) => {
                         <Instagram size={20} />
                      </a>
                      <a href="https://tiktok.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-gray-100 text-slate-400 hover:text-black transition-all border border-slate-100 hover:border-gray-300">
-                        {/* SVG Manual do TikTok */}
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
                      </a>
                   </div>
@@ -2588,31 +2708,281 @@ const Layout = ({ children }) => {
             </div>
          </div>
       </footer>
-
-      {/*POPUP DE CONSENTIMENTO: */}
       <CookieConsent />
-
     </div>
   );
 };
 
+const DayUseCard = ({ item, onClick }) => {
+  const hasDiscount = item.coupons && item.coupons.length > 0;
+  const maxDiscount = hasDiscount ? Math.max(...item.coupons.map(c => c.percentage)) : 0;
+
+  return (
+     <div onClick={onClick} className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full relative">
+        <div className="h-64 relative overflow-hidden">
+            <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"/>
+            
+            {/* ETICA DE DESCONTO (SUBSTITUIU ESTRELAS) */}
+            {hasDiscount && (
+              <div className="absolute top-4 right-4 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
+                 <Tag size={12} className="fill-current"/> {maxDiscount}% OFF
+              </div>
+            )}
+        </div>
+        <div className="p-6 flex flex-col flex-1">
+           <div className="mb-4">
+               <h3 className="font-bold text-xl text-slate-900 leading-tight mb-1">{item.name}</h3>
+               <p className="text-sm text-slate-500 flex items-center gap-1"><MapPin size={14} className="text-[#0097A8]"/> {item.city || 'Localização'}, {item.state}</p>
+           </div>
+           <div className="mt-auto pt-4 border-t border-slate-50 flex justify-between items-center">
+               <div>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">A partir de</p>
+                   <p className="text-2xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p>
+               </div>
+               <span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">Reservar</span>
+           </div>
+        </div>
+     </div>
+  );
+};
+
+const ListingPage = ({ stateParam, cityParam }) => {
+  const navigate = useNavigate();
+  const [items, setItems] = useState([]);
+  const [filteredItems, setFilteredItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Filtros
+  const [maxPrice, setMaxPrice] = useState("");
+  const [filterCity, setFilterCity] = useState(cityParam || "");
+  const [selectedAmenities, setSelectedAmenities] = useState([]);
+  const [selectedMeals, setSelectedMeals] = useState([]);
+  const [selectedDays, setSelectedDays] = useState([]);
+  const [selectedPets, setSelectedPets] = useState([]);
+
+  // SEO Dinâmico com Nome do Estado
+  const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
+  const locationTitle = cityParam 
+    ? `${cityParam.charAt(0).toUpperCase() + cityParam.slice(1).replace(/-/g, ' ')}, ${stateParam?.toUpperCase()}` 
+    : stateName;
+    
+  useSEO(`Day Uses em ${locationTitle}`, `Encontre os melhores Day Uses em ${locationTitle}.`);
+
+  useEffect(() => {
+    const fetchItems = async () => {
+      setLoading(true);
+      const q = query(collection(db, "dayuses"));
+      const snap = await getDocs(q);
+      const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      const stateItems = data.filter(i => getStateSlug(i.state) === stateParam?.toLowerCase());
+      setItems(stateItems);
+      setLoading(false);
+    };
+    fetchItems();
+  }, [stateParam]);
+
+  // Lógica de Filtragem Avançada
+  useEffect(() => {
+    let result = items;
+
+    // 1. Cidade
+    if (cityParam) result = result.filter(i => generateSlug(i.city) === cityParam);
+    else if (filterCity) result = result.filter(i => generateSlug(i.city) === filterCity);
+
+    // 2. Preço Máximo (Input manual)
+    if (maxPrice) result = result.filter(i => Number(i.priceAdult) <= Number(maxPrice));
+
+    // 3. Comodidades (AND - tem que ter todas as selecionadas)
+    if (selectedAmenities.length > 0) {
+        result = result.filter(i => selectedAmenities.every(a => (i.amenities || []).includes(a)));
+    }
+
+    // 4. Pensão (OR - tem que ter pelo menos uma das selecionadas)
+    if (selectedMeals.length > 0) {
+        result = result.filter(i => selectedMeals.some(m => (i.meals || []).includes(m)));
+    }
+
+    // 5. Dias de Funcionamento (OR - funcionar em pelo menos um dos dias selecionados)
+    if (selectedDays.length > 0) {
+        result = result.filter(i => selectedDays.some(dayIdx => (i.availableDays || []).includes(dayIdx)));
+    }
+
+    // 6. Pets (Lógica específica de porte)
+    if (selectedPets.length > 0) {
+        result = result.filter(i => {
+            if (selectedPets.includes("Não aceita animais")) return !i.petAllowed;
+            if (!i.petAllowed) return false;
+            
+            // Se o filtro pede um porte específico, verifica se o local aceita esse porte ou "Todos/Qualquer"
+            // Ex: Filtro "Pequeno porte" -> Local aceita "Pequeno", "Médio" (implica pequeno), "Todos"
+            return selectedPets.some(p => {
+                const size = p.split(' ')[3]; // "pequeno", "médio", "grande"
+                if (!size) return true; // Caso genérico
+                const localPetSize = (i.petSize || "").toLowerCase();
+                return localPetSize.includes(size) || localPetSize.includes("qualquer") || localPetSize.includes("todos");
+            });
+        });
+    }
+
+    setFilteredItems(result);
+  }, [items, cityParam, filterCity, maxPrice, selectedAmenities, selectedMeals, selectedDays, selectedPets]);
+
+  const toggleFilter = (list, setList, item) => {
+      if (list.includes(item)) setList(list.filter(i => i !== item));
+      else setList([...list, item]);
+  };
+
+  const availableCities = [...new Set(items.map(i => i.city))].sort();
+
+  if (loading) return <div className="text-center py-20 text-slate-400">Buscando melhores opções...</div>;
+
+  return (
+    <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
+        <div className="flex flex-col md:flex-row gap-8">
+            {/* BARRA LATERAL */}
+            <div className="w-full md:w-1/4 space-y-6 h-fit sticky top-24">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <div className="flex justify-between items-center">
+                        <h3 className="font-bold text-slate-900 flex items-center gap-2"><List size={18}/> Filtros</h3>
+                        <button onClick={()=>{setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("")}} className="text-xs text-[#0097A8] font-bold hover:underline">Limpar</button>
+                    </div>
+                    
+                    {!cityParam && (
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label>
+                            <select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}>
+                                <option value="">Todas as cidades</option>
+                                {availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label>
+                        <div className="flex items-center gap-2 border rounded-xl p-2 bg-white">
+                            <span className="text-slate-400 text-sm">R$</span>
+                            <input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label>
+                        <div className="flex flex-wrap gap-2">
+                             {WEEK_DAYS.map((d, i) => (
+                                 <button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>
+                             ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>
+                        {MEALS_LIST.map(m => (
+                            <label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
+                                <input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}
+                            </label>
+                        ))}
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>
+                        {["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (
+                            <label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
+                                <input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}
+                            </label>
+                        ))}
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label>
+                        <div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                            {AMENITIES_LIST.map(a => (
+                                <label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
+                                    <input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* LISTAGEM */}
+            <div className="flex-1">
+                <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
+                <p className="text-slate-500 mb-6">{filteredItems.length} opções encontradas</p>
+                {filteredItems.length === 0 ? (
+                    <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                        <p className="text-slate-400">Nenhum local encontrado com esses filtros.</p>
+                        <button onClick={()=>{setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("")}} className="text-[#0097A8] font-bold mt-2 hover:underline">Limpar Todos Filtros</button>
+                    </div>
+                ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {filteredItems.map(item => <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />)}
+                    </div>
+                )}
+            </div>
+        </div>
+    </div>
+  );
+};
+
+const RouteResolver = () => {
+    const { state, cityOrSlug } = useParams();
+    const [decision, setDecision] = useState(null); // 'listing', 'details', 'loading'
+    
+    // Se não tiver o segundo parametro, é listagem de estado
+    if (!cityOrSlug) return <ListingPage stateParam={state} />;
+
+    // Se tiver, precisamos descobrir se é uma cidade ou um local
+    useEffect(() => {
+        const checkRoute = async () => {
+            // 1. Tenta achar um local com esse slug
+            const q = query(collection(db, "dayuses"));
+            const snap = await getDocs(q);
+            const foundItem = snap.docs.find(d => generateSlug(d.data().name) === cityOrSlug);
+
+            if (foundItem) {
+                // É um local! Renderiza DetailsPage
+                setDecision('details');
+            } else {
+                // Não é local, assume que é cidade (ListingPage vai tentar filtrar)
+                setDecision('listing');
+            }
+        };
+        checkRoute();
+    }, [state, cityOrSlug]);
+
+    if (!decision) return <div className="text-center py-20">Carregando...</div>;
+
+    if (decision === 'details') return <DetailsPage />;
+    return <ListingPage stateParam={state} cityParam={cityOrSlug} />;
+};
+
 const App = () => {
   return (
-    <Routes>
-      <Route path="/" element={<Layout><HomePage /></Layout>} />
-      <Route path="/:state/:slug" element={<Layout><DetailsPage /></Layout>} />
-      <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
-      <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
-      <Route path="/minhas-viagens" element={<Layout><UserDashboard /></Layout>} />
-      <Route path="/profile" element={<Layout><UserProfile /></Layout>} />
-      <Route path="/partner" element={<Layout><PartnerDashboard /></Layout>} />
-      <Route path="/partner/new" element={<Layout><PartnerNew /></Layout>} />
-      <Route path="/partner/edit/:id" element={<Layout><PartnerNew /></Layout>} />
-      <Route path="/partner-register" element={<Layout><PartnerRegisterPage /></Layout>} />
-      <Route path="/partner/callback" element={<Layout><PartnerCallbackPage /></Layout>} />
-      <Route path="/politica-de-privacidade" element={<Layout><PrivacyPage /></Layout>} />
-      <Route path="/termos-de-uso" element={<Layout><TermsPage /></Layout>} />
-    </Routes>
+      <Routes>
+        <Route path="/" element={<Layout><HomePage /></Layout>} />
+        
+        {/* ROTAS DINÂMICAS INTELIGENTES */}
+        {/* 1. Estado apenas (ex: /mg) -> Lista estado */}
+        <Route path="/:state" element={<Layout><RouteResolver /></Layout>} />
+        
+        {/* 2. Estado + Cidade OU Local (ex: /mg/belo-horizonte ou /mg/hotel-fazenda) -> Resolve auto */}
+        <Route path="/:state/:cityOrSlug" element={<Layout><RouteResolver /></Layout>} />
+
+        {/* Rotas legadas/específicas */}
+        <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
+        <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
+        <Route path="/minhas-viagens" element={<Layout><UserDashboard /></Layout>} />
+        <Route path="/profile" element={<Layout><UserProfile /></Layout>} />
+        <Route path="/partner" element={<Layout><PartnerDashboard /></Layout>} />
+        <Route path="/partner/new" element={<Layout><PartnerNew /></Layout>} />
+        <Route path="/partner/edit/:id" element={<Layout><PartnerNew /></Layout>} />
+        <Route path="/partner-register" element={<Layout><PartnerRegisterPage /></Layout>} />
+        <Route path="/partner/callback" element={<Layout><PartnerCallbackPage /></Layout>} />
+        <Route path="/portaria" element={<Layout><StaffDashboard /></Layout>} />
+        <Route path="/politica-de-privacidade" element={<Layout><PrivacyPage /></Layout>} />
+        <Route path="/termos-de-uso" element={<Layout><TermsPage /></Layout>} />
+      </Routes>
   );
 };
 
