@@ -326,20 +326,23 @@ const Accordion = ({ title, icon: Icon, children }) => {
 
 // --- LOGIN/CADASTRO ---
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
-  // 1. HOOKS (Sempre devem ser chamados no topo, incondicionalmente)
+  if (!isOpen) return null;
+
+  // Estados de Fluxo
   const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
+  // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [confirmObj, setConfirmObj] = useState(null);
 
-  // Reset de estados quando o modal abre
+  // Reset de estados ao abrir
   useEffect(() => {
     if (isOpen) {
         setError(''); setInfo('');
@@ -350,9 +353,10 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
   // Lógica do Recaptcha (Blindada)
   useEffect(() => {
-    // Só executa se o modal estiver aberto E na tela de início do telefone
-    if (!isOpen || view !== 'phone_start') {
-        // Limpeza ao sair da tela
+    if (!isOpen) return;
+
+    // Se sair da tela de telefone, limpa a instância para evitar conflitos
+    if (view !== 'phone_start') {
         if (window.recaptchaVerifier) {
             try { window.recaptchaVerifier.clear(); } catch(e){}
             window.recaptchaVerifier = null;
@@ -361,32 +365,33 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     }
 
     const initRecaptcha = async () => {
-        // Delay para garantir que a div #recaptcha-container existe no DOM
-        await new Promise(r => setTimeout(r, 500));
+        // Pequeno delay para garantir que o DOM está estável
+        await new Promise(r => setTimeout(r, 200));
         
         const container = document.getElementById('recaptcha-container');
         
+        // Só inicializa se o container existir e não houver instância ativa
         if (container && !window.recaptchaVerifier) {
             try {
                 window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
                     'size': 'invisible',
-                    'callback': () => console.log("Recaptcha resolvido"),
+                    'callback': () => console.log("Recaptcha resolvido com sucesso"),
                     'expired-callback': () => setError("Sessão expirada. Tente novamente.")
                 });
                 await window.recaptchaVerifier.render();
             } catch (e) {
-                console.log("Recaptcha já inicializado ou erro:", e);
+                console.log("Status Recaptcha:", e);
             }
         }
     };
 
     initRecaptcha();
-
-    // Cleanup ao desmontar ou mudar de view
+    
+    // Cleanup ao desmontar
     return () => {
-        if (window.recaptchaVerifier) {
-            try { window.recaptchaVerifier.clear(); } catch(e){}
-            window.recaptchaVerifier = null;
+        if (!isOpen && window.recaptchaVerifier) {
+             try { window.recaptchaVerifier.clear(); } catch(e){}
+             window.recaptchaVerifier = null;
         }
     };
   }, [view, isOpen]);
@@ -423,8 +428,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         let res;
         if (view === 'register') {
             res = await createUserWithEmailAndPassword(auth, email, password);
-            try { await sendEmailVerification(res.user); } catch(e){}
-            alert(`Conta criada!`);
+            // Envia e-mail simples (sem configurações complexas para evitar erros de domínio)
+            try { await sendEmailVerification(res.user); } catch(e){ console.error("Erro envio email:", e); }
+            alert(`Conta criada! Enviamos um link de confirmação para ${email}.`);
         } else {
             res = await signInWithEmailAndPassword(auth, email, password);
         }
@@ -441,10 +447,13 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleForgot = async (e) => {
       e.preventDefault(); setLoading(true); setError(''); setInfo('');
       try {
-          await sendPasswordResetEmail(auth, email);
+          // Usa a URL atual como redirecionamento
+          await sendPasswordResetEmail(auth, email, { url: window.location.href });
           setInfo("Link enviado para o seu e-mail.");
-      } catch (err) { setError("Erro ao enviar. Verifique o e-mail."); }
-      finally { setLoading(false); }
+      } catch (err) { 
+          console.error(err);
+          setError("Erro ao enviar. Verifique o e-mail ou tente mais tarde."); 
+      } finally { setLoading(false); }
   };
 
   const handlePhoneStart = async (e) => {
@@ -459,13 +468,14 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       const formatted = "+55" + cleanPhone;
       
       try {
+          // Garante que o verificador existe antes de chamar
           if (!window.recaptchaVerifier) {
-              // Tenta recriar se falhou no useEffect (fallback)
+              // Tentativa de recuperação de emergência
               const container = document.getElementById('recaptcha-container');
               if(container) {
                   window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' });
               } else {
-                  throw new Error("Erro interno: Recaptcha container não encontrado.");
+                  throw new Error("Erro interno: Recaptcha não carregou. Recarregue a página.");
               }
           }
           
@@ -476,17 +486,18 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
           console.error("Erro SMS:", err);
           let msg = "Erro ao enviar SMS.";
           
-          // Tratamento de erro 401/403 do Google Cloud
           if (JSON.stringify(err).includes("403") || JSON.stringify(err).includes("401") || err.message?.includes("internal-error")) {
-              msg = "Bloqueio de Segurança (401/403): O domínio não está autorizado na Chave de API do Google Cloud (Browser Key).";
+              msg = "Erro de Permissão (401): Verifique a Chave de API no Google Cloud.";
           } else if (err.code === 'auth/quota-exceeded') {
               msg = "Limite diário de SMS atingido.";
           } else if (err.code === 'auth/invalid-phone-number') {
               msg = "Número inválido.";
+          } else if (err.code === 'auth/captcha-check-failed') {
+              msg = "Erro de segurança (Captcha).";
           }
           
           setError(msg);
-          // Limpa para tentar de novo
+          // Força limpeza para nova tentativa
           if(window.recaptchaVerifier) {
               try{ window.recaptchaVerifier.clear(); }catch(e){}
               window.recaptchaVerifier = null;
@@ -512,9 +523,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
 
-  // 2. RETORNO CONDICIONAL (Só aqui no final, depois de todos os hooks)
-  if (!isOpen) return null;
-
   return (
     <ModalOverlay onClose={onClose}>
       <div className="bg-white w-full rounded-2xl shadow-xl overflow-hidden relative animate-fade-in">
@@ -527,8 +535,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
         <div className="p-6">
             
-            {/* CONTAINER RECAPTCHA SEMPRE PRESENTE SE A VIEW FOR PHONE */}
-            {view === 'phone_start' && <div id="recaptcha-container" className="mb-4"></div>}
+            {/* CONTAINER RECAPTCHA SEMPRE PRESENTE (apenas oculto via CSS) */}
+            {/* Isso corrige o 'Internal React error' evitando remoção do nó DOM durante renderização */}
+            <div id="recaptcha-container" className={view === 'phone_start' ? 'mb-4' : 'hidden'}></div>
 
             {!hideRoleSelection && (view === 'register' || view === 'login') && (
                <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
@@ -1489,10 +1498,47 @@ const UserDashboard = () => {
   }, []);
 
   const handleCancel = async (id) => {
-    if(confirm("Deseja realmente cancelar esta reserva?")) {
-       await deleteDoc(doc(db, "reservations", id));
-       setTrips(trips.filter(t => t.id !== id));
-       alert("Cancelado com sucesso.");
+    if(confirm("Deseja realmente cancelar esta reserva? Essa ação não pode ser desfeita.")) {
+       // 1. Captura os dados da reserva para o e-mail antes de excluir
+       const tripToCancel = trips.find(t => t.id === id);
+
+       try {
+           await deleteDoc(doc(db, "reservations", id));
+           setTrips(trips.filter(t => t.id !== id));
+           
+           // 2. Envia E-mail de Cancelamento
+           if (tripToCancel) {
+               const emailHtml = `
+                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
+                    <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
+                        <h1 style="margin: 0; font-size: 24px;">Reserva Cancelada</h1>
+                    </div>
+                    <div style="padding: 20px;">
+                        <p>Olá, <strong>${tripToCancel.guestName || 'Viajante'}</strong>.</p>
+                        <p>Sua reserva foi cancelada conforme solicitado através da plataforma.</p>
+                        
+                        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #333;">${tripToCancel.itemName}</h3>
+                            <p style="margin: 5px 0;"><strong>📅 Data original:</strong> ${tripToCancel.date?.split('-').reverse().join('/')}</p>
+                            <p style="margin: 5px 0;"><strong>📍 Código:</strong> ${tripToCancel.id?.slice(0, 6).toUpperCase()}</p>
+                        </div>
+
+                        <p style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                           <strong>Importante sobre Reembolso:</strong> O estorno de valores pagos depende da política de cancelamento específica deste estabelecimento e do prazo em que o cancelamento foi realizado. Entre em contato diretamente com o local para mais detalhes.
+                        </p>
+                    </div>
+                </div>
+               `;
+               // Dispara sem await para não travar a interface
+               sendEmail(tripToCancel.guestEmail, "Reserva Cancelada - Mapa do Day Use", emailHtml);
+           }
+
+           alert("Reserva cancelada com sucesso. Enviamos um comprovante para seu e-mail.");
+
+       } catch (error) {
+           console.error("Erro ao cancelar:", error);
+           alert("Houve um erro ao tentar cancelar. Tente novamente.");
+       }
     }
   };
 
