@@ -453,21 +453,22 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     } catch (e) { setError("Erro ao conectar com Google."); }
   };
 
-  const handleEmailAuth = async (e) => {
+const handleEmailAuth = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
     try {
         let res;
         if (view === 'register') {
             res = await createUserWithEmailAndPassword(auth, email, password);
-            // Envia e-mail simples (sem configurações complexas para evitar erros de domínio)
-            try { await sendEmailVerification(res.user); } catch(e){ console.error("Erro envio email:", e); }
-            alert(`Conta criada! Enviamos um link de confirmação para ${email}.`);
+            // Removido envio de e-mail e a tela de 'email_sent'. 
+            // Entra direto:
         } else {
             res = await signInWithEmailAndPassword(auth, email, password);
         }
+        
         const userWithRole = await ensureProfile(res.user);
         onSuccess(userWithRole);
         if (closeOnSuccess) onClose();
+        
     } catch (err) {
         if (err.code === 'auth/email-already-in-use') setError("E-mail já cadastrado.");
         else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setError("Dados incorretos.");
@@ -1220,15 +1221,7 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-     if(!partnerToken) { 
-        if(confirm("MODO TESTE (Sem Parceiro): Deseja simular uma aprovação para testar o fluxo?")) {
-            handleConfirm();
-            return;
-        }
-        alert("Erro: O estabelecimento precisa conectar a conta para receber pagamentos.");
-        return; 
-     }
-     
+    
      // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
      // Fallback seguro para e-mail
@@ -2470,15 +2463,6 @@ const PartnerNew = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); 
-    
-    if (user && !user.emailVerified) {
-         const confirmSend = confirm(`Para publicar anúncios, seu e-mail (${user.email}) precisa ser verificado.\n\nDeseja que enviemos um link de confirmação agora?`);
-         if(confirmSend) {
-             try { await sendEmailVerification(user); alert("✅ Link enviado! Verifique sua caixa de entrada."); } 
-             catch(e) { console.error(e); alert("Erro ao enviar link."); }
-         }
-         return; 
-    }
 
     if (!validateCNPJ(formData.cnpj)) { alert("CNPJ inválido (deve ter 14 dígitos)."); return; }
     if (!formData.localWhatsapp) { alert("O WhatsApp do local é obrigatório."); return; }
