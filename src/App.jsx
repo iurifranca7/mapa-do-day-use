@@ -20,14 +20,15 @@ const STATE_NAMES = {
 };
 
 const AMENITIES_LIST = [
-    "Piscina", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cachoeira artificial",
+    "Piscina", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cascata/Cachoeira artificial",
     "Acesso à represa / lago", "Bicicletas", "Quadriciclo", "Passeio a cavalo", "Caiaque / Stand up",
     "Trilha", "Pesque e solte", "Fazendinha / Animais", "Espaço Kids", "Recreação infantil",
     "Quadra de areia", "Campo de futebol", "Campo de vôlei e peteca", "Beach tennis / futvôlei",
     "Academia", "Sauna", "Hidromassagem externa", "Hidromassagem / Banheira / Ofurô", "Massagem",
     "Espaço para meditação", "Capela", "Redes e balanços", "Vista / Mirante", "Fogo de chão / Lareira",
-    "Churrasqueira", "Cozinha equipada", "Bar / Restaurante", "Sala de jogos", "Música ao vivo", 
-    "Estacionamento", "Wi-Fi"
+    "Churrasqueira", "Cozinha equipada", "Bar / Restaurante / Quiosque", "Sala de jogos", "Música ao vivo", 
+    "Estacionamento", "Wi-Fi", "Piscina climatizada", "Playground", "Área Verde", "Lagoa com água da nascente", 
+    "Piscina com água da nascente", "Pratos e talheres", "Tomadas disponíveis", "Pia com torneira"
 ];
 
 const MEALS_LIST = ["Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas"];
@@ -840,7 +841,7 @@ const DetailsPage = () => {
   // States para Solicitação de Propriedade
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [claimLoading, setClaimLoading] = useState(false);
-  const [showClaimSuccess, setShowClaimSuccess] = useState(false); // Novo estado para o modal de sucesso
+  const [showClaimSuccess, setShowClaimSuccess] = useState(false);
   const [claimData, setClaimData] = useState({ name: '', email: '', phone: '', job: '' });
 
   useEffect(() => {
@@ -858,7 +859,6 @@ const DetailsPage = () => {
     fetchItem();
   }, [slug, location.state]);
 
-  // Lógica de Preço
   useEffect(() => {
     if(item) {
         if (date) {
@@ -901,7 +901,6 @@ const DetailsPage = () => {
   const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee);
   const showPets = item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita') || petFee > 0;
   
-  // --- HANDLER DE RESERVA (CORRIGIDO: VAI PARA CHECKOUT) ---
   const handleBook = () => {
       navigate('/checkout', { 
           state: { 
@@ -913,73 +912,38 @@ const DetailsPage = () => {
       });
   };
 
-  // --- HANDLER DE SOLICITAÇÃO (ADMINISTRAÇÃO) ---
   const handleClaimSubmit = async (e) => {
       e.preventDefault();
       setClaimLoading(true);
-      
       const emailHtml = `
         <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
             <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
-            <p>Alguém solicitou a administração do perfil abaixo:</p>
-            <hr/>
             <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
             <p><strong>Solicitante:</strong> ${claimData.name}</p>
             <p><strong>E-mail:</strong> ${claimData.email}</p>
             <p><strong>Telefone:</strong> ${claimData.phone}</p>
             <p><strong>Cargo:</strong> ${claimData.job}</p>
-            <hr/>
-            <p>Acesse o painel do Firebase ou entre em contato com o solicitante para validar e transferir o 'ownerId'.</p>
         </div>
       `;
-
       try {
           await fetch('/api/send-email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  to: 'contato@mapadodayuse.com', 
-                  subject: `🔥 Solicitação: ${item.name} - ${claimData.name}`,
-                  html: emailHtml
-              })
+              body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: emailHtml })
           });
-          
           setShowClaimModal(false);
-          setShowClaimSuccess(true); // Abre modal de sucesso bonito
+          setShowClaimSuccess(true);
           setClaimData({ name: '', email: '', phone: '', job: '' });
-      } catch (error) {
-          console.error(error);
-          alert("Erro ao enviar solicitação. Tente novamente.");
-      } finally {
-          setClaimLoading(false);
-      }
+      } catch (error) { console.error(error); alert("Erro ao enviar solicitação."); } 
+      finally { setClaimLoading(false); }
   };
 
   const PausedMessage = () => (
     <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
-        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-2">
-            <Ticket size={32} className="text-slate-400"/>
-        </div>
-        <div>
-            <h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Indisponíveis</h3>
-            <p className="text-slate-500 leading-relaxed text-sm">
-                No momento, este local não está recebendo novas reservas pela plataforma.
-            </p>
-        </div>
-        
-        <Button onClick={() => navigate('/')} className="w-full py-4 shadow-lg shadow-teal-100/50">
-            Ver opções próximas
-        </Button>
-
-        <div className="pt-4 border-t border-slate-100">
-            <p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p>
-            <button 
-                onClick={() => setShowClaimModal(true)} 
-                className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"
-            >
-                <Briefcase size={14}/> Solicitar administração
-            </button>
-        </div>
+        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-2"><Ticket size={32} className="text-slate-400"/></div>
+        <div><h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Indisponíveis</h3><p className="text-slate-500 leading-relaxed text-sm">No momento, este local não está recebendo novas reservas pela plataforma.</p></div>
+        <Button onClick={() => navigate('/')} className="w-full py-4 shadow-lg shadow-teal-100/50">Ver opções próximas</Button>
+        <div className="pt-4 border-t border-slate-100"><p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p><button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button></div>
     </div>
   );
 
@@ -988,71 +952,31 @@ const DetailsPage = () => {
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
-      {/* MODAL DE SUCESSO DA SOLICITAÇÃO (AGORA COM PORTAL) */}
-      {showClaimSuccess && createPortal(
-          <SuccessModal 
-              isOpen={showClaimSuccess} 
-              onClose={() => setShowClaimSuccess(false)}
-              title="Solicitação Enviada!"
-              message="Recebemos seus dados com sucesso. Em breve entraremos em contato para validação. Será necessário apresentação o Contrato Social/CCMEI e seu documento com foto."
-              actionLabel="Entendi, obrigado"
-              onAction={() => setShowClaimSuccess(false)}
-          />,
-          document.body
-      )}
+      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
 
-      {/* MODAL DE FORMULÁRIO DE SOLICITAÇÃO */}
       {showClaimModal && createPortal(
           <ModalOverlay onClose={() => setShowClaimModal(false)}>
               <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in">
-                  <div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Briefcase size={32}/>
-                  </div>
+                  <div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div>
                   <h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2>
-                  <p className="text-slate-600 mb-6 text-sm">
-                      Preencha seus dados abaixo para solicitar o controle administrativo do perfil <strong>{item.name}</strong>.
-                  </p>
+                  <p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p>
                   <form onSubmit={handleClaimSubmit} className="space-y-3 text-left">
-                      <div>
-                          <label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label>
-                          <input className="w-full border p-3 rounded-xl" placeholder="Nome completo" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/>
-                      </div>
-                      <div>
-                          <label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label>
-                          <input className="w-full border p-3 rounded-xl" placeholder="seu@email.com" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/>
-                      </div>
+                      <div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div>
+                      <div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div>
                       <div className="grid grid-cols-2 gap-3">
-                          <div>
-                              <label className="text-xs font-bold text-slate-500 ml-1">Telefone / WhatsApp</label>
-                              <input className="w-full border p-3 rounded-xl" placeholder="(00) 00000-0000" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/>
-                          </div>
-                          <div>
-                              <label className="text-xs font-bold text-slate-500 ml-1">Seu Cargo</label>
-                              <select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}>
-                                  <option value="">Selecione...</option>
-                                  <option>Proprietário</option>
-                                  <option>Gerente</option>
-                                  <option>Marketing</option>
-                                  <option>Comercial</option>
-                              </select>
-                          </div>
+                          <div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div>
+                          <div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Outros</option></select></div>
                       </div>
-                      <Button type="submit" disabled={claimLoading} className="w-full mt-4">
-                          {claimLoading ? 'Enviando...' : 'Enviar Solicitação'}
-                      </Button>
+                      <Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button>
                   </form>
                   <button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button>
               </div>
-          </ModalOverlay>,
-          document.body
+          </ModalOverlay>, document.body
       )}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
-            <div>
-               <h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1>
-               <p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p>
-            </div>
+            <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
 
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}>
                <div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div>
@@ -1064,22 +988,43 @@ const DetailsPage = () => {
             
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
+               
+               {/* SEÇÃO O QUE ESTÁ INCLUSO (CORRIGIDA) */}
+               <div>
+                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
+                   
+                   {/* Comodidades (Checkboxes) */}
+                   {item.amenities && item.amenities.length > 0 && (
+                       <div className="mb-6">
+                           <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
+                           <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
+                               {item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}
+                           </div>
+                       </div>
+                   )}
+
+                   {/* Pensão (Checkboxes) */}
+                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4">
+                       <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>
+                       {item.meals && item.meals.length > 0 ? (
+                           <div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>
+                       ) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
+                   </div>
+
+                   {/* Outros Inclusos (Texto Livre) - AGORA VISÍVEL */}
+                   {item.includedItems && (
+                       <div>
+                           <p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p>
+                           <p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p>
+                       </div>
+                   )}
+               </div>
+
                {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
                
-               <div className="grid md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
-                  <div><h4 className="font-bold text-[#0097A8] mb-3 flex items-center gap-2"><CheckCircle size={18}/> Incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.includedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
-                  <div><h4 className="font-bold text-red-500 mb-3 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.notIncludedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
-               </div>
-               
-               <div className="pt-4 border-t border-slate-100">
-                  <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4>
-                  <p className="text-slate-600 text-sm whitespace-pre-line bg-slate-50 p-4 rounded-xl">{item.usageRules || "Sem regras específicas."}</p>
-               </div>
-               
-               <div className="pt-4 border-t border-slate-100">
-                  <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><AlertCircle size={18} className="text-orange-500"/> Cancelamento e Reembolso</h4>
-                  <p className="text-slate-600 text-sm whitespace-pre-line bg-orange-50 p-4 rounded-xl">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
-               </div>
+               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p></div>
+               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4><p className="text-slate-600 text-sm whitespace-pre-line bg-slate-50 p-4 rounded-xl">{item.usageRules || "Sem regras específicas."}</p></div>
+               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><AlertCircle size={18} className="text-orange-500"/> Cancelamento e Reembolso</h4><p className="text-slate-600 text-sm whitespace-pre-line bg-orange-50 p-4 rounded-xl">{item.cancellationPolicy || "Consulte o estabelecimento."}</p></div>
             </div>
          </div>
          
@@ -1087,12 +1032,7 @@ const DetailsPage = () => {
             {item.paused ? <PausedMessage /> : (
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-                   
-                   <div>
-                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
-                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
-                   </div>
-
+                   <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div></div>
@@ -1101,12 +1041,7 @@ const DetailsPage = () => {
                    {item.gratuitousness && <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800"><span className="font-bold block mb-1">🎁 Política de Gratuidade:</span>{item.gratuitousness}</div>}
                    <div className="pt-4 border-t border-dashed border-slate-200">
                       <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total Estimado</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
-                      
-                      {/* BOTÃO RESERVAR (VOLTOU PARA CHECKOUT) */}
-                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>
-                          Reservar
-                      </Button>
-                      
+                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
                       <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
                    </div>
                 </div>
@@ -2425,6 +2360,7 @@ const PartnerNew = () => {
 
   // States para Checkboxes (Multi-select)
   const [selectedAmenities, setSelectedAmenities] = useState([]);
+  const [amenitySearch, setAmenitySearch] = useState(""); // NOVO: Busca de comodidades
   const [selectedMeals, setSelectedMeals] = useState([]);
   const [blockedDates, setBlockedDates] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -2469,52 +2405,32 @@ const PartnerNew = () => {
   const handleCepBlur = async () => { if (formData.cep?.replace(/\D/g, '').length === 8) { setCepLoading(true); try { const response = await fetch(`https://viacep.com.br/ws/${formData.cep}/json/`); const data = await response.json(); if (!data.erro) setFormData(prev => ({ ...prev, street: data.logradouro, district: data.bairro, city: data.localidade, state: data.uf })); } catch (error) { console.error("Erro CEP:", error); } finally { setCepLoading(false); } } };
   const handleCnpjChange = (e) => { const val = e.target.value; setFormData({...formData, cnpj: val}); const nums = val.replace(/\D/g, ''); if (nums.length > 0 && nums.length !== 14) setCnpjError(true); else setCnpjError(false); };
   
-  // --- NOVA LÓGICA DE UPLOAD COM COMPRESSÃO ---
   const handleFileUpload = (index, e) => {
     const file = e.target.files[0];
     if (file) {
-      // Feedback visual simples
-      const label = e.target.parentNode; 
-      if(label) label.style.opacity = '0.5';
-
+      if (file.size > 800 * 1024) { alert("Imagem muito grande (máx 800KB)."); return; }
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target.result;
         img.onload = () => {
-          // Cria um canvas para redimensionar
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800; // Define largura máxima de 800px para ficar leve
+          const MAX_WIDTH = 800; 
           const scaleSize = MAX_WIDTH / img.width;
-          
-          // Se a imagem já for pequena, mantém. Se for grande, reduz.
-          if (scaleSize < 1) {
-              canvas.width = MAX_WIDTH;
-              canvas.height = img.height * scaleSize;
-          } else {
-              canvas.width = img.width;
-              canvas.height = img.height;
-          }
-
+          if (scaleSize < 1) { canvas.width = MAX_WIDTH; canvas.height = img.height * scaleSize; } 
+          else { canvas.width = img.width; canvas.height = img.height; }
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          
-          // Converte para JPEG com 70% de qualidade (Base64 Otimizado)
           const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-
           const newImages = [...formData.images];
           newImages[index] = compressedDataUrl;
           setFormData({ ...formData, images: newImages });
-          
-          if(label) label.style.opacity = '1';
         };
       };
     }
   };
-
   const removeImage = (index) => { const newImages = [...formData.images]; newImages[index] = ''; setFormData({ ...formData, images: newImages }); };
-  // --------------------------------------------
 
   const toggleDay = (dayIndex) => { const newDays = formData.availableDays.includes(dayIndex) ? formData.availableDays.filter(d => d !== dayIndex) : [...formData.availableDays, dayIndex]; setFormData({...formData, availableDays: newDays}); };
   const toggleBlockedDate = (dateStr) => { if (blockedDates.includes(dateStr)) setBlockedDates(blockedDates.filter(d => d !== dateStr)); else setBlockedDates([...blockedDates, dateStr]); };
@@ -2539,29 +2455,45 @@ const PartnerNew = () => {
   };
 
   const handleWeeklyPriceChange = (dayIndex, field, value) => { setWeeklyPrices(prev => ({ ...prev, [dayIndex]: { ...prev[dayIndex], [field]: value } })); };
-  const toggleAmenity = (item) => { if (selectedAmenities.includes(item)) setSelectedAmenities(selectedAmenities.filter(i => i !== item)); else setSelectedAmenities([...selectedAmenities, item]); };
-  const toggleMeal = (item) => { if (selectedMeals.includes(item)) setSelectedMeals(selectedMeals.filter(i => i !== item)); else setSelectedMeals([...selectedMeals, item]); };
+  
+  const toggleAmenity = (item) => {
+      if (selectedAmenities.includes(item)) setSelectedAmenities(selectedAmenities.filter(i => i !== item));
+      else setSelectedAmenities([...selectedAmenities, item]);
+  };
+  const toggleMeal = (item) => {
+      if (selectedMeals.includes(item)) setSelectedMeals(selectedMeals.filter(i => i !== item));
+      else setSelectedMeals([...selectedMeals, item]);
+  };
+
   const addCoupon = () => { if(newCouponCode && newCouponPerc) { setCoupons([...coupons, { code: newCouponCode.toUpperCase(), percentage: Number(newCouponPerc) }]); setNewCouponCode(''); setNewCouponPerc(''); } };
   const removeCoupon = (idx) => { const newC = [...coupons]; newC.splice(idx, 1); setCoupons(newC); };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); 
+    
+    if (user && !user.emailVerified) {
+         const confirmSend = confirm(`Para publicar anúncios, seu e-mail (${user.email}) precisa ser verificado.\n\nDeseja que enviemos um link de confirmação agora?`);
+         if(confirmSend) {
+             try { await sendEmailVerification(user); alert("✅ Link enviado! Verifique sua caixa de entrada."); } 
+             catch(e) { console.error(e); alert("Erro ao enviar link."); }
+         }
+         return; 
+    }
+
     if (!validateCNPJ(formData.cnpj)) { alert("CNPJ inválido (deve ter 14 dígitos)."); return; }
     if (!formData.localWhatsapp) { alert("O WhatsApp do local é obrigatório."); return; }
     
     setLoading(true);
 
-    // CORREÇÃO: Mapeia o array de 'images' para campos individuais (image, image2...) 
-    // para garantir compatibilidade com a Home e a Página de Detalhes
     const imageFields = {};
     formData.images.forEach((img, index) => {
-        if (index === 0) imageFields.image = img; // Capa
-        else imageFields[`image${index + 1}`] = img; // image2, image3...
+        if (index === 0) imageFields.image = img; 
+        else imageFields[`image${index + 1}`] = img; 
     });
 
     const dataToSave = { 
         ...formData, 
-        ...imageFields, // Espalha as imagens nos campos corretos
+        ...imageFields, 
         ownerId: user.uid, 
         coupons, 
         dailyStock, 
@@ -2580,7 +2512,7 @@ const PartnerNew = () => {
         navigate('/partner'); 
     } catch (err) { 
         console.error("Erro ao salvar:", err);
-        alert("Erro ao salvar. Se as imagens forem muito pesadas, tente reduzir a quantidade."); 
+        alert("Erro ao salvar. Tente novamente."); 
     } finally { setLoading(false); }
   };
 
@@ -2596,8 +2528,15 @@ const PartnerNew = () => {
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">1. Dados do Responsável</h3></div>
               <div className="grid grid-cols-2 gap-4">
-                 <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactName} readOnly />
-                 <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactEmail} readOnly />
+                 {/* CORREÇÃO: Campo de nome destravado para edição */}
+                 <div>
+                     <label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label>
+                     <input className="w-full border p-3 rounded-xl" value={formData.contactName} onChange={e=>setFormData({...formData, contactName: e.target.value})} placeholder="Seu nome" />
+                 </div>
+                 <div>
+                     <label className="text-sm font-bold text-slate-700 block mb-1">E-mail de Cadastro</label>
+                     <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactEmail} readOnly />
+                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                  <input className="w-full border p-3 rounded-xl" placeholder="Telefone Pessoal" value={formData.contactPhone} onChange={e=>setFormData({...formData, contactPhone: e.target.value})} required/>
@@ -2630,7 +2569,7 @@ const PartnerNew = () => {
               <input className="w-full border p-3 rounded-xl" placeholder="Logradouro" value={formData.street} onChange={e=>setFormData({...formData, street: e.target.value})} required/>
            </div>
 
-           {/* 3. SOBRE (COM UPLOAD OTIMIZADO) */}
+           {/* 3. SOBRE */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">3. Sobre a Experiência</h3></div>
               <textarea className="w-full border p-3 rounded-xl h-32" placeholder="Descrição completa..." value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} required/>
@@ -2638,28 +2577,13 @@ const PartnerNew = () => {
               
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-2">Galeria de Fotos</label>
-                  <p className="text-xs text-slate-500 mb-3">Carregue até 6 fotos. O sistema otimiza automaticamente para não pesar.</p>
-                  
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     {formData.images.map((img, i) => (
-                        <div key={i} className="relative aspect-video bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#0097A8] transition-colors flex items-center justify-center overflow-hidden group">
+                        <div key={i} className="relative aspect-video bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#0097A8] flex items-center justify-center overflow-hidden group">
                             {img ? (
-                                <>
-                                    <img src={img} alt={`Foto ${i+1}`} className="w-full h-full object-cover" />
-                                    <button 
-                                        type="button"
-                                        onClick={() => removeImage(i)}
-                                        className="absolute inset-0 bg-black/50 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                                    >
-                                        <Trash2 size={24}/>
-                                    </button>
-                                </>
+                                <><img src={img} className="w-full h-full object-cover" /><button type="button" onClick={() => removeImage(i)} className="absolute inset-0 bg-black/50 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center"><Trash2/></button></>
                             ) : (
-                                <label className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-slate-400 hover:text-[#0097A8]">
-                                    <ImageIcon size={24} className="mb-1"/>
-                                    <span className="text-xs font-bold">{i === 0 ? "Capa" : `Foto ${i+1}`}</span>
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(i, e)} />
-                                </label>
+                                <label className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-slate-400 hover:text-[#0097A8]"><ImageIcon size={24}/><input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(i, e)} /></label>
                             )}
                         </div>
                     ))}
@@ -2689,7 +2613,6 @@ const PartnerNew = () => {
                 </table>
               </div>
 
-              {/* Calendário de Gestão */}
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                   <div className="flex justify-between items-center mb-4"><h4 className="font-bold text-slate-700 text-sm">Gerenciar Datas Específicas</h4><div className="flex gap-2"><button type="button" onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth()-1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft size={16}/></button><span className="text-sm font-bold capitalize">{calendarMonth.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</span><button type="button" onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth()+1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronRight size={16}/></button></div></div>
                   <div className="grid grid-cols-7 gap-1 text-center text-xs mb-2 font-bold text-slate-400">{["D","S","T","Q","Q","S","S"].map(d=><span>{d}</span>)}</div>
@@ -2700,9 +2623,9 @@ const PartnerNew = () => {
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                  <p className="text-sm font-bold text-slate-700 mb-2">Preços Base</p>
                  <div className="grid grid-cols-3 gap-4">
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Adulto Base" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Criança Base" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
-                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Pet Base" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Adulto Base (R$)" value={formData.priceAdult} onChange={e=>setFormData({...formData, priceAdult: e.target.value})} required/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Criança Base (R$)" value={formData.priceChild} onChange={e=>setFormData({...formData, priceChild: e.target.value})}/>
+                    <input className="border p-3 rounded-xl w-full" type="number" placeholder="Pet Base (R$)" value={formData.petFee} onChange={e=>setFormData({...formData, petFee: e.target.value})}/>
                  </div>
               </div>
 
@@ -2727,56 +2650,80 @@ const PartnerNew = () => {
                       <div><input className="border p-2 rounded w-full" placeholder="Política de Gratuidade" value={formData.gratuitousness} onChange={e=>setFormData({...formData, gratuitousness: e.target.value})}/></div>
                   </div>
               </div>
-              
-              {/* CUPONS (Responsivo) */}
+
               <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 mt-4">
-                 <div className="flex justify-between items-center mb-2">
-                    <label className="text-sm font-bold text-yellow-800">Criar Cupons</label>
-                    <Tag size={16} className="text-yellow-600"/>
-                 </div>
-                 
-                 <div className="flex flex-col md:flex-row gap-2 mb-2">
-                    <input 
-                        className="border p-2 rounded-lg flex-1 text-sm uppercase w-full" 
-                        placeholder="CÓDIGO (Ex: VERAO10)" 
-                        value={newCouponCode} 
-                        onChange={e=>setNewCouponCode(e.target.value)} 
-                    />
-                    <div className="flex gap-2">
-                        <input 
-                            className="border p-2 rounded-lg w-24 text-sm" 
-                            placeholder="Desc %" 
-                            type="number" 
-                            value={newCouponPerc} 
-                            onChange={e=>setNewCouponPerc(e.target.value)} 
-                        />
-                        <Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 border-none flex-1 md:flex-none">
-                            Add
-                        </Button>
-                    </div>
-                 </div>
-                 
-                 <div className="space-y-1">
-                    {coupons.map((c, i) => (
-                        <div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm">
-                            <span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span>
-                            <button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                        </div>
-                    ))}
-                </div>
-               </div>
+                 <div className="flex justify-between items-center mb-2"><label className="text-sm font-bold text-yellow-800">Criar Cupons</label><Tag size={16} className="text-yellow-600"/></div>
+                 <div className="flex gap-2 mb-2"><input className="border p-2 rounded-lg flex-1 text-sm uppercase" placeholder="CÓDIGO" value={newCouponCode} onChange={e=>setNewCouponCode(e.target.value)} /><input className="border p-2 rounded-lg w-24 text-sm" placeholder="%" type="number" value={newCouponPerc} onChange={e=>setNewCouponPerc(e.target.value)} /><Button onClick={addCoupon} className="py-2 px-4 text-xs bg-yellow-600 border-none">Add</Button></div>
+                 <div className="space-y-1">{coupons.map((c, i) => (<div key={i} className="flex justify-between items-center bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-bold text-slate-700">{c.code} <span className="text-green-600">({c.percentage}% OFF)</span></span><button type="button" onClick={()=>removeCoupon(i)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div>))}</div>
+              </div>
            </div>
 
-           {/* 5. INCLUSÕES E REGRAS (CHECKLISTS) */}
+           {/* 5. INCLUSÕES E REGRAS (CHECKLISTS COM BUSCA) */}
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">5. O que está incluso?</h3></div>
-              <div><label className="text-sm font-bold text-slate-700 block mb-2">Comodidades</label><div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200 h-60 overflow-y-auto custom-scrollbar">{AMENITIES_LIST.map(a => (<label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleAmenity(a)} className="accent-[#0097A8] w-4 h-4 rounded"/>{a}</label>))}</div></div>
-              <div><label className="text-sm font-bold text-slate-700 block mb-2">Alimentação</label><div className="flex flex-wrap gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">{MEALS_LIST.map(m => (<label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleMeal(m)} className="accent-[#0097A8] w-4 h-4 rounded"/>{m}</label>))}</div></div>
-              <div><label className="text-sm font-bold text-red-600 block mb-1">O que NÃO está incluso?</label><textarea className="w-full border p-3 rounded-xl h-20 bg-red-50/30" placeholder="Ex: Bebidas..." value={formData.notIncludedItems} onChange={e=>setFormData({...formData, notIncludedItems: e.target.value})}/></div>
+
+              {/* COMODIDADES COM BUSCA */}
+              <div>
+                  <label className="text-sm font-bold text-slate-700 block mb-2">Comodidades e Lazer</label>
+                  
+                  {/* CAMPO DE BUSCA NOVO */}
+                  <div className="relative mb-2">
+                     <Search size={16} className="absolute left-3 top-3 text-slate-400"/>
+                     <input 
+                        className="w-full border p-2 pl-9 rounded-lg text-sm bg-slate-50 focus:bg-white transition-colors"
+                        placeholder="Buscar comodidade..."
+                        value={amenitySearch}
+                        onChange={e=>setAmenitySearch(e.target.value)}
+                     />
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200 h-60 overflow-y-auto custom-scrollbar">
+                      {AMENITIES_LIST
+                        .filter(a => a.toLowerCase().includes(amenitySearch.toLowerCase())) // FILTRO
+                        .map(a => (
+                          <label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
+                              <input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleAmenity(a)} className="accent-[#0097A8] w-4 h-4 rounded"/>{a}
+                          </label>
+                      ))}
+                      {/* Mensagem se não encontrar nada */}
+                      {AMENITIES_LIST.filter(a => a.toLowerCase().includes(amenitySearch.toLowerCase())).length === 0 && (
+                          <p className="text-xs text-slate-400 col-span-full text-center py-4">Nenhuma comodidade encontrada.</p>
+                      )}
+                  </div>
+              </div>
+
+              {/* PENSÃO */}
+              <div>
+                  <label className="text-sm font-bold text-slate-700 block mb-2">Alimentação (Pensão)</label>
+                  <div className="flex flex-wrap gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      {MEALS_LIST.map(m => (
+                          <label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
+                              <input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleMeal(m)} className="accent-[#0097A8] w-4 h-4 rounded"/>{m}
+                          </label>
+                      ))}
+                  </div>
+              </div>
+
+              <div>
+                  <label className="text-sm font-bold text-red-600 block mb-1">O que NÃO está incluso?</label>
+                  <textarea className="w-full border p-3 rounded-xl h-20 bg-red-50/30" placeholder="Ex: Bebidas alcoólicas, Toalhas..." value={formData.notIncludedItems} onChange={e=>setFormData({...formData, notIncludedItems: e.target.value})}/>
+              </div>
+
+              {/* CAMPOS SEPARADOS */}
+              <div>
+                  <label className="text-sm font-bold text-slate-700 block mb-1">Regras de Utilização</label>
+                  <textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Proibido som automotivo, horário de silêncio..." value={formData.usageRules} onChange={e=>setFormData({...formData, usageRules: e.target.value})}/>
+              </div>
               
-              <div><label className="text-sm font-bold text-slate-700 block mb-1">Regras de Utilização</label><textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Proibido som..." value={formData.usageRules} onChange={e=>setFormData({...formData, usageRules: e.target.value})}/></div>
-              <div><label className="text-sm font-bold text-slate-700 block mb-1">Política de Cancelamento</label><textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Até 24h antes..." value={formData.cancellationPolicy} onChange={e=>setFormData({...formData, cancellationPolicy: e.target.value})}/></div>
-              <div><label className="text-sm font-bold text-slate-700 block mb-1">Observações Gerais</label><textarea className="w-full border p-3 rounded-xl h-20" placeholder="Outras informações..." value={formData.observations} onChange={e=>setFormData({...formData, observations: e.target.value})}/></div>
+              <div>
+                  <label className="text-sm font-bold text-slate-700 block mb-1">Política de Cancelamento</label>
+                  <textarea className="w-full border p-3 rounded-xl h-24" placeholder="Ex: Cancelamento grátis até 24h antes. Após isso, multa de 50%..." value={formData.cancellationPolicy} onChange={e=>setFormData({...formData, cancellationPolicy: e.target.value})}/>
+              </div>
+              
+              <div>
+                  <label className="text-sm font-bold text-slate-700 block mb-1">Observações Gerais</label>
+                  <textarea className="w-full border p-3 rounded-xl h-20" placeholder="Outras informações importantes..." value={formData.observations} onChange={e=>setFormData({...formData, observations: e.target.value})}/>
+              </div>
            </div>
            
            <div className="pt-4 border-t">
@@ -2904,31 +2851,45 @@ const TermsPage = () => (
   </div>
 );
 
-// --- ESTRUTURA PRINCIPAL ---
-// ...
+// --- ESTRUTURA PRINCIPAL ---// ...
 
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
   const [logoError, setLogoError] = useState(false); 
   const navigate = useNavigate();
-  const { pathname } = useLocation(); // Hook para saber a página atual
+  const { pathname } = useLocation();
 
-  // 1. CORREÇÃO DE SCROLL: Rola para o topo sempre que a rota mudar
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
 
+  // CORREÇÃO: Listener em Tempo Real
   useEffect(() => {
-    return onAuthStateChanged(auth, async (u) => {
+    let unsubscribeDoc = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
        if(u) {
-          const snap = await getDoc(doc(db, "users", u.uid));
-          setUser({ ...u, role: snap.data()?.role || 'user' });
-       } else setUser(null);
+          // Ao logar, conecta-se diretamente ao documento do usuário no banco
+          // Se o documento mudar (ex: acabar de ser criado com role 'partner'), a UI atualiza na hora.
+          unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
+             const userData = docSnap.exists() ? docSnap.data() : {};
+             const role = userData.role || 'user'; // Padrão é user se ainda não carregou
+             setUser({ ...u, role });
+          });
+       } else {
+          setUser(null);
+          if(unsubscribeDoc) unsubscribeDoc(); // Limpa o listener anterior
+       }
     });
+
+    return () => {
+       unsubscribeAuth();
+       if(unsubscribeDoc) unsubscribeDoc();
+    };
   }, []);
 
-  // Efeito para definir o Favicon dinamicamente
+  // Efeito do Favicon
   useEffect(() => {
     const link = document.querySelector("link[rel~='icon']");
     if (link) {
@@ -2954,15 +2915,14 @@ const Layout = ({ children }) => {
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
-           {/* LOGO NO HEADER */}
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.png" 
+                    src="/logo.svg?v=2" 
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
                     onError={(e) => {
-                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.style.display = 'none'; 
                         setLogoError(true); 
                     }} 
                  />
@@ -2974,22 +2934,21 @@ const Layout = ({ children }) => {
            <div className="flex items-center gap-2 md:gap-4">
               {!user ? (
                  <>
-                   {/* 2. CORREÇÃO MOBILE: Removido 'hidden', ajustado tamanho da fonte */}
                    <button onClick={()=>{navigate('/partner-register')}} className="text-xs md:text-sm font-bold text-slate-500 hover:text-[#0097A8] mr-2">Seja parceiro</button>
                    <Button variant="ghost" onClick={()=>setShowLogin(true)} className="font-bold px-3 md:px-4">Entrar</Button>
                  </>
               ) : (
                  <div className="flex gap-2 md:gap-4 items-center">
-                    {/* Botões do Header condicionados ao Perfil */}
+                    {/* Botões condicionais por Role */}
                     {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
                     
                     {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
                     
+                    {/* Exibe "Meus Ingressos" APENAS se NÃO for parceiro E NÃO for staff */}
                     {user.role !== 'partner' && user.role !== 'staff' && (
-                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>
+                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')}>Meus Ingressos</Button>
                     )}
 
-                    {/* 3. CORREÇÃO DE CLIQUE NO AVATAR: Mudado de div para button para melhor resposta ao toque */}
                     <button 
                         className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform" 
                         title={user.email}
@@ -3013,7 +2972,7 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.png" 
+                           src="/logo.svg?v=2" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
                            onError={() => setLogoError(true)} 
@@ -3033,6 +2992,7 @@ const Layout = ({ children }) => {
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
+                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
                      <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
