@@ -831,6 +831,7 @@ const DetailsPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [item, setItem] = useState(null);
+  const [relatedItems, setRelatedItems] = useState([]); // NOVO: Itens relacionados
   
   const [date, setDate] = useState("");
   const [adults, setAdults] = useState(1);
@@ -847,19 +848,38 @@ const DetailsPage = () => {
 
   useEffect(() => {
     const fetchItem = async () => {
+      let foundData = null;
+      
+      // 1. Busca o Item Principal
       if (location.state?.id) {
          const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
-         if(docSnap.exists()) setItem({id: docSnap.id, ...docSnap.data()});
+         if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
       } else {
          const q = query(collection(db, "dayuses")); 
          const querySnapshot = await getDocs(q);
          const found = querySnapshot.docs.find(d => generateSlug(d.data().name) === slug);
-         if (found) setItem({id: found.id, ...found.data()});
+         if (found) foundData = {id: found.id, ...found.data()};
+      }
+
+      if (foundData) {
+          setItem(foundData);
+          
+          // 2. Busca Itens Relacionados (Mesma Cidade)
+          // Nota: Fazemos a filtragem no client-side para aproveitar a query simples sem precisar de índices complexos agora
+          const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
+          const snapRelated = await getDocs(qRelated);
+          const related = snapRelated.docs
+              .map(d => ({id: d.id, ...d.data()}))
+              .filter(i => i.id !== foundData.id && !i.paused) // Exclui o próprio e pausados
+              .slice(0, 3); // Pega apenas 3 para caber no box
+          
+          setRelatedItems(related);
       }
     };
     fetchItem();
   }, [slug, location.state]);
 
+  // Lógica de Preço
   useEffect(() => {
     if(item) {
         if (date) {
@@ -939,12 +959,56 @@ const DetailsPage = () => {
       finally { setClaimLoading(false); }
   };
 
+  // --- MENSAGEM DE PAUSADO (NOVA ESTRUTURA) ---
   const PausedMessage = () => (
-    <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
-        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-2"><Ticket size={32} className="text-slate-400"/></div>
-        <div><h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Indisponíveis</h3><p className="text-slate-500 leading-relaxed text-sm">No momento, este local não está recebendo novas reservas pela plataforma.</p></div>
-        <Button onClick={() => navigate('/')} className="w-full py-4 shadow-lg shadow-teal-100/50">Ver opções próximas</Button>
-        <div className="pt-4 border-t border-slate-100"><p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p><button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button></div>
+    <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 space-y-6">
+        
+        {/* TOPO: CLAIM (Solicitação) */}
+        <div className="pb-4 border-b border-slate-100 text-center">
+            <p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p>
+            <button 
+                onClick={() => setShowClaimModal(true)} 
+                className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"
+            >
+                <Briefcase size={14}/> Solicitar administração
+            </button>
+        </div>
+
+        {/* MEIO: AVISO */}
+        <div className="text-center">
+            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400">
+                <Ticket size={24}/>
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">Reservas Indisponíveis</h3>
+            <p className="text-slate-500 leading-relaxed text-xs">
+                No momento, este local não está recebendo novas reservas. 
+                <br/><strong className="text-slate-700">Confira outras opções em {item.city}:</strong>
+            </p>
+        </div>
+        
+        {/* BASE: SUGESTÕES (MINI CARDS) */}
+        <div className="space-y-3">
+            {relatedItems.length > 0 ? relatedItems.map(related => (
+                <div 
+                    key={related.id} 
+                    onClick={() => navigate(`/${getStateSlug(related.state)}/${generateSlug(related.name)}`, {state: {id: related.id}})}
+                    className="flex items-center gap-3 p-2 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:shadow-md transition-all cursor-pointer bg-slate-50 hover:bg-white group"
+                >
+                    <img src={related.image} className="w-16 h-16 rounded-lg object-cover bg-gray-200 shrink-0"/>
+                    <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4>
+                        <p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p>
+                    </div>
+                    <div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2">
+                        <ArrowRight size={16}/>
+                    </div>
+                </div>
+            )) : (
+                <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">
+                    Ver todos os Day Uses
+                </Button>
+            )}
+        </div>
     </div>
   );
 
@@ -990,11 +1054,8 @@ const DetailsPage = () => {
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
                
-               {/* SEÇÃO O QUE ESTÁ INCLUSO (CORRIGIDA) */}
                <div>
                    <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
-                   
-                   {/* Comodidades (Checkboxes) */}
                    {item.amenities && item.amenities.length > 0 && (
                        <div className="mb-6">
                            <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
@@ -1003,21 +1064,14 @@ const DetailsPage = () => {
                            </div>
                        </div>
                    )}
-
-                   {/* Pensão (Checkboxes) */}
                    <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4">
                        <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>
                        {item.meals && item.meals.length > 0 ? (
                            <div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>
                        ) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
                    </div>
-
-                   {/* Outros Inclusos (Texto Livre) - AGORA VISÍVEL */}
                    {item.includedItems && (
-                       <div>
-                           <p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p>
-                           <p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p>
-                       </div>
+                       <div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>
                    )}
                </div>
 
@@ -1221,7 +1275,7 @@ const CheckoutPage = () => {
   };
 
   const processCardPayment = async () => {
-    
+
      // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
      // Fallback seguro para e-mail
@@ -2902,7 +2956,7 @@ const Layout = ({ children }) => {
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.svg?v=2" 
+                    src="/logo.png?v=2" 
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
                     onError={(e) => {
@@ -2956,7 +3010,7 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.svg?v=2" 
+                           src="/logo.png?v=2" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
                            onError={() => setLogoError(true)} 
