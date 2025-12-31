@@ -837,6 +837,12 @@ const DetailsPage = () => {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [currentPrice, setCurrentPrice] = useState(0);
 
+  // States para Solicitação de Propriedade
+  const [showClaimModal, setShowClaimModal] = useState(false);
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [showClaimSuccess, setShowClaimSuccess] = useState(false); // Novo estado para o modal de sucesso
+  const [claimData, setClaimData] = useState({ name: '', email: '', phone: '', job: '' });
+
   useEffect(() => {
     const fetchItem = async () => {
       if (location.state?.id) {
@@ -895,24 +901,85 @@ const DetailsPage = () => {
   const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee);
   const showPets = item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita') || petFee > 0;
   
-  const handleBook = () => navigate('/checkout', { state: { bookingData: { item, date, adults, children, pets, total, priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } } } });
+  // --- HANDLER DE RESERVA (CORRIGIDO: VAI PARA CHECKOUT) ---
+  const handleBook = () => {
+      navigate('/checkout', { 
+          state: { 
+              bookingData: { 
+                  item, date, adults, children, pets, total, 
+                  priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
+              } 
+          } 
+      });
+  };
 
-  // Mensagem de Pausado
+  // --- HANDLER DE SOLICITAÇÃO (ADMINISTRAÇÃO) ---
+  const handleClaimSubmit = async (e) => {
+      e.preventDefault();
+      setClaimLoading(true);
+      
+      const emailHtml = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+            <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
+            <p>Alguém solicitou a administração do perfil abaixo:</p>
+            <hr/>
+            <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
+            <p><strong>Solicitante:</strong> ${claimData.name}</p>
+            <p><strong>E-mail:</strong> ${claimData.email}</p>
+            <p><strong>Telefone:</strong> ${claimData.phone}</p>
+            <p><strong>Cargo:</strong> ${claimData.job}</p>
+            <hr/>
+            <p>Acesse o painel do Firebase ou entre em contato com o solicitante para validar e transferir o 'ownerId'.</p>
+        </div>
+      `;
+
+      try {
+          await fetch('/api/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  to: 'contato@mapadodayuse.com', // Seu e-mail receberá a notificação
+                  subject: `🔥 Solicitação: ${item.name} - ${claimData.name}`,
+                  html: emailHtml
+              })
+          });
+          
+          setShowClaimModal(false);
+          setShowClaimSuccess(true); // Abre modal de sucesso bonito
+          setClaimData({ name: '', email: '', phone: '', job: '' });
+      } catch (error) {
+          console.error(error);
+          alert("Erro ao enviar solicitação. Tente novamente.");
+      } finally {
+          setClaimLoading(false);
+      }
+  };
+
   const PausedMessage = () => (
     <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
         <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-2">
             <Ticket size={32} className="text-slate-400"/>
         </div>
         <div>
-            <h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Pausadas</h3>
+            <h3 className="text-xl font-bold text-slate-800 mb-3">Reservas Indisponíveis</h3>
             <p className="text-slate-500 leading-relaxed text-sm">
-                Poxa! No momento, este local não está recebendo novas reservas. 
-                Mas não fique triste, temos opções incríveis bem pertinho de você!
+                No momento, este local não está recebendo novas reservas pela plataforma.
             </p>
         </div>
+        
         <Button onClick={() => navigate('/')} className="w-full py-4 shadow-lg shadow-teal-100/50">
-            Ver outros Day Uses
+            Ver opções próximas
         </Button>
+
+        <div className="pt-4 border-t border-slate-100">
+            <p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p>
+            <button 
+                onClick={() => setShowClaimModal(true)} 
+                className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"
+            >
+                <Briefcase size={14}/> Solicitar administração
+            </button>
+        </div>
     </div>
   );
 
@@ -921,9 +988,69 @@ const DetailsPage = () => {
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
+      {/* MODAL DE SUCESSO DA SOLICITAÇÃO (Novo) */}
+      <SuccessModal 
+          isOpen={showClaimSuccess} 
+          onClose={() => setShowClaimSuccess(false)}
+          title="Solicitação Enviada!"
+          message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve para liberar seu acesso administrativo."
+          actionLabel="Entendi, obrigado"
+          onAction={() => setShowClaimSuccess(false)}
+      />
+
+      {/* MODAL DE FORMULÁRIO DE SOLICITAÇÃO */}
+      {showClaimModal && createPortal(
+          <ModalOverlay onClose={() => setShowClaimModal(false)}>
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in">
+                  <div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Briefcase size={32}/>
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2>
+                  <p className="text-slate-600 mb-6 text-sm">
+                      Preencha seus dados abaixo para solicitar o controle administrativo do perfil <strong>{item.name}</strong>.
+                  </p>
+                  <form onSubmit={handleClaimSubmit} className="space-y-3 text-left">
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label>
+                          <input className="w-full border p-3 rounded-xl" placeholder="Nome completo" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/>
+                      </div>
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label>
+                          <input className="w-full border p-3 rounded-xl" placeholder="seu@email.com" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                          <div>
+                              <label className="text-xs font-bold text-slate-500 ml-1">Telefone / WhatsApp</label>
+                              <input className="w-full border p-3 rounded-xl" placeholder="(00) 00000-0000" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/>
+                          </div>
+                          <div>
+                              <label className="text-xs font-bold text-slate-500 ml-1">Seu Cargo</label>
+                              <select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}>
+                                  <option value="">Selecione...</option>
+                                  <option>Proprietário</option>
+                                  <option>Gerente</option>
+                                  <option>Marketing</option>
+                                  <option>Comercial</option>
+                              </select>
+                          </div>
+                      </div>
+                      <Button type="submit" disabled={claimLoading} className="w-full mt-4">
+                          {claimLoading ? 'Enviando...' : 'Enviar Solicitação'}
+                      </Button>
+                  </form>
+                  <button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button>
+              </div>
+          </ModalOverlay>,
+          document.body
+      )}
+
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
-            <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
+            <div>
+               <h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1>
+               <p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p>
+            </div>
+
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}>
                <div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div>
                <div className="col-span-1 grid grid-rows-2 gap-3 h-full">
@@ -931,40 +1058,21 @@ const DetailsPage = () => {
                   <div className="relative overflow-hidden h-full"><img src={item.image3 || item.image} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div>
                </div>
             </div>
+            
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
-               
-               {/* Comodidades e Pensão */}
-               <div>
-                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
-                   {item.amenities && item.amenities.length > 0 && (
-                       <div className="mb-6">
-                           <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
-                           <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
-                               {item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}
-                           </div>
-                       </div>
-                   )}
-                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
-                       <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2">
-                           <div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)
-                       </div>
-                       {item.meals && item.meals.length > 0 ? (
-                           <div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>
-                       ) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
-                   </div>
-               </div>
-
                {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
                
-               <div className="pt-4 border-t border-slate-100">
-                  <h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4>
-                  <p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p>
+               <div className="grid md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
+                  <div><h4 className="font-bold text-[#0097A8] mb-3 flex items-center gap-2"><CheckCircle size={18}/> Incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.includedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
+                  <div><h4 className="font-bold text-red-500 mb-3 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><ul className="space-y-2 text-slate-600 text-sm">{item.notIncludedItems?.split('\n').map((l,i)=><li key={i} className="flex gap-2"><span>•</span>{l}</li>)}</ul></div>
                </div>
+               
                <div className="pt-4 border-t border-slate-100">
                   <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4>
                   <p className="text-slate-600 text-sm whitespace-pre-line bg-slate-50 p-4 rounded-xl">{item.usageRules || "Sem regras específicas."}</p>
                </div>
+               
                <div className="pt-4 border-t border-slate-100">
                   <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><AlertCircle size={18} className="text-orange-500"/> Cancelamento e Reembolso</h4>
                   <p className="text-slate-600 text-sm whitespace-pre-line bg-orange-50 p-4 rounded-xl">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
@@ -979,33 +1087,23 @@ const DetailsPage = () => {
                    
                    <div>
                        <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
-                       {/* O Calendário agora está renderizado direto no componente pai, evitando o reset */}
-                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />
-                       {date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
+                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
                    </div>
 
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                     <div className="flex justify-between items-center">
-                         <div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div>
-                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div>
-                     </div>
-                     <div className="flex justify-between items-center">
-                         <div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div>
-                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div>
-                     </div>
-                     {showPets && (
-                         <div className="flex justify-between items-center">
-                             <div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div>
-                             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div>
-                         </div>
-                     )}
+                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
+                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div></div>
+                     {showPets && (<div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div></div>)}
                    </div>
-
-                   {item.gratuitousness && <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800"><span className="font-bold block mb-1">🎁 Gratuidade:</span>{item.gratuitousness}</div>}
-
+                   {item.gratuitousness && <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-xs text-green-800"><span className="font-bold block mb-1">🎁 Política de Gratuidade:</span>{item.gratuitousness}</div>}
                    <div className="pt-4 border-t border-dashed border-slate-200">
-                      <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
-                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
+                      <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total Estimado</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
+                      
+                      {/* BOTÃO RESERVAR (VOLTOU PARA CHECKOUT) */}
+                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>
+                          Reservar
+                      </Button>
+                      
                       <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
                    </div>
                 </div>
