@@ -938,7 +938,7 @@ const DetailsPage = () => {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                  to: 'contato@mapadodayuse.com', // Seu e-mail receberá a notificação
+                  to: 'contato@mapadodayuse.com', 
                   subject: `🔥 Solicitação: ${item.name} - ${claimData.name}`,
                   html: emailHtml
               })
@@ -988,15 +988,18 @@ const DetailsPage = () => {
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
-      {/* MODAL DE SUCESSO DA SOLICITAÇÃO (Novo) */}
-      <SuccessModal 
-          isOpen={showClaimSuccess} 
-          onClose={() => setShowClaimSuccess(false)}
-          title="Solicitação Enviada!"
-          message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve para liberar seu acesso administrativo."
-          actionLabel="Entendi, obrigado"
-          onAction={() => setShowClaimSuccess(false)}
-      />
+      {/* MODAL DE SUCESSO DA SOLICITAÇÃO (AGORA COM PORTAL) */}
+      {showClaimSuccess && createPortal(
+          <SuccessModal 
+              isOpen={showClaimSuccess} 
+              onClose={() => setShowClaimSuccess(false)}
+              title="Solicitação Enviada!"
+              message="Recebemos seus dados com sucesso. Em breve entraremos em contato para validação. Será necessário apresentação o Contrato Social/CCMEI e seu documento com foto."
+              actionLabel="Entendi, obrigado"
+              onAction={() => setShowClaimSuccess(false)}
+          />,
+          document.body
+      )}
 
       {/* MODAL DE FORMULÁRIO DE SOLICITAÇÃO */}
       {showClaimModal && createPortal(
