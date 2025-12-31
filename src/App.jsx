@@ -104,7 +104,7 @@ const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu
 const useSEO = (title, description, noIndex = false) => {
   useEffect(() => {
     // 1. Título
-    document.title = title ? `${title} | Mapa do Day Use` : "Mapa do Day Use";
+    document.title = (title === "Home" || !title) ? "Mapa do Day Use" : title;
     
     // 2. Meta Description
     let metaDesc = document.querySelector("meta[name='description']");
@@ -740,14 +740,37 @@ const UserProfile = () => {
   );
 };
 
+// COMPONENTE DE LOADING (SKELETON)
+const SkeletonCard = () => (
+  <div className="bg-white rounded-3xl overflow-hidden border border-slate-100 h-full">
+    <div className="h-64 bg-slate-200 animate-pulse" />
+    <div className="p-6 space-y-4">
+      <div className="h-6 bg-slate-200 rounded animate-pulse w-3/4" />
+      <div className="h-4 bg-slate-200 rounded animate-pulse w-1/2" />
+      <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
+         <div className="h-8 bg-slate-200 rounded animate-pulse w-1/3" />
+         <div className="h-10 bg-slate-200 rounded-xl animate-pulse w-1/3" />
+      </div>
+    </div>
+  </div>
+);
+
 // --- PÁGINAS PRINCIPAIS ---
 
 const HomePage = () => {
   useSEO("Home", "Encontre e reserve os melhores day uses em hotéis e resorts.");
   const [items, setItems] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(true); // NOVO STATE
+  
   const navigate = useNavigate();
-  useEffect(() => { getDocs(collection(db, "dayuses")).then(s => setItems(s.docs.map(d=>({id:d.id,...d.data()})))) }, []);
+
+  useEffect(() => { 
+      // Adicionado setLoading(false) ao final
+      getDocs(collection(db, "dayuses"))
+        .then(s => setItems(s.docs.map(d=>({id:d.id,...d.data()}))))
+        .finally(() => setLoading(false)); 
+  }, []);
 
   const filtered = items.filter(i => (i.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) || (i.city?.toLowerCase() || '').includes(searchTerm.toLowerCase()));
 
@@ -771,15 +794,18 @@ const HomePage = () => {
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4">
-        <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-bold text-slate-900">Lugares em destaque</h2><span className="text-sm text-slate-500">{filtered.length} locais encontrados</span></div>
+        <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-bold text-slate-900">Lugares em destaque</h2><span className="text-sm text-slate-500">{loading ? 'Buscando...' : `${filtered.length} locais encontrados`}</span></div>
+        
         <div className="grid md:grid-cols-3 gap-8">
-          {/* USO DO NOVO CARD REUTILIZÁVEL */}
-          {filtered.map(item => (
-             <DayUseCard 
-                key={item.id} 
-                item={item} 
-                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
-             />
+          {/* LÓGICA DE LOADING: Mostra 6 esqueletos ou os cards reais */}
+          {loading 
+            ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+            : filtered.map(item => (
+                <DayUseCard 
+                    key={item.id} 
+                    item={item} 
+                    onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+                />
           ))}
         </div>
       </div>
@@ -867,6 +893,19 @@ const ImageGallery = ({ images, isOpen, onClose }) => {
   );
 };
 
+const Accordion = ({ title, icon: Icon, children }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="border-b border-slate-100 last:border-0 py-4">
+      <button onClick={() => setIsOpen(!isOpen)} className="flex items-center justify-between w-full text-left group">
+        <div className="flex items-center gap-3 font-semibold text-slate-700 group-hover:text-[#0097A8] transition-colors">{Icon && <Icon size={20} className="text-[#0097A8]" />}{title}</div>
+        <ChevronDown size={16} className={`text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen && <div className="mt-3 text-slate-600 text-sm leading-relaxed pl-8 animate-fade-in">{children}</div>}
+    </div>
+  );
+};
+
 const DetailsPage = () => {
   const { state, slug } = useParams();
   const location = useLocation();
@@ -878,10 +917,8 @@ const DetailsPage = () => {
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
   const [pets, setPets] = useState(0);
-  
-  // NOVOS STATES
   const [freeChildren, setFreeChildren] = useState(0); 
-  const [selectedSpecial, setSelectedSpecial] = useState({}); // { 0: 1, 1: 2 } (index do array: quantidade)
+  const [selectedSpecial, setSelectedSpecial] = useState({}); 
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [currentPrice, setCurrentPrice] = useState(0);
@@ -919,7 +956,6 @@ const DetailsPage = () => {
     fetchItem();
   }, [slug, location.state]);
 
-  // Lógica de Preço (Mantida)
   useEffect(() => {
     if(item) {
         if (date) {
@@ -933,9 +969,7 @@ const DetailsPage = () => {
           let minPrice = Number(item.priceAdult || 0);
           if (item.weeklyPrices) {
              Object.values(item.weeklyPrices).forEach(p => {
-                 let val = 0;
-                 if (typeof p === 'object' && p.adult) val = Number(p.adult);
-                 else if (!isNaN(p)) val = Number(p);
+                 let val = typeof p === 'object' ? Number(p.adult) : Number(p);
                  if (val > 0 && val < minPrice) minPrice = val;
              });
           }
@@ -944,9 +978,46 @@ const DetailsPage = () => {
     }
   }, [date, item]);
 
-  useSEO(item ? item.name : "Detalhes", "Detalhes do day use.");
+    // SEO Dinâmico do Local
+  const seoTitle = item 
+    ? `${item.name} | Reserve seu Day Use em ${item.city}` 
+    : "Detalhes do Day Use";
 
-  if (!item) return <div className="text-center py-20 text-slate-400">Carregando detalhes...</div>;
+  const seoDesc = item 
+    ? `Compre seu ingresso para o day use ${item.name} em ${item.city}. Day Use com ${item.amenities?.[0] || 'Piscina'}, ${item.meals?.[0] || 'Almoço'}, ${item.meals?.[1] || 'Petiscos'} e ${item.amenities?.[1] || 'Lazer'}!`
+    : "Confira detalhes, preços e fotos deste Day Use incrível. Reserve agora!";
+
+  useSEO(seoTitle, seoDesc);
+
+  // --- SKELETON LOADING (NOVO) ---
+  if (!item) return (
+    <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
+        <div className="flex items-center gap-2 mb-8"><div className="w-20 h-10 bg-slate-200 rounded-full animate-pulse"></div></div>
+        <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
+            <div className="lg:col-span-2 space-y-8">
+                <div className="space-y-2">
+                    <div className="h-10 w-3/4 bg-slate-200 rounded-lg animate-pulse"></div>
+                    <div className="h-6 w-1/2 bg-slate-200 rounded-lg animate-pulse"></div>
+                </div>
+                <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden">
+                    <div className="col-span-3 bg-slate-200 animate-pulse"></div>
+                    <div className="col-span-1 grid grid-rows-2 gap-3 h-full">
+                        <div className="bg-slate-200 animate-pulse"></div>
+                        <div className="bg-slate-200 animate-pulse"></div>
+                    </div>
+                </div>
+                <div className="space-y-4">
+                    <div className="h-4 bg-slate-200 rounded animate-pulse"></div>
+                    <div className="h-4 bg-slate-200 rounded animate-pulse"></div>
+                    <div className="h-4 bg-slate-200 rounded animate-pulse w-2/3"></div>
+                </div>
+            </div>
+            <div className="lg:col-span-1">
+                <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div>
+            </div>
+        </div>
+    </div>
+  );
   
   let childPrice = Number(item.priceChild || 0);
   let petFee = Number(item.petFee || 0);
@@ -959,7 +1030,6 @@ const DetailsPage = () => {
       }
   }
 
-  // --- CÁLCULO DE TOTAL ATUALIZADO ---
   let specialTotal = 0;
   if (item.specialTickets) {
       Object.entries(selectedSpecial).forEach(([idx, qtd]) => {
@@ -967,11 +1037,8 @@ const DetailsPage = () => {
       });
   }
   const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee) + specialTotal;
-  
-  // CORREÇÃO PETS
   const showPets = (item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita'));
 
-  // Handler para itens especiais
   const handleUpdateSpecial = (idx, delta) => {
       const current = selectedSpecial[idx] || 0;
       const newVal = Math.max(0, current + delta);
@@ -983,8 +1050,8 @@ const DetailsPage = () => {
           state: { 
               bookingData: { 
                   item, date, adults, children, pets, total, 
-                  freeChildren, // Novo
-                  selectedSpecial, // Novo
+                  freeChildren, 
+                  selectedSpecial,
                   priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
               } 
           } 
@@ -994,17 +1061,26 @@ const DetailsPage = () => {
   const handleClaimSubmit = async (e) => {
       e.preventDefault();
       setClaimLoading(true);
-      const emailHtml = `...`; // (Mantido igual, simplificado aqui)
+      const emailHtml = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+            <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
+            <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
+            <p><strong>Solicitante:</strong> ${claimData.name}</p>
+            <p><strong>E-mail:</strong> ${claimData.email}</p>
+            <p><strong>Telefone:</strong> ${claimData.phone}</p>
+            <p><strong>Cargo:</strong> ${claimData.job}</p>
+        </div>
+      `;
       try {
           await fetch('/api/send-email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: 'Solicitação de Claim' })
+              body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: emailHtml })
           });
           setShowClaimModal(false);
           setShowClaimSuccess(true);
           setClaimData({ name: '', email: '', phone: '', job: '' });
-      } catch (error) { console.error(error); } 
+      } catch (error) { console.error(error); alert("Erro ao enviar solicitação."); } 
       finally { setClaimLoading(false); }
   };
 
@@ -1033,33 +1109,46 @@ const DetailsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
-      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
-      
-      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados..." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
+      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />      
+      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
 
-      {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
+      {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Marketing</option><option>Comercial</option></select></div></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
+            {/* 1. TÍTULO E LOCALIZAÇÃO */}
             <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
 
+            {/* 2. GALERIA */}
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}><div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div><div className="col-span-1 grid grid-rows-2 gap-3 h-full"><div className="relative overflow-hidden h-full"><img src={item.image2} className="w-full h-full object-cover"/></div><div className="relative overflow-hidden h-full"><img src={item.image3} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div></div></div>
             
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
+               {/* 3. SOBRE */}
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
                
+               {/* 4. VÍDEO (REPOSICIONADO) */}
+               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
+
+               {/* 5. O QUE ESTÁ INCLUSO */}
                <div>
                    <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
                    {item.amenities && item.amenities.length > 0 && (<div className="mb-6"><p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p><div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">{item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}</div></div>)}
-                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100"><div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>{item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}</div>
+                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4"><div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>{item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}</div>
+                   {item.includedItems && (<div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>)}
                </div>
 
-               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
-               
+               {/* 6. NÃO INCLUSO */}
                <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p></div>
-               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><Info size={18} className="text-[#0097A8]"/> Regras de Utilização</h4><p className="text-slate-600 text-sm whitespace-pre-line bg-slate-50 p-4 rounded-xl">{item.usageRules || "Sem regras específicas."}</p></div>
-               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2"><AlertCircle size={18} className="text-orange-500"/> Cancelamento e Reembolso</h4><p className="text-slate-600 text-sm whitespace-pre-line bg-orange-50 p-4 rounded-xl">{item.cancellationPolicy || "Consulte o estabelecimento."}</p></div>
+               
+               {/* 7. REGRAS (ACCORDION) */}
+               <Accordion title="Regras de Utilização" icon={Info}>
+                   <p className="text-slate-600 text-sm whitespace-pre-line">{item.usageRules || "Sem regras específicas."}</p>
+               </Accordion>
+               
+               {/* 8. CANCELAMENTO (ACCORDION) */}
+               <Accordion title="Cancelamento e Reembolso" icon={AlertCircle}>
+                   <p className="text-slate-600 text-sm whitespace-pre-line">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
+               </Accordion>
             </div>
          </div>
          
@@ -1067,18 +1156,13 @@ const DetailsPage = () => {
             {item.paused ? <PausedMessage /> : (
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-                   
-                   <div>
-                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
-                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
-                   </div>
-
+                   <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div></div>
                      {showPets && (<div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div></div>)}
                      
-                     {/* NOVO: Crianças Gratuitas */}
+                     {/* Crianças Gratuitas */}
                      {item.trackFreeChildren && (
                          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
@@ -1087,21 +1171,14 @@ const DetailsPage = () => {
                      )}
                    </div>
 
-                   {/* NOVO: Ingressos Especiais */}
+                   {/* Ingressos Especiais */}
                    {item.specialTickets && item.specialTickets.length > 0 && (
                        <div className="space-y-3 bg-blue-50 p-4 rounded-2xl border border-blue-100">
                            <p className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-2">Adicionais & Especiais</p>
                            {item.specialTickets.map((ticket, idx) => (
                                <div key={idx} className="flex justify-between items-center">
-                                   <div>
-                                       <span className="text-sm font-medium text-slate-700 block">{ticket.name}</span>
-                                       <span className="text-xs font-bold text-[#0097A8]">{formatBRL(ticket.price)}</span>
-                                   </div>
-                                   <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-blue-100 shadow-sm">
-                                       <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, -1)}>-</button>
-                                       <span className="font-bold text-slate-900 w-4 text-center">{selectedSpecial[idx] || 0}</span>
-                                       <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, 1)}>+</button>
-                                   </div>
+                                   <div><span className="text-sm font-medium text-slate-700 block">{ticket.name}</span><span className="text-xs font-bold text-[#0097A8]">{formatBRL(ticket.price)}</span></div>
+                                   <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-blue-100 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, -1)}>-</button><span className="font-bold text-slate-900 w-4 text-center">{selectedSpecial[idx] || 0}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, 1)}>+</button></div>
                                </div>
                            ))}
                        </div>
@@ -1389,9 +1466,7 @@ const CheckoutPage = () => {
       />
       
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
-      
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
-      
+            
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
@@ -1603,9 +1678,7 @@ const PartnerCallbackPage = () => {
             <>
                 <X size={32} className="text-red-600 mx-auto mb-4"/>
                 <h2 className="text-xl font-bold">Erro na Conexão</h2>
-                <p className="text-slate-500 text-sm mt-2 mb-4">Não foi possível vincular sua conta do Mercado Pago.</p>
-                <Button onClick={()=>navigate('/partner')}>Voltar ao Painel</Button>
-            </>
+                <p className="text-slate-500 text-sm mt-2 mb-4">Não foi possível vincular sua conta do Mercado Pago.</p>            </>
         )}
       </div>
     </div>
@@ -3148,12 +3221,19 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [selectedPets, setSelectedPets] = useState([]);
 
   // SEO
-  const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
-  const locationTitle = cityParam 
-    ? `${cityParam.charAt(0).toUpperCase() + cityParam.slice(1).replace(/-/g, ' ')}, ${stateParam?.toUpperCase()}` 
-    : stateName;
-    
-  useSEO(`Day Uses em ${locationTitle}`, `Encontre os melhores Day Uses em ${locationTitle}.`);
+    const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
+  // Formata o nome da cidade corretamente (ex: de 'belo-horizonte' para 'Belo Horizonte')
+  const cityName = cityParam ? cityParam.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : null;
+  
+  const locationTitle = cityName ? cityName : stateName;
+  
+  // Título mais atrativo com contagem de locais
+  const seoTitle = `Os melhores day uses de ${locationTitle} | ${filteredItems.length} locais disponíveis!`;
+  
+  // Descrição rica em palavras-chave
+  const seoDesc = `Encontre os melhores day uses em ${locationTitle}. Day Uses com Piscina, Café da manhã, Almoço e Área verde. Compre seu ingresso aqui!`;
+
+  useSEO(seoTitle, seoDesc);
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -3199,8 +3279,22 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   const availableCities = [...new Set(items.map(i => i.city))].sort();
 
-  if (loading) return <div className="text-center py-20 text-slate-400">Buscando melhores opções...</div>;
-
+if (loading) return (
+    <div className="max-w-7xl mx-auto py-8 px-4">
+        <div className="flex flex-col md:flex-row gap-8">
+            <div className="w-full md:w-1/4 space-y-6 h-fit sticky top-24">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div>
+            </div>
+            <div className="flex-1">
+                <div className="h-8 w-64 bg-slate-200 rounded-lg animate-pulse mb-6"></div>
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+                </div>
+            </div>
+        </div>
+    </div>
+  );
+  
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
         

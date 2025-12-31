@@ -1,8 +1,12 @@
 {
   "rewrites": [
     {
-      "source": "/((?!api/.*).*)",
-      "destination": "/index.html"
+      "source": "/sitemap.xml",
+      "destination": "/api/sitemap"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
     },
     {
       "source": "/((?!api/|logo.svg|.*\\.(?:png|jpg|jpeg|gif|svg|ico|css|js)).*)",
