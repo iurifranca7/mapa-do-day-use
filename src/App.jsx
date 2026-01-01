@@ -962,6 +962,9 @@ const DetailsPage = () => {
   const [item, setItem] = useState(null);
   const [relatedItems, setRelatedItems] = useState([]);
   
+  // Controle de Loading e Erro
+  const [loading, setLoading] = useState(true);
+  
   const [date, setDate] = useState("");
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
@@ -971,7 +974,6 @@ const DetailsPage = () => {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [currentPrice, setCurrentPrice] = useState(0);
-  const [showWarning, setShowWarning] = useState(null); // Ex: { title: 'Atenção', msg: '...' }
 
   // States para Solicitação de Propriedade
   const [showClaimModal, setShowClaimModal] = useState(false);
@@ -981,31 +983,47 @@ const DetailsPage = () => {
 
   useEffect(() => {
     const fetchItem = async () => {
-      let foundData = null;
-      if (location.state?.id) {
-         const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
-         if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
-      } else {
-         const q = query(collection(db, "dayuses")); 
-         const querySnapshot = await getDocs(q);
-         const found = querySnapshot.docs.find(d => generateSlug(d.data().name) === slug);
-         if (found) foundData = {id: found.id, ...found.data()};
-      }
-
-      if (foundData) {
-          setItem(foundData);
-          const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
-          const snapRelated = await getDocs(qRelated);
-          const related = snapRelated.docs
-              .map(d => ({id: d.id, ...d.data()}))
-              .filter(i => i.id !== foundData.id)
-              .slice(0, 3);
-          setRelatedItems(related);
+      setLoading(true); // Inicia loading
+      try {
+          let foundData = null;
+          
+          // 1. Tenta usar dados passados pela navegação (mais rápido)
+          if (location.state?.id) {
+             const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
+             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
+          } 
+          
+          // 2. Se não tiver ID (acesso direto pelo link), busca pelo Slug
+          if (!foundData) {
+             const q = query(collection(db, "dayuses"), where("slug", "==", slug)); 
+             const querySnapshot = await getDocs(q);
+             if (!querySnapshot.empty) {
+                 const docData = querySnapshot.docs[0];
+                 foundData = { id: docData.id, ...docData.data() };
+             }
+          }
+    
+          if (foundData) {
+              setItem(foundData);
+              // Busca relacionados
+              const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
+              const snapRelated = await getDocs(qRelated);
+              const related = snapRelated.docs
+                  .map(d => ({id: d.id, ...d.data()}))
+                  .filter(i => i.id !== foundData.id)
+                  .slice(0, 3);
+              setRelatedItems(related);
+          }
+      } catch (error) {
+          console.error("Erro ao carregar detalhes:", error);
+      } finally {
+          setLoading(false); // Garante que o loading pare, mesmo se não achar nada
       }
     };
     fetchItem();
   }, [slug, location.state]);
 
+  // Lógica de Preço
   useEffect(() => {
     if(item) {
         if (date) {
@@ -1019,7 +1037,9 @@ const DetailsPage = () => {
           let minPrice = Number(item.priceAdult || 0);
           if (item.weeklyPrices) {
              Object.values(item.weeklyPrices).forEach(p => {
-                 let val = typeof p === 'object' ? Number(p.adult) : Number(p);
+                 let val = 0;
+                 if (typeof p === 'object' && p.adult) val = Number(p.adult);
+                 else if (!isNaN(p)) val = Number(p);
                  if (val > 0 && val < minPrice) minPrice = val;
              });
           }
@@ -1028,71 +1048,10 @@ const DetailsPage = () => {
     }
   }, [date, item]);
 
-    // SEO Dinâmico do Local
-  const seoTitle = item 
-    ? `${item.name} | Reserve seu Day Use em ${item.city}` 
-    : "Detalhes do Day Use";
+  useSEO(item ? item.name : "Detalhes", "Detalhes do day use.");
 
-  const seoDesc = item 
-    ? `Compre seu ingresso para o day use ${item.name} em ${item.city}. Day Use com ${item.amenities?.[0] || 'Piscina'}, ${item.meals?.[0] || 'Almoço'}, ${item.meals?.[1] || 'Petiscos'} e ${item.amenities?.[1] || 'Lazer'}!`
-    : "Confira detalhes, preços e fotos deste Day Use incrível. Reserve agora!";
-
-  useSEO(seoTitle, seoDesc);
-
-  useSchema(item ? {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "LodgingBusiness", // Define como um local de hospedagem/negócio
-        "@id": `https://mapadodayuse.com/${getStateSlug(item.state)}/${generateSlug(item.name)}#place`,
-        "name": item.name,
-        "description": item.description,
-        "image": [item.image, item.image2, item.image3].filter(Boolean),
-        "address": {
-          "@type": "PostalAddress",
-          "streetAddress": `${item.street}, ${item.number}`,
-          "addressLocality": item.city,
-          "addressRegion": item.state,
-          "addressCountry": "BR",
-          "postalCode": item.cep
-        },
-        "telephone": item.localPhone || item.localWhatsapp,
-        "amenityFeature": item.amenities?.map(a => ({
-             "@type": "LocationFeatureSpecification",
-             "name": a,
-             "value": "true"
-        }))
-      },
-      {
-        "@type": "Product", // Define como um produto vendável (o ingresso)
-        "name": `Day Use em ${item.name}`,
-        "description": `Ingresso para passar o dia em ${item.name}. Incluso: ${item.includedItems || 'Acesso às áreas comuns'}.`,
-        "image": item.image,
-        "sku": item.id,
-        "brand": { "@type": "Brand", "name": "Mapa do Day Use" },
-        "offers": {
-          "@type": "Offer",
-          "url": window.location.href,
-          "priceCurrency": "BRL",
-          "price": currentPrice || item.priceAdult, // Usa o preço dinâmico do dia
-          "priceValidUntil": new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split('T')[0],
-          "availability": item.paused ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
-          "seller": { "@type": "Organization", "name": item.name }
-        }
-      },
-      {
-        "@type": "BreadcrumbList",
-        "itemListElement": [
-            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
-            { "@type": "ListItem", "position": 2, "name": item.state, "item": `https://mapadodayuse.com/${getStateSlug(item.state)}` },
-            { "@type": "ListItem", "position": 3, "name": item.name, "item": window.location.href }
-        ]
-      }
-    ]
-  } : null);
-
-  // --- SKELETON LOADING (NOVO) ---
-  if (!item) return (
+  // --- SKELETON LOADING ---
+  if (loading) return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
         <div className="flex items-center gap-2 mb-8"><div className="w-20 h-10 bg-slate-200 rounded-full animate-pulse"></div></div>
         <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
@@ -1108,11 +1067,6 @@ const DetailsPage = () => {
                         <div className="bg-slate-200 animate-pulse"></div>
                     </div>
                 </div>
-                <div className="space-y-4">
-                    <div className="h-4 bg-slate-200 rounded animate-pulse"></div>
-                    <div className="h-4 bg-slate-200 rounded animate-pulse"></div>
-                    <div className="h-4 bg-slate-200 rounded animate-pulse w-2/3"></div>
-                </div>
             </div>
             <div className="lg:col-span-1">
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div>
@@ -1120,6 +1074,22 @@ const DetailsPage = () => {
         </div>
     </div>
   );
+
+  // --- ITEM NÃO ENCONTRADO ---
+  if (!item) return (
+      <div className="max-w-4xl mx-auto py-20 px-4 text-center animate-fade-in">
+          <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-400">
+              <MapIcon size={48}/>
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Local não encontrado</h2>
+          <p className="text-slate-500 mb-8">O link que você acessou pode estar quebrado ou o estabelecimento não está mais disponível.</p>
+          <Button onClick={() => navigate('/')} className="mx-auto">Voltar para o Mapa</Button>
+      </div>
+  );
+  
+  // ... (Restante da lógica de renderização: childPrice, petFee, total, handlers, JSX...)
+  // COPIE O RESTANTE DO CÓDIGO DO COMPONENTE ANTERIOR A PARTIR DAQUI
+  // (childPrice, petFee, total, showPets, handlers, return...)
   
   let childPrice = Number(item.priceChild || 0);
   let petFee = Number(item.petFee || 0);
@@ -1204,39 +1174,29 @@ const DetailsPage = () => {
                     <div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div>
                     <div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div>
                 </div>
-            )) : (
-                // CORREÇÃO: Redireciona para a página do Estado em vez da Home
-                <Button onClick={() => navigate(`/${getStateSlug(item.state)}`)} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">
-                    Ver mais opções em {item.state}
-                </Button>
-            )}
+            )) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}
         </div>
     </div>
   );
 
   return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
-      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />      
+      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
+      
       {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
 
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Marketing</option><option>Comercial</option></select></div></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
-            {/* 1. TÍTULO E LOCALIZAÇÃO */}
             <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
 
-            {/* 2. GALERIA */}
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}><div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div><div className="col-span-1 grid grid-rows-2 gap-3 h-full"><div className="relative overflow-hidden h-full"><img src={item.image2} className="w-full h-full object-cover"/></div><div className="relative overflow-hidden h-full"><img src={item.image3} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div></div></div>
             
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
-               {/* 3. SOBRE */}
                <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
                
-               {/* 4. VÍDEO (REPOSICIONADO) */}
-               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
-
-               {/* 5. O QUE ESTÁ INCLUSO */}
                <div>
                    <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
                    {item.amenities && item.amenities.length > 0 && (<div className="mb-6"><p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p><div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">{item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}</div></div>)}
@@ -1244,15 +1204,13 @@ const DetailsPage = () => {
                    {item.includedItems && (<div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>)}
                </div>
 
-               {/* 6. NÃO INCLUSO */}
+               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
+               
                <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p></div>
                
-               {/* 7. REGRAS (ACCORDION) */}
                <Accordion title="Regras de Utilização" icon={Info}>
                    <p className="text-slate-600 text-sm whitespace-pre-line">{item.usageRules || "Sem regras específicas."}</p>
                </Accordion>
-               
-               {/* 8. CANCELAMENTO (ACCORDION) */}
                <Accordion title="Cancelamento e Reembolso" icon={AlertCircle}>
                    <p className="text-slate-600 text-sm whitespace-pre-line">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
                </Accordion>
@@ -1263,82 +1221,25 @@ const DetailsPage = () => {
             {item.paused ? <PausedMessage /> : (
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-                   <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
-                   {/* Seção de Quantidades com Trava de Dependência */}
+                   
+                   <div>
+                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
+                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
+                   </div>
+
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{const newVal = Math.max(0, adults-1); setAdults(newVal); if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }}}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
+                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button></div></div>
+                     {showPets && (<div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button></div></div>)}
                      
-                     {/* Adultos (Controle Principal) */}
-                     <div className="flex justify-between items-center">
-                         <div>
-                             <span className="text-sm font-medium text-slate-700 block">Adultos</span>
-                             <span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span>
-                             <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span>
-                         </div>
-                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{
-                                 const newVal = Math.max(0, adults-1);
-                                 setAdults(newVal);
-                                 // Se remover todos os adultos, zera os dependentes automaticamente
-                                 if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }
-                             }}>-</button>
-                             <span className="font-bold text-slate-900 w-4 text-center">{adults}</span>
-                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button>
-                         </div>
-                     </div>
-
-                     {/* Crianças (Só libera se tiver adulto) */}
-                     <div className="flex justify-between items-center">
-                         <div>
-                             <span className="text-sm font-medium text-slate-700 block">Crianças</span>
-                             <span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span>
-                             <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span>
-                         </div>
-                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button>
-                             <span className="font-bold text-slate-900 w-4 text-center">{children}</span>
-                             <button 
-                                className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
-                                onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}
-                             >+</button>
-                         </div>
-                     </div>
-
-                     {/* Pets (Só libera se tiver adulto) */}
-                     {showPets && (
-                         <div className="flex justify-between items-center">
-                             <div>
-                                 <span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span>
-                                 <span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span>
-                                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span>
-                             </div>
-                             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                 <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button>
-                                 <span className="font-bold text-slate-900 w-4 text-center">{pets}</span>
-                                 <button 
-                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
-                                    onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}
-                                 >+</button>
-                             </div>
-                         </div>
-                     )}
-                     
-                     {/* Crianças Grátis (Só libera se tiver adulto) */}
                      {item.trackFreeChildren && (
                          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
-                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm">
-                                 <button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button>
-                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span>
-                                 <button 
-                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} 
-                                    onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}
-                                 >+</button>
-                             </div>
+                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button></div>
                          </div>
                      )}
                    </div>
 
-                   {/* Ingressos Especiais */}
                    {item.specialTickets && item.specialTickets.length > 0 && (
                        <div className="space-y-3 bg-blue-50 p-4 rounded-2xl border border-blue-100">
                            <p className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-2">Adicionais & Especiais</p>
@@ -1353,27 +1254,15 @@ const DetailsPage = () => {
 
                    <div className="pt-4 border-t border-dashed border-slate-200">
                       <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total Estimado</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
-                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
+                      
+                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>
+                          Reservar
+                      </Button>
+                      
                       <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
                    </div>
                 </div>
             )}
-            {/* MODAL DE ALERTA (Trava de Adultos) */}
-      {showWarning && createPortal(
-          <ModalOverlay onClose={() => setShowWarning(null)}>
-              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                  <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <AlertCircle size={32}/>
-                  </div>
-                  <h2 className="text-xl font-bold text-slate-900 mb-2">{showWarning.title}</h2>
-                  <p className="text-slate-600 mb-6 text-sm">{showWarning.msg}</p>
-                  <Button onClick={() => setShowWarning(null)} className="w-full justify-center">
-                      Entendi
-                  </Button>
-              </div>
-          </ModalOverlay>,
-          document.body
-           )}
          </div>
       </div>
     </div>
@@ -2687,21 +2576,38 @@ const PartnerNew = () => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
            setUser(u);
+           // Se for novo cadastro, preenche dados do usuário
            if (!id) setFormData(prev => ({ ...prev, contactName: u.displayName || '', contactEmail: u.email }));
         } else navigate('/');
      });
+
      if (id) {
         getDoc(doc(db, "dayuses", id)).then(s => { 
             if(s.exists()) {
                 const d = s.data();
-                setFormData(d);
+                
+                // CORREÇÃO: Garante que arrays essenciais existam, mesmo se faltarem no banco (importação)
+                const safeData = {
+                    ...d,
+                    availableDays: d.availableDays || [0, 6], // Padrão: Dom e Sab se vazio
+                    images: d.images || ['', '', '', '', '', ''], // Garante array de imagens
+                    priceAdult: d.priceAdult || '',
+                    priceChild: d.priceChild || '',
+                    petFee: d.petFee || ''
+                };
+
+                setFormData(safeData);
+
+                // Carrega states auxiliares com segurança
                 if(d.coupons) setCoupons(d.coupons);
-                if(d.dailyStock) setDailyStock(d.dailyStock);
+                if(d.dailyStock) setDailyStock(d.dailyStock || { adults: 50, children: 20, pets: 5 });
                 if(d.weeklyPrices) setWeeklyPrices(d.weeklyPrices);
-                if(d.amenities) setSelectedAmenities(d.amenities);
-                if(d.meals) setSelectedMeals(d.meals);
-                if(d.blockedDates) setBlockedDates(d.blockedDates);
-                // Carrega novos campos
+                
+                // Garante array vazio se não existir
+                setSelectedAmenities(d.amenities || []);
+                setSelectedMeals(d.meals || []);
+                setBlockedDates(d.blockedDates || []);
+                
                 if(d.specialTickets) setSpecialTickets(d.specialTickets);
                 if(d.trackFreeChildren) setTrackFreeChildren(d.trackFreeChildren);
             }
@@ -2843,7 +2749,12 @@ const PartnerNew = () => {
            <div className="space-y-4">
               <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">1. Dados do Responsável</h3></div>
               <div className="grid grid-cols-2 gap-4">
-                 <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactName} readOnly />
+                 <input 
+                    className="w-full border p-3 rounded-xl" 
+                    value={formData.contactName} 
+                    onChange={e=>setFormData({...formData, contactName: e.target.value})} 
+                    placeholder="Nome Completo" 
+                 />
                  <input className="w-full border p-3 rounded-xl bg-slate-50" value={formData.contactEmail} readOnly />
               </div>
               <div className="grid grid-cols-2 gap-4">
