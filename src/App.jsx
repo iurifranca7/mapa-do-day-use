@@ -3241,6 +3241,8 @@ const Layout = ({ children }) => {
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
+                     <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
+                     <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
                      <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
@@ -3791,6 +3793,389 @@ const SiteMapPage = () => {
   );
 };
 
+const BlogHubPage = () => {
+  const navigate = useNavigate();
+  useSEO("Dicas e Guia de Day Use | Mapa do Day Use", "Explore nosso guia completo sobre day use. Dicas, roteiros e tudo o que você precisa saber para aproveitar o dia em hotéis e resorts.");
+  
+  // Schema do Hub (CollectionPage)
+  useSchema({
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "Guia de Day Use",
+    "description": "Artigos e dicas sobre como aproveitar day uses.",
+    "url": "https://mapadodayuse.com/day-use",
+    "breadcrumb": {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
+            { "@type": "ListItem", "position": 2, "name": "Dicas de Day Use", "item": "https://mapadodayuse.com/day-use" }
+        ]
+    }
+  });
+
+  return (
+    <div className="max-w-5xl mx-auto py-16 px-4 animate-fade-in">
+        <div className="text-center mb-12">
+            <h1 className="text-4xl font-bold text-slate-900 mb-4">Guia do Day Use 🌿</h1>
+            <p className="text-slate-500 text-lg max-w-2xl mx-auto">
+                Dicas, explicações e tudo o que você precisa saber para transformar seu dia livre em uma mini-férias.
+            </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {/* Card do Artigo 1 */}
+            <div 
+                onClick={() => navigate('/day-use/o-que-e-day-use')}
+                className="bg-white rounded-3xl overflow-hidden border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group"
+            >
+                <div className="h-48 bg-teal-50 flex items-center justify-center overflow-hidden">
+                    {/* Placeholder visual ou imagem real se tiver */}
+                    <Ticket size={64} className="text-[#0097A8] opacity-50 group-hover:scale-110 transition-transform duration-700"/>
+                </div>
+                <div className="p-6">
+                    <span className="text-xs font-bold text-[#0097A8] uppercase tracking-wider">Guia Básico</span>
+                    <h2 className="text-xl font-bold text-slate-900 mt-2 mb-3 leading-tight group-hover:text-[#0097A8] transition-colors">
+                        O que é Day Use? Como funciona e quando vale a pena
+                    </h2>
+                    <p className="text-slate-500 text-sm line-clamp-3">
+                        Entenda como funciona essa modalidade de lazer, o que geralmente está incluso e descubra se é a escolha ideal para o seu descanso.
+                    </p>
+                    <div className="mt-4 pt-4 border-t border-slate-50 flex items-center text-sm font-bold text-slate-700">
+                        Ler artigo completo <ArrowRight size={16} className="ml-2"/>
+                    </div>
+                </div>
+            </div>
+
+            {/* Futuros artigos aparecerão aqui... */}
+        </div>
+    </div>
+  );
+};
+
+const WhatIsDayUsePage = () => {
+  const navigate = useNavigate();
+  
+  // SEO
+  useSEO(
+    "Day Use: o que é, como funciona e quando vale a pena", 
+    "Saiba o que é day use, como funciona, quem pode usar e as vantagens. Encontre experiências de day use para curtir o dia."
+  );
+
+  // SCHEMAS (WebPage, Article, Breadcrumb)
+  useSchema({
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebPage",
+        "@id": "https://mapadodayuse.com/day-use/o-que-e-day-use",
+        "url": "https://mapadodayuse.com/day-use/o-que-e-day-use",
+        "name": "Day Use: o que é, como funciona e quando vale a pena"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
+            { "@type": "ListItem", "position": 2, "name": "Dicas", "item": "https://mapadodayuse.com/day-use" },
+            { "@type": "ListItem", "position": 3, "name": "O que é Day Use", "item": "https://mapadodayuse.com/day-use/o-que-e-day-use" }
+        ]
+      },
+      {
+        "@type": "Article",
+        "headline": "Day Use: o que é, como funciona e quando vale a pena",
+        "description": "Saiba o que é day use, como funciona, quem pode usar e as vantagens. Encontre experiências de day use para curtir o dia.",
+        "image": "https://mapadodayuse.com/logo.svg", // Idealmente uma imagem de capa do artigo
+        "author": {
+            "@type": "Person",
+            "name": "Iuri França"
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": "Mapa do Day Use",
+            "logo": {
+                "@type": "ImageObject",
+                "url": "https://mapadodayuse.com/logo.svg"
+            }
+        },
+        "datePublished": "2026-01-01",
+        "dateModified": new Date().toISOString().split('T')[0]
+      }
+    ]
+  });
+
+  return (
+    <div className="max-w-3xl mx-auto py-12 px-4 animate-fade-in text-slate-800 leading-relaxed">
+        {/* Breadcrumb Visual */}
+        <nav className="text-xs text-slate-500 mb-8 flex gap-2">
+            <span className="cursor-pointer hover:text-[#0097A8]" onClick={()=>navigate('/')}>Home</span> / 
+            <span className="cursor-pointer hover:text-[#0097A8]" onClick={()=>navigate('/day-use')}>Dicas</span> / 
+            <span className="text-slate-800 font-bold">O que é Day Use</span>
+        </nav>
+
+        <article>
+            <header className="mb-10">
+                <h1 className="text-4xl font-bold text-slate-900 mb-4">O que é Day Use?</h1>
+                <p className="text-xl text-slate-500 font-light">Entenda como funciona, quais os benefícios e descubra se essa é a opção ideal para o seu dia de folga.</p>
+            </header>
+
+            <div className="space-y-8">
+                <section>
+                    <p className="mb-4">
+                        <strong>Day use</strong> é a possibilidade de usar a estrutura de um hotel, pousada, clube ou espaço de lazer por um dia, sem precisar se hospedar à noite.
+                    </p>
+                    <p className="mb-4">Na prática, você paga para aproveitar áreas como:</p>
+                    <ul className="list-disc pl-6 space-y-2 mb-4 text-slate-600">
+                        <li>Piscinas</li>
+                        <li>Spa e áreas de relaxamento</li>
+                        <li>Restaurantes e bares</li>
+                        <li>Áreas verdes</li>
+                        <li>Espaços infantis</li>
+                        <li>Quadras, trilhas ou experiências exclusivas</li>
+                    </ul>
+                    <p>Tudo isso dentro de um horário definido, geralmente durante o dia.</p>
+                    <div className="bg-cyan-50 border-l-4 border-[#0097A8] p-4 my-6 rounded-r-lg text-sm text-cyan-900">
+                        👉 <strong>Resumo:</strong> É uma forma prática de curtir um lugar especial, descansar ou viver uma experiência diferente sem o custo de uma diária completa.
+                    </div>
+                </section>
+
+                <section>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-4">Como funciona o day use?</h2>
+                    <p className="mb-4">O funcionamento do day use é simples e transparente. Veja como normalmente acontece:</p>
+                    
+                    <div className="space-y-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-[#0097A8] mb-2">Reserva</h3>
+                            <ul className="list-disc pl-6 text-slate-600">
+                                <li>Você escolhe a experiência de day use no site</li>
+                                <li>Confere o que está incluso, valores e regras</li>
+                                <li>Faz a reserva online, de forma segura</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-[#0097A8] mb-2">Horários</h3>
+                            <ul className="list-disc pl-6 text-slate-600">
+                                <li>O horário varia conforme o local</li>
+                                <li>Em geral, o acesso acontece pela manhã e vai até o fim da tarde</li>
+                                <li>Alguns espaços oferecem períodos específicos (ex: manhã, tarde ou dia inteiro)</li>
+                            </ul>
+                            <p className="text-sm mt-2 text-slate-500 italic">Sempre vale conferir os horários informados na página da experiência.</p>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-[#0097A8] mb-2">O que está incluso</h3>
+                            <p className="mb-2">Cada day use tem regras próprias, mas normalmente pode incluir:</p>
+                            <ul className="list-disc pl-6 text-slate-600">
+                                <li>Acesso às áreas comuns</li>
+                                <li>Piscina e espaços de lazer</li>
+                                <li>Consumo mínimo em restaurante (em alguns casos)</li>
+                                <li>Uso de vestiários, duchas e áreas de descanso</li>
+                            </ul>
+                            <p className="text-sm mt-2 text-slate-500">📌 Serviços extras, como massagens, bebidas ou refeições especiais, podem ser cobrados à parte.</p>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-[#0097A8] mb-2">Cancelamento e alterações</h3>
+                            <ul className="list-disc pl-6 text-slate-600">
+                                <li>As políticas variam conforme o parceiro</li>
+                                <li>Algumas experiências permitem cancelamento gratuito até um certo prazo</li>
+                                <li>Outras podem ter taxas ou não permitir cancelamento</li>
+                            </ul>
+                            <div className="bg-slate-50 p-3 rounded-lg mt-3 text-sm border border-slate-200">
+                                👉 Sempre confira a política de cancelamento antes de finalizar a reserva.
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-4">Quem pode usar o day use?</h2>
+                    <p className="mb-4">O day use é super democrático e atende diferentes perfis de pessoas:</p>
+                    <ul className="grid md:grid-cols-2 gap-4">
+                        <li className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-start gap-3">
+                            <span className="text-2xl">👨‍👩‍👧</span>
+                            <span className="text-sm"><strong>Famílias</strong> que querem um dia de lazer fora da rotina</span>
+                        </li>
+                        <li className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-start gap-3">
+                            <span className="text-2xl">💑</span>
+                            <span className="text-sm"><strong>Casais</strong> em busca de descanso ou um programa diferente</span>
+                        </li>
+                        <li className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-start gap-3">
+                            <span className="text-2xl">🧳</span>
+                            <span className="text-sm"><strong>Viajantes</strong> de fim de semana</span>
+                        </li>
+                        <li className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-start gap-3">
+                            <span className="text-2xl">🏡</span>
+                            <span className="text-sm"><strong>Pessoas da região</strong> que querem turismo local</span>
+                        </li>
+                    </ul>
+                    <p className="mt-4">Existem opções para adultos, crianças, grupos e até experiências exclusivas para maiores de idade.</p>
+                </section>
+
+                <section>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-4">Benefícios e Diferenças</h2>
+                    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                        <div className="bg-slate-50 p-4 border-b border-slate-200">
+                            <h3 className="font-bold text-slate-800">Principais Benefícios</h3>
+                        </div>
+                        <div className="p-4 space-y-2">
+                            <p>💰 <strong>Custo menor</strong> que uma diária completa</p>
+                            <p>⏰ <strong>Flexibilidade:</strong> aproveite só o tempo que faz sentido para você</p>
+                            <p>🌿 <strong>Experiência completa</strong>, sem precisar dormir fora</p>
+                            <p>📍 <strong>Ótimo</strong> para quem mora perto ou está de passagem</p>
+                        </div>
+                    </div>
+                    
+                    <div className="mt-6">
+                        <h3 className="font-bold text-lg mb-2">Day use x Hospedagem tradicional</h3>
+                        <ul className="list-disc pl-6 text-slate-600">
+                            <li><strong>Day use:</strong> uso diurno, sem pernoite.</li>
+                            <li><strong>Hospedagem:</strong> inclui quarto e estadia noturna.</li>
+                        </ul>
+                        <p className="mt-2 text-sm italic">👉 Se a ideia é relaxar, curtir a piscina, comer bem e voltar pra casa no mesmo dia, o day use costuma ser a escolha ideal.</p>
+                    </div>
+                </section>
+
+                <section>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-4">Dicas para aproveitar ao máximo</h2>
+                    <div className="space-y-4">
+                        <div>
+                            <h4 className="font-bold text-slate-700">Antes de ir</h4>
+                            <p className="text-sm text-slate-600">Leia com atenção o que está incluso, confira horários de entrada e saída e veja se o local exige reserva antecipada.</p>
+                        </div>
+                        <div>
+                            <h4 className="font-bold text-slate-700">O que levar</h4>
+                            <p className="text-sm text-slate-600">Roupa de banho, toalha (se não inclusa), protetor solar, chinelo e documento de identificação.</p>
+                        </div>
+                        <div>
+                            <h4 className="font-bold text-slate-700">Durante o day use</h4>
+                            <p className="text-sm text-slate-600">Chegue no horário para aproveitar melhor, respeite as regras do espaço e pergunte sobre serviços extras.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section className="bg-[#0097A8] text-white p-8 rounded-3xl text-center mt-12 shadow-xl">
+                    <h2 className="text-2xl font-bold mb-4">Encontre seu próximo day use</h2>
+                    <p className="mb-8 opacity-90">
+                        No Mapa do Day Use, você encontra diferentes opções de experiências para curtir o dia do seu jeito — seja para relaxar, se divertir ou simplesmente sair da rotina.
+                    </p>
+                    <Button 
+                        onClick={() => navigate('/')} 
+                        className="bg-white text-[#0097A8] hover:bg-slate-100 border-none px-8 py-4 text-lg shadow-lg"
+                    >
+                        Explorar Experiências 🌿
+                    </Button>
+                </section>
+            </div>
+        </article>
+    </div>
+  );
+};
+
+const AboutUsPage = () => {
+  useSEO("Sobre Nós | Mapa do Day Use", "Conheça a história, missão e os valores por trás do Mapa do Day Use. Estamos democratizando o lazer e o turismo local.");
+  
+  return (
+    <div className="max-w-4xl mx-auto py-16 px-4 animate-fade-in text-slate-800">
+        <div className="text-center mb-16">
+            <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Não vendemos diárias,<br/>vendemos <span className="text-[#0097A8]">liberdade</span>.</h1>
+            <p className="text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed">
+                Acreditamos que você não precisa esperar as férias de janeiro para ser feliz. O paraíso pode ser logo ali, na sua cidade, numa terça-feira à tarde.
+            </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-12 items-center mb-20">
+            <div className="order-2 md:order-1">
+                <h2 className="text-2xl font-bold text-slate-900 mb-4">Quem somos?</h2>
+                <p className="text-slate-600 leading-relaxed mb-4">
+                    Somos um time de sonhadores inquietos que cansou de ver hotéis incríveis vazios durante o dia e pessoas estressadas precisando de uma pausa.
+                </p>
+                <p className="text-slate-600 leading-relaxed">
+                    O <strong>Mapa do Day Use</strong> nasceu para conectar essas duas pontas. Somos a ponte entre a sua vontade de escapar da rotina e as piscinas, spas e naturezas que estão a poucos quilômetros de você. Somos tecnologia com alma de viajante.
+                </p>
+            </div>
+            <div className="order-1 md:order-2 bg-slate-100 rounded-3xl h-64 md:h-80 flex items-center justify-center overflow-hidden relative group">
+                 <div className="absolute inset-0 bg-gradient-to-tr from-[#0097A8] to-cyan-400 opacity-20"></div>
+                 <MapPin size={64} className="text-[#0097A8] drop-shadow-lg transform group-hover:scale-110 transition-transform duration-700"/>
+            </div>
+        </div>
+
+        <div className="bg-slate-50 rounded-3xl p-8 md:p-12 mb-20 border border-slate-100">
+            <div className="grid md:grid-cols-3 gap-8 text-center">
+                <div className="space-y-3">
+                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm text-[#0097A8]"><Star size={24}/></div>
+                    <h3 className="font-bold text-lg text-slate-900">Missão</h3>
+                    <p className="text-sm text-slate-600">Democratizar o acesso ao lazer de alto padrão. Quebrar os muros dos hotéis e permitir que todos possam viver experiências 5 estrelas.</p>
+                </div>
+                <div className="space-y-3">
+                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm text-[#0097A8]"><Briefcase size={24}/></div>
+                    <h3 className="font-bold text-lg text-slate-900">Visão</h3>
+                    <p className="text-sm text-slate-600">Transformar o "micro-turismo" em hábito. Queremos um mundo onde descansar não seja um luxo anual, mas uma escolha semanal.</p>
+                </div>
+                <div className="space-y-3">
+                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm text-[#0097A8]"><User size={24}/></div>
+                    <h3 className="font-bold text-lg text-slate-900">Valores</h3>
+                    <p className="text-sm text-slate-600">Liberdade geográfica, conexão real com a natureza, transparência radical e valorização da economia local.</p>
+                </div>
+            </div>
+        </div>
+
+        <div className="text-center">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Vamos transformar o mundo, um mergulho de cada vez?</h2>
+            <p className="text-slate-500 mb-8">Junte-se a milhares de viajantes que descobriram que a vida acontece agora.</p>
+        </div>
+    </div>
+  );
+};
+
+const ContactPage = () => {
+  const navigate = useNavigate();
+  useSEO("Fale Conosco | Mapa do Day Use", "Entre em contato com a equipe do Mapa do Day Use. Suporte, parcerias e dúvidas.");
+
+  return (
+    <div className="max-w-3xl mx-auto py-16 px-4 animate-fade-in">
+        <div className="text-center mb-12">
+            <h1 className="text-4xl font-bold text-slate-900 mb-4">Fale Conosco</h1>
+            <p className="text-slate-500 text-lg">
+                Dúvidas, sugestões, parcerias ou apenas para dar um "olá".<br/>Nossa equipe está pronta para te ouvir.
+            </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-6">
+            <a 
+                href="https://wa.me/5531920058081" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col items-center text-center cursor-pointer"
+            >
+                <div className="w-16 h-16 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-4 group-hover:bg-green-100 transition-colors">
+                    <MessageCircle size={32}/>
+                </div>
+                <h3 className="font-bold text-xl text-slate-900 mb-2">WhatsApp</h3>
+                <p className="text-slate-500 text-sm mb-4">Resposta rápida para dúvidas urgentes e suporte em tempo real.</p>
+                <span className="text-[#0097A8] font-bold text-sm">Chamar agora &rarr;</span>
+            </a>
+
+            <a 
+                href="mailto:contato@mapadodayuse.com"
+                className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col items-center text-center cursor-pointer"
+            >
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-4 group-hover:bg-blue-100 transition-colors">
+                    <Mail size={32}/>
+                </div>
+                <h3 className="font-bold text-xl text-slate-900 mb-2">E-mail</h3>
+                <p className="text-slate-500 text-sm mb-4">Para parcerias, imprensa ou assuntos que exigem mais detalhes.</p>
+                <span className="text-[#0097A8] font-bold text-sm">Enviar mensagem &rarr;</span>
+            </a>
+        </div>
+
+        <div className="mt-12 bg-slate-50 rounded-3xl p-8 text-center border border-slate-100">
+            <h3 className="font-bold text-lg text-slate-900 mb-2">Quer ser um parceiro?</h3>
+            <p className="text-slate-500 text-sm mb-6">Se você tem um hotel ou pousada e quer aumentar seu faturamento, venha com a gente.</p>
+            <button onClick={() => navigate('/partner-register')} className="bg-[#0097A8] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-200">
+                Cadastrar meu espaço
+            </button>
+        </div>
+    </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -3816,6 +4201,10 @@ const App = () => {
         <Route path="/portaria" element={<Layout><StaffDashboard /></Layout>} />
         <Route path="/politica-de-privacidade" element={<Layout><PrivacyPage /></Layout>} />
         <Route path="/termos-de-uso" element={<Layout><TermsPage /></Layout>} />
+        <Route path="/sobre-nos" element={<Layout><AboutUsPage /></Layout>} />
+        <Route path="/contato" element={<Layout><ContactPage /></Layout>} />
+        <Route path="/day-use" element={<Layout><BlogHubPage /></Layout>} />
+        <Route path="/day-use/o-que-e-day-use" element={<Layout><WhatIsDayUsePage /></Layout>} />
         <Route path="/mapa-do-site" element={<Layout><SiteMapPage /></Layout>} />
 
       </Routes>
