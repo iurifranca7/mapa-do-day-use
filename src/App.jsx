@@ -971,6 +971,7 @@ const DetailsPage = () => {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [currentPrice, setCurrentPrice] = useState(0);
+  const [showWarning, setShowWarning] = useState(null); // Ex: { title: 'Atenção', msg: '...' }
 
   // States para Solicitação de Propriedade
   const [showClaimModal, setShowClaimModal] = useState(false);
@@ -1203,7 +1204,12 @@ const DetailsPage = () => {
                     <div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div>
                     <div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div>
                 </div>
-            )) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}
+            )) : (
+                // CORREÇÃO: Redireciona para a página do Estado em vez da Home
+                <Button onClick={() => navigate(`/${getStateSlug(item.state)}`)} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">
+                    Ver mais opções em {item.state}
+                </Button>
+            )}
         </div>
     </div>
   );
@@ -1258,16 +1264,76 @@ const DetailsPage = () => {
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
                    <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
+                   {/* Seção de Quantidades com Trava de Dependência */}
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(Math.max(1, adults-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
-                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(children+1)}>+</button></div></div>
-                     {showPets && (<div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(pets+1)}>+</button></div></div>)}
                      
-                     {/* Crianças Gratuitas */}
+                     {/* Adultos (Controle Principal) */}
+                     <div className="flex justify-between items-center">
+                         <div>
+                             <span className="text-sm font-medium text-slate-700 block">Adultos</span>
+                             <span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span>
+                             <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span>
+                         </div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{
+                                 const newVal = Math.max(0, adults-1);
+                                 setAdults(newVal);
+                                 // Se remover todos os adultos, zera os dependentes automaticamente
+                                 if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }
+                             }}>-</button>
+                             <span className="font-bold text-slate-900 w-4 text-center">{adults}</span>
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button>
+                         </div>
+                     </div>
+
+                     {/* Crianças (Só libera se tiver adulto) */}
+                     <div className="flex justify-between items-center">
+                         <div>
+                             <span className="text-sm font-medium text-slate-700 block">Crianças</span>
+                             <span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span>
+                             <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span>
+                         </div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button>
+                             <span className="font-bold text-slate-900 w-4 text-center">{children}</span>
+                             <button 
+                                className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
+                                onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}
+                             >+</button>
+                         </div>
+                     </div>
+
+                     {/* Pets (Só libera se tiver adulto) */}
+                     {showPets && (
+                         <div className="flex justify-between items-center">
+                             <div>
+                                 <span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span>
+                                 <span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span>
+                                 <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span>
+                             </div>
+                             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                                 <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{pets}</span>
+                                 <button 
+                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
+                                    onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}
+                                 >+</button>
+                             </div>
+                         </div>
+                     )}
+                     
+                     {/* Crianças Grátis (Só libera se tiver adulto) */}
                      {item.trackFreeChildren && (
                          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
-                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span><button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(freeChildren+1)}>+</button></div>
+                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm">
+                                 <button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span>
+                                 <button 
+                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} 
+                                    onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}
+                                 >+</button>
+                             </div>
                          </div>
                      )}
                    </div>
@@ -1292,6 +1358,22 @@ const DetailsPage = () => {
                    </div>
                 </div>
             )}
+            {/* MODAL DE ALERTA (Trava de Adultos) */}
+      {showWarning && createPortal(
+          <ModalOverlay onClose={() => setShowWarning(null)}>
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                  <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertCircle size={32}/>
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">{showWarning.title}</h2>
+                  <p className="text-slate-600 mb-6 text-sm">{showWarning.msg}</p>
+                  <Button onClick={() => setShowWarning(null)} className="w-full justify-center">
+                      Entendi
+                  </Button>
+              </div>
+          </ModalOverlay>,
+          document.body
+           )}
          </div>
       </div>
     </div>
@@ -3328,7 +3410,7 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [items, setItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showMobileFilters, setShowMobileFilters] = useState(false); // Controle do acordeão mobile
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   // Filtros
   const [maxPrice, setMaxPrice] = useState("");
@@ -3340,58 +3422,49 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   // SEO
   const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
-  const locationTitle = cityParam 
-    ? `${cityParam.charAt(0).toUpperCase() + cityParam.slice(1).replace(/-/g, ' ')}, ${stateParam?.toUpperCase()}` 
-    : stateName;
-    
-  useSEO(`Day Uses em ${locationTitle}`, `Encontre os melhores Day Uses em ${locationTitle}.`);
+  const cityNameFormatted = cityParam 
+    ? cityParam.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') 
+    : null;
+  
+  const locationTitle = cityNameFormatted ? cityNameFormatted : `${stateName}`;
 
-  const baseUrl = "https://mapadodayuse.com";
-  const breadcrumbItems = [
-    { "@type": "ListItem", "position": 1, "name": "Home", "item": baseUrl }
-  ];
+  const seoTitle = `Os Melhores Day Uses de ${locationTitle} | ${filteredItems.length} Locais Disponíveis!`;
 
-  if (stateParam) {
-    breadcrumbItems.push({ 
-        "@type": "ListItem", 
-        "position": 2, 
-        "name": stateName, 
-        "item": `${baseUrl}/${stateParam.toLowerCase()}` 
-    });
-  }
+  const seoDesc = `Encontre os melhores day uses em ${locationTitle}. Day Uses com ${AMENITIES_LIST[0]}, ${MEALS_LIST[0]}, ${MEALS_LIST[1]} e ${AMENITIES_LIST[5]}. Compre seu ingresso aqui!`;
 
-  if (cityParam) {
-    breadcrumbItems.push({ 
-        "@type": "ListItem", 
-        "position": 3, 
-        "name": cityParam.replace(/-/g, ' '), 
-        "item": `${baseUrl}/${stateParam?.toLowerCase()}/${cityParam}` 
-    });
-  }
+  useSEO(seoTitle, seoDesc);
 
-  useSchema({
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": breadcrumbItems
-  });
-
+  // Fetch com tratamento de erro e Finally para garantir fim do loading
   useEffect(() => {
     const fetchItems = async () => {
       setLoading(true);
-      const q = query(collection(db, "dayuses"));
-      const snap = await getDocs(q);
-      const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
-      const stateItems = data.filter(i => getStateSlug(i.state) === stateParam?.toLowerCase());
-      setItems(stateItems);
-      setLoading(false);
+      try {
+        const q = query(collection(db, "dayuses"));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        
+        // Filtragem inicial por estado
+        const stateItems = data.filter(i => getStateSlug(i.state) === stateParam?.toLowerCase());
+        setItems(stateItems);
+      } catch (error) {
+        console.error("Erro ao carregar listagem:", error);
+      } finally {
+        setLoading(false); // Garante que o Skeleton suma
+      }
     };
     fetchItems();
   }, [stateParam]);
 
+  // Atualiza filtro de cidade se a URL mudar (sem refetch)
+  useEffect(() => {
+      if(cityParam) setFilterCity(cityParam);
+      else setFilterCity("");
+  }, [cityParam]);
+
+  // Lógica de Filtragem (Mantida)
   useEffect(() => {
     let result = items;
-    if (cityParam) result = result.filter(i => generateSlug(i.city) === cityParam);
-    else if (filterCity) result = result.filter(i => generateSlug(i.city) === filterCity);
+    if (filterCity) result = result.filter(i => generateSlug(i.city) === filterCity);
     if (maxPrice) result = result.filter(i => Number(i.priceAdult) <= Number(maxPrice));
     if (selectedAmenities.length > 0) result = result.filter(i => selectedAmenities.every(a => (i.amenities || []).includes(a)));
     if (selectedMeals.length > 0) result = result.filter(i => selectedMeals.some(m => (i.meals || []).includes(m)));
@@ -3409,83 +3482,29 @@ const ListingPage = ({ stateParam, cityParam }) => {
         });
     }
     setFilteredItems(result);
-  }, [items, cityParam, filterCity, maxPrice, selectedAmenities, selectedMeals, selectedDays, selectedPets]);
+  }, [items, filterCity, maxPrice, selectedAmenities, selectedMeals, selectedDays, selectedPets]);
 
   const toggleFilter = (list, setList, item) => {
       if (list.includes(item)) setList(list.filter(i => i !== item));
       else setList([...list, item]);
   };
-
-  const clearFilters = () => {
-      setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("");
-  };
-
+  
+  const clearFilters = () => { setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity(""); };
   const availableCities = [...new Set(items.map(i => i.city))].sort();
   const nearbyCities = availableCities.filter(c => !cityParam || generateSlug(c) !== cityParam).slice(0, 20);
 
-  // Conteúdo dos Filtros (Extraído para reutilizar no Mobile e Desktop)
   const FiltersContent = () => (
       <div className="space-y-6">
           <div className="flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 flex items-center gap-2"><List size={18}/> Filtros</h3>
+              <h2 className="font-bold text-slate-900 flex items-center gap-2 text-lg"><Filter size={18}/> Filtros</h2>
               <button onClick={clearFilters} className="text-xs text-[#0097A8] font-bold hover:underline">Limpar</button>
           </div>
-          
-          {!cityParam && (
-              <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label>
-                  <select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}>
-                      <option value="">Todas as cidades</option>
-                      {availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}
-                  </select>
-              </div>
-          )}
-
-          <div>
-              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label>
-              <div className="flex items-center gap-2 border rounded-xl p-2 bg-white">
-                  <span className="text-slate-400 text-sm">R$</span>
-                  <input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/>
-              </div>
-          </div>
-
-          <div>
-              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label>
-              <div className="flex flex-wrap gap-2">
-                   {WEEK_DAYS.map((d, i) => (
-                       <button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>
-                   ))}
-              </div>
-          </div>
-
-          <div>
-              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>
-              {MEALS_LIST.map(m => (
-                  <label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
-                      <input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}
-                  </label>
-              ))}
-          </div>
-
-          <div>
-              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>
-              {["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (
-                  <label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
-                      <input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}
-                  </label>
-              ))}
-          </div>
-
-          <div>
-              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label>
-              <div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                  {AMENITIES_LIST.map(a => (
-                      <label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
-                          <input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}
-                      </label>
-                  ))}
-              </div>
-          </div>
+          {!cityParam && (<div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label><select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}><option value="">Todas as cidades</option>{availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}</select></div>)}
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label><div className="flex items-center gap-2 border rounded-xl p-2 bg-white"><span className="text-slate-400 text-sm">R$</span><input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/></div></div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label><div className="flex flex-wrap gap-2">{WEEK_DAYS.map((d, i) => (<button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>))}</div></div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>{MEALS_LIST.map(m => (<label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1"><input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}</label>))}</div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>{["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (<label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1"><input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}</label>))}</div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label><div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">{AMENITIES_LIST.map(a => (<label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}</label>))}</div></div>
       </div>
   );
 
@@ -3500,40 +3519,24 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
-        
-        {/* TÍTULO (Sempre visível no topo) */}
         <div className="mb-6">
-            <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
+            <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {cityNameFormatted || stateName}</h1>
             <p className="text-slate-500">{filteredItems.length} opções encontradas</p>
         </div>
 
-        {/* --- FILTROS MOBILE (ACORDEÃO) --- */}
         <div className="md:hidden mb-8">
-            <button 
-                onClick={() => setShowMobileFilters(!showMobileFilters)}
-                className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors"
-            >
+            <button onClick={() => setShowMobileFilters(!showMobileFilters)} className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors">
                 <span className="flex items-center gap-2"><Filter size={20} className="text-[#0097A8]"/> Filtrar Resultados</span>
                 <ChevronDown size={20} className={`transition-transform duration-300 text-slate-400 ${showMobileFilters ? 'rotate-180' : ''}`}/>
             </button>
-            
-            {showMobileFilters && (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in">
-                    <FiltersContent />
-                </div>
-            )}
+            {showMobileFilters && <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in"><FiltersContent /></div>}
         </div>
 
         <div className="flex flex-col md:flex-row gap-8">
-            
-            {/* --- FILTROS DESKTOP (SIDEBAR) --- */}
             <div className="hidden md:block w-1/4 space-y-6 h-fit sticky top-24">
-                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar">
-                    <FiltersContent />
-                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar"><FiltersContent /></div>
             </div>
 
-            {/* LISTAGEM DE CARDS */}
             <div className="flex-1">
                 {filteredItems.length === 0 ? (
                     <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
@@ -3542,17 +3545,10 @@ const ListingPage = ({ stateParam, cityParam }) => {
                     </div>
                 ) : (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredItems.map(item => (
-                            <DayUseCard 
-                                key={item.id} 
-                                item={item} 
-                                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
-                            />
-                        ))}
+                        {filteredItems.map(item => <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />)}
                     </div>
                 )}
                 
-                {/* LISTA DE CIDADES PRÓXIMAS (NOVO) */}
                 {nearbyCities.length > 0 && (
                     <div className="mt-16 pt-8 border-t border-slate-100">
                         <h2 className="text-xl font-bold text-slate-900 mb-6">Confira os day uses disponíveis em cidades próximas</h2>
