@@ -3347,24 +3347,52 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   // Fetch com tratamento de erro e Finally para garantir fim do loading
   useEffect(() => {
-    const fetchItems = async () => {
+    const fetchItem = async () => {
       setLoading(true);
       try {
-        const q = query(collection(db, "dayuses"));
-        const snap = await getDocs(q);
-        const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
-        
-        // Filtragem inicial por estado
-        const stateItems = data.filter(i => getStateSlug(i.state) === stateParam?.toLowerCase());
-        setItems(stateItems);
+          let foundData = null;
+          
+          // 1. Prioridade: ID passado pelo state da navegação (clique interno)
+          if (location.state?.id) {
+             const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
+             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
+          } 
+          // 2. Fallback: ID na URL (rota /stay/:id)
+          else if (idParam) {
+             const docSnap = await getDoc(doc(db, "dayuses", idParam));
+             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
+          }
+          // 3. Busca pelo Slug (Link externo/WhatsApp)
+          else if (slug) {
+             const q = query(collection(db, "dayuses"), where("slug", "==", slug)); 
+             const querySnapshot = await getDocs(q);
+             if (!querySnapshot.empty) {
+                 const docData = querySnapshot.docs[0];
+                 foundData = { id: docData.id, ...docData.data() };
+             }
+          }
+    
+          if (foundData) {
+              setItem(foundData);
+              // Busca relacionados na mesma cidade (se a cidade existir)
+              if (foundData.city) {
+                  const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
+                  const snapRelated = await getDocs(qRelated);
+                  const related = snapRelated.docs
+                      .map(d => ({id: d.id, ...d.data()}))
+                      .filter(i => i.id !== foundData.id)
+                      .slice(0, 3);
+                  setRelatedItems(related);
+              }
+          }
       } catch (error) {
-        console.error("Erro ao carregar listagem:", error);
+          console.error("Erro ao carregar detalhes:", error);
       } finally {
-        setLoading(false); // Garante que o Skeleton suma
+          setLoading(false);
       }
     };
-    fetchItems();
-  }, [stateParam]);
+    fetchItem();
+  }, [slug, idParam, location.state]);
 
   // Atualiza filtro de cidade se a URL mudar (sem refetch)
   useEffect(() => {
