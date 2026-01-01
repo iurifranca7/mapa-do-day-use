@@ -137,6 +137,23 @@ const useSEO = (title, description, noIndex = false) => {
   }, [title, description, noIndex]);
 };
 
+const useSchema = (schemaData) => {
+  useEffect(() => {
+    // Se não houver dados (null/undefined), não faz nada
+    if (!schemaData) return;
+
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.text = JSON.stringify(schemaData);
+    document.head.appendChild(script);
+
+    // Limpeza: remove o script quando o componente desmonta ou os dados mudam
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, [schemaData]);
+};
+
 // --- COMPONENTES VISUAIS ---
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled, type='button' }) => {
   let baseClass = "px-6 py-3 rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
@@ -759,6 +776,38 @@ const SkeletonCard = () => (
 
 const HomePage = () => {
   useSEO("Home", "Encontre e reserve os melhores day uses em hotéis e resorts.");
+  
+  // SCHEMA: Organization & WebSite
+  useSchema({
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "name": "Mapa do Day Use",
+        "url": "https://mapadodayuse.com",
+        "logo": "https://mapadodayuse.com/logo.svg",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "email": "contato@mapadodayuse.com",
+          "contactType": "customer support"
+        },
+        "sameAs": [
+          "https://instagram.com/mapadodayuse",
+          "https://tiktok.com/@mapadodayuse"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "url": "https://mapadodayuse.com",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "https://mapadodayuse.com/search?q={search_term_string}",
+          "query-input": "required name=search_term_string"
+        }
+      }
+    ]
+  });
+
   const [items, setItems] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true); // NOVO STATE
@@ -988,6 +1037,58 @@ const DetailsPage = () => {
     : "Confira detalhes, preços e fotos deste Day Use incrível. Reserve agora!";
 
   useSEO(seoTitle, seoDesc);
+
+  useSchema(item ? {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "LodgingBusiness", // Define como um local de hospedagem/negócio
+        "@id": `https://mapadodayuse.com/${getStateSlug(item.state)}/${generateSlug(item.name)}#place`,
+        "name": item.name,
+        "description": item.description,
+        "image": [item.image, item.image2, item.image3].filter(Boolean),
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": `${item.street}, ${item.number}`,
+          "addressLocality": item.city,
+          "addressRegion": item.state,
+          "addressCountry": "BR",
+          "postalCode": item.cep
+        },
+        "telephone": item.localPhone || item.localWhatsapp,
+        "amenityFeature": item.amenities?.map(a => ({
+             "@type": "LocationFeatureSpecification",
+             "name": a,
+             "value": "true"
+        }))
+      },
+      {
+        "@type": "Product", // Define como um produto vendável (o ingresso)
+        "name": `Day Use em ${item.name}`,
+        "description": `Ingresso para passar o dia em ${item.name}. Incluso: ${item.includedItems || 'Acesso às áreas comuns'}.`,
+        "image": item.image,
+        "sku": item.id,
+        "brand": { "@type": "Brand", "name": "Mapa do Day Use" },
+        "offers": {
+          "@type": "Offer",
+          "url": window.location.href,
+          "priceCurrency": "BRL",
+          "price": currentPrice || item.priceAdult, // Usa o preço dinâmico do dia
+          "priceValidUntil": new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split('T')[0],
+          "availability": item.paused ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+          "seller": { "@type": "Organization", "name": item.name }
+        }
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
+            { "@type": "ListItem", "position": 2, "name": item.state, "item": `https://mapadodayuse.com/${getStateSlug(item.state)}` },
+            { "@type": "ListItem", "position": 3, "name": item.name, "item": window.location.href }
+        ]
+      }
+    ]
+  } : null);
 
   // --- SKELETON LOADING (NOVO) ---
   if (!item) return (
@@ -3142,6 +3243,7 @@ const Layout = ({ children }) => {
                   <ul className="space-y-3 text-sm text-slate-500">
                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
+                     <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
                      <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
                   </ul>
                </div>
@@ -3176,12 +3278,24 @@ const DayUseCard = ({ item, onClick }) => {
   const hasDiscount = item.coupons && item.coupons.length > 0;
   const maxDiscount = hasDiscount ? Math.max(...item.coupons.map(c => c.percentage)) : 0;
 
+  // Função para substituir imagem quebrada por um placeholder bonito
+  const handleImageError = (e) => {
+      e.target.src = "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80"; 
+  };
+
   return (
-     <div onClick={onClick} className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full relative">
+     <div 
+        onClick={onClick} 
+        className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full relative"
+     >
         <div className="h-64 relative overflow-hidden">
-            <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"/>
+            <img 
+                src={item.image} 
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                onError={handleImageError} // <--- Proteção contra erro de imagem
+                alt={item.name}
+            />
             
-            {/* ETICA DE DESCONTO (SUBSTITUIU ESTRELAS) */}
             {hasDiscount && (
               <div className="absolute top-4 right-4 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
                  <Tag size={12} className="fill-current"/> {maxDiscount}% OFF
@@ -3198,7 +3312,9 @@ const DayUseCard = ({ item, onClick }) => {
                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">A partir de</p>
                    <p className="text-2xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p>
                </div>
-               <span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">Reservar</span>
+               <span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">
+                   Reservar
+               </span>
            </div>
         </div>
      </div>
@@ -3210,7 +3326,7 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [items, setItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showMobileFilters, setShowMobileFilters] = useState(false); // Novo state para mobile
+  const [showMobileFilters, setShowMobileFilters] = useState(false); // Controle do acordeão mobile
 
   // Filtros
   const [maxPrice, setMaxPrice] = useState("");
@@ -3221,19 +3337,41 @@ const ListingPage = ({ stateParam, cityParam }) => {
   const [selectedPets, setSelectedPets] = useState([]);
 
   // SEO
-    const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
-  // Formata o nome da cidade corretamente (ex: de 'belo-horizonte' para 'Belo Horizonte')
-  const cityName = cityParam ? cityParam.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : null;
-  
-  const locationTitle = cityName ? cityName : stateName;
-  
-  // Título mais atrativo com contagem de locais
-  const seoTitle = `Os melhores day uses de ${locationTitle} | ${filteredItems.length} locais disponíveis!`;
-  
-  // Descrição rica em palavras-chave
-  const seoDesc = `Encontre os melhores day uses em ${locationTitle}. Day Uses com Piscina, Café da manhã, Almoço e Área verde. Compre seu ingresso aqui!`;
+  const stateName = STATE_NAMES[stateParam?.toUpperCase()] || stateParam?.toUpperCase();
+  const locationTitle = cityParam 
+    ? `${cityParam.charAt(0).toUpperCase() + cityParam.slice(1).replace(/-/g, ' ')}, ${stateParam?.toUpperCase()}` 
+    : stateName;
+    
+  useSEO(`Day Uses em ${locationTitle}`, `Encontre os melhores Day Uses em ${locationTitle}.`);
 
-  useSEO(seoTitle, seoDesc);
+  const baseUrl = "https://mapadodayuse.com";
+  const breadcrumbItems = [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": baseUrl }
+  ];
+
+  if (stateParam) {
+    breadcrumbItems.push({ 
+        "@type": "ListItem", 
+        "position": 2, 
+        "name": stateName, 
+        "item": `${baseUrl}/${stateParam.toLowerCase()}` 
+    });
+  }
+
+  if (cityParam) {
+    breadcrumbItems.push({ 
+        "@type": "ListItem", 
+        "position": 3, 
+        "name": cityParam.replace(/-/g, ' '), 
+        "item": `${baseUrl}/${stateParam?.toLowerCase()}/${cityParam}` 
+    });
+  }
+
+  useSchema({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": breadcrumbItems
+  });
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -3248,7 +3386,6 @@ const ListingPage = ({ stateParam, cityParam }) => {
     fetchItems();
   }, [stateParam]);
 
-  // Lógica de Filtragem (Mantida)
   useEffect(() => {
     let result = items;
     if (cityParam) result = result.filter(i => generateSlug(i.city) === cityParam);
@@ -3262,8 +3399,8 @@ const ListingPage = ({ stateParam, cityParam }) => {
             if (selectedPets.includes("Não aceita animais")) return !i.petAllowed;
             if (!i.petAllowed) return false;
             return selectedPets.some(p => {
-                const size = p.split(' ')[3]; 
-                if (!size) return true; 
+                const size = p.split(' ')[3];
+                if (!size) return true;
                 const localPetSize = (i.petSize || "").toLowerCase();
                 return localPetSize.includes(size) || localPetSize.includes("qualquer") || localPetSize.includes("todos");
             });
@@ -3277,114 +3414,129 @@ const ListingPage = ({ stateParam, cityParam }) => {
       else setList([...list, item]);
   };
 
-  const availableCities = [...new Set(items.map(i => i.city))].sort();
+  const clearFilters = () => {
+      setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("");
+  };
 
-if (loading) return (
+  const availableCities = [...new Set(items.map(i => i.city))].sort();
+  const nearbyCities = availableCities.filter(c => !cityParam || generateSlug(c) !== cityParam).slice(0, 20);
+
+  // Conteúdo dos Filtros (Extraído para reutilizar no Mobile e Desktop)
+  const FiltersContent = () => (
+      <div className="space-y-6">
+          <div className="flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 flex items-center gap-2"><List size={18}/> Filtros</h3>
+              <button onClick={clearFilters} className="text-xs text-[#0097A8] font-bold hover:underline">Limpar</button>
+          </div>
+          
+          {!cityParam && (
+              <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label>
+                  <select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}>
+                      <option value="">Todas as cidades</option>
+                      {availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}
+                  </select>
+              </div>
+          )}
+
+          <div>
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label>
+              <div className="flex items-center gap-2 border rounded-xl p-2 bg-white">
+                  <span className="text-slate-400 text-sm">R$</span>
+                  <input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/>
+              </div>
+          </div>
+
+          <div>
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label>
+              <div className="flex flex-wrap gap-2">
+                   {WEEK_DAYS.map((d, i) => (
+                       <button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>
+                   ))}
+              </div>
+          </div>
+
+          <div>
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>
+              {MEALS_LIST.map(m => (
+                  <label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
+                      <input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}
+                  </label>
+              ))}
+          </div>
+
+          <div>
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>
+              {["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (
+                  <label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
+                      <input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}
+                  </label>
+              ))}
+          </div>
+
+          <div>
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label>
+              <div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                  {AMENITIES_LIST.map(a => (
+                      <label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
+                          <input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}
+                      </label>
+                  ))}
+              </div>
+          </div>
+      </div>
+  );
+
+  if (loading) return (
     <div className="max-w-7xl mx-auto py-8 px-4">
-        <div className="flex flex-col md:flex-row gap-8">
-            <div className="w-full md:w-1/4 space-y-6 h-fit sticky top-24">
-                <div className="bg-white p-6 rounded-3xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div>
-            </div>
-            <div className="flex-1">
-                <div className="h-8 w-64 bg-slate-200 rounded-lg animate-pulse mb-6"></div>
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
-                </div>
-            </div>
+        <div className="h-8 w-64 bg-slate-200 rounded-lg animate-pulse mb-6"></div>
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
     </div>
   );
-  
+
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
         
-        {/* TÍTULO PRINCIPAL (Agora fora das colunas para aparecer sempre) */}
+        {/* TÍTULO (Sempre visível no topo) */}
         <div className="mb-6">
             <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
             <p className="text-slate-500">{filteredItems.length} opções encontradas</p>
         </div>
 
+        {/* --- FILTROS MOBILE (ACORDEÃO) --- */}
+        <div className="md:hidden mb-8">
+            <button 
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors"
+            >
+                <span className="flex items-center gap-2"><Filter size={20} className="text-[#0097A8]"/> Filtrar Resultados</span>
+                <ChevronDown size={20} className={`transition-transform duration-300 text-slate-400 ${showMobileFilters ? 'rotate-180' : ''}`}/>
+            </button>
+            
+            {showMobileFilters && (
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in">
+                    <FiltersContent />
+                </div>
+            )}
+        </div>
+
         <div className="flex flex-col md:flex-row gap-8">
             
-            {/* BOTÃO MOBILE PARA ABRIR FILTROS */}
-            <div className="md:hidden mb-4">
-                <Button variant="outline" className="w-full flex items-center justify-center gap-2" onClick={() => setShowMobileFilters(!showMobileFilters)}>
-                    <Filter size={18}/> {showMobileFilters ? "Fechar Filtros" : "Filtrar Busca"}
-                </Button>
-            </div>
-
-            {/* BARRA LATERAL (Escondida no mobile a menos que ativada) */}
-            <div className={`w-full md:w-1/4 space-y-6 h-fit sticky top-24 ${showMobileFilters ? 'block' : 'hidden md:block'}`}>
-                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
-                    <div className="flex justify-between items-center">
-                        <h3 className="font-bold text-slate-900 flex items-center gap-2"><List size={18}/> Filtros</h3>
-                        <button onClick={()=>{setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("")}} className="text-xs text-[#0097A8] font-bold hover:underline">Limpar</button>
-                    </div>
-                    
-                    {!cityParam && (
-                        <div>
-                            <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label>
-                            <select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}>
-                                <option value="">Todas as cidades</option>
-                                {availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}
-                            </select>
-                        </div>
-                    )}
-
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label>
-                        <div className="flex items-center gap-2 border rounded-xl p-2 bg-white">
-                            <span className="text-slate-400 text-sm">R$</span>
-                            <input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label>
-                        <div className="flex flex-wrap gap-2">
-                             {WEEK_DAYS.map((d, i) => (
-                                 <button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>
-                             ))}
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>
-                        {MEALS_LIST.map(m => (
-                            <label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
-                                <input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}
-                            </label>
-                        ))}
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>
-                        {["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (
-                            <label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1">
-                                <input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}
-                            </label>
-                        ))}
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label>
-                        <div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                            {AMENITIES_LIST.map(a => (
-                                <label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]">
-                                    <input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}
-                                </label>
-                            ))}
-                        </div>
-                    </div>
+            {/* --- FILTROS DESKTOP (SIDEBAR) --- */}
+            <div className="hidden md:block w-1/4 space-y-6 h-fit sticky top-24">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <FiltersContent />
                 </div>
             </div>
 
-            {/* LISTAGEM */}
+            {/* LISTAGEM DE CARDS */}
             <div className="flex-1">
                 {filteredItems.length === 0 ? (
                     <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
                         <p className="text-slate-400">Nenhum local encontrado com esses filtros.</p>
-                        <button onClick={()=>{setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity("")}} className="text-[#0097A8] font-bold mt-2 hover:underline">Limpar Todos Filtros</button>
+                        <button onClick={clearFilters} className="text-[#0097A8] font-bold mt-2 hover:underline">Limpar Todos Filtros</button>
                     </div>
                 ) : (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -3395,6 +3547,24 @@ if (loading) return (
                                 onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
                             />
                         ))}
+                    </div>
+                )}
+                
+                {/* LISTA DE CIDADES PRÓXIMAS (NOVO) */}
+                {nearbyCities.length > 0 && (
+                    <div className="mt-16 pt-8 border-t border-slate-100">
+                        <h2 className="text-xl font-bold text-slate-900 mb-6">Confira os day uses disponíveis em cidades próximas</h2>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 gap-x-6">
+                            {nearbyCities.map(city => (
+                                <button
+                                    key={city}
+                                    onClick={() => navigate(`/${getStateSlug(stateParam)}/${generateSlug(city)}`)}
+                                    className="text-sm text-slate-600 hover:text-[#0097A8] hover:underline text-left truncate py-1 transition-colors"
+                                >
+                                    {city}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 )}
             </div>
@@ -3440,6 +3610,187 @@ const RouteResolver = () => {
     return <ListingPage stateParam={state} cityParam={cityOrSlug} />;
 };
 
+const SiteMapPage = () => {
+  const navigate = useNavigate();
+  const [allLinks, setAllLinks] = useState([]);
+  const [filteredLinks, setFilteredLinks] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeLetter, setActiveLetter] = useState("ALL");
+  const [loading, setLoading] = useState(true);
+
+  const alphabet = ["ALL", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")];
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      // Busca apenas day uses ativos para o mapa do site público
+      const q = query(collection(db, "dayuses"), where("paused", "!=", false)); 
+      const snap = await getDocs(q);
+      
+      const statesSet = new Set();
+      const citiesSet = new Set();
+      const places = [];
+
+      snap.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.state && data.slug) {
+              // 1. Locais (Day Uses)
+              places.push({
+                  name: data.name,
+                  url: `/${getStateSlug(data.state)}/${data.slug}`,
+                  type: 'local'
+              });
+
+              // 2. Estados
+              statesSet.add(data.state.toUpperCase());
+
+              // 3. Cidades
+              if (data.city) {
+                  // Usamos JSON.stringify para garantir unicidade no Set de objetos
+                  citiesSet.add(JSON.stringify({ 
+                      name: data.city, 
+                      state: data.state, 
+                      slug: generateSlug(data.city) 
+                  }));
+              }
+          }
+      });
+
+      // Formata Estados para a lista
+      const states = Array.from(statesSet).map(s => ({
+          name: STATE_NAMES[s] || s,
+          url: `/${s.toLowerCase()}`,
+          type: 'estado'
+      }));
+
+      // Formata Cidades para a lista
+      const cities = Array.from(citiesSet).map(c => {
+          const cityObj = JSON.parse(c);
+          return {
+              name: `${cityObj.name} - ${cityObj.state}`,
+              url: `/${cityObj.state.toLowerCase()}/${cityObj.slug}`,
+              type: 'cidade'
+          };
+      });
+
+      // Junta tudo e ordena alfabeticamente
+      const combined = [...states, ...cities, ...places].sort((a, b) => a.name.localeCompare(b.name));
+      setAllLinks(combined);
+      setFilteredLinks(combined);
+      setLoading(false);
+    };
+
+    fetchData();
+  }, []);
+
+  // Lógica de Filtro (Busca e Letra)
+  useEffect(() => {
+      let result = allLinks;
+
+      // Filtro por Texto
+      if (searchTerm) {
+          const lowerTerm = searchTerm.toLowerCase();
+          result = result.filter(item => item.name.toLowerCase().includes(lowerTerm));
+      }
+
+      // Filtro por Letra Inicial
+      if (activeLetter !== "ALL") {
+          result = result.filter(item => 
+              item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().startsWith(activeLetter)
+          );
+      }
+
+      setFilteredLinks(result);
+  }, [searchTerm, activeLetter, allLinks]);
+
+  // Agrupa os links filtrados por letra para exibição
+  const grouped = filteredLinks.reduce((acc, item) => {
+      const firstChar = item.name.charAt(0).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      // Garante que é uma letra, senão agrupa em '#'
+      const letter = /[A-Z]/.test(firstChar) ? firstChar : '#';
+      
+      if (!acc[letter]) acc[letter] = [];
+      acc[letter].push(item);
+      return acc;
+  }, {});
+
+  return (
+    <div className="max-w-6xl mx-auto py-12 px-4 animate-fade-in">
+        <div className="text-center mb-12">
+            <h1 className="text-4xl font-bold text-slate-900 mb-4">Mapa do Site</h1>
+            <p className="text-slate-500 max-w-2xl mx-auto text-lg">
+                Explore todos os destinos, cidades e day uses disponíveis em nossa plataforma de forma organizada.
+            </p>
+        </div>
+
+        {/* Barra de Busca */}
+        <div className="relative max-w-xl mx-auto mb-10">
+            <Search className="absolute left-5 top-4 text-slate-400" size={20}/>
+            <input 
+                className="w-full border border-slate-200 p-4 pl-14 rounded-full shadow-sm focus:ring-2 focus:ring-[#0097A8] outline-none text-slate-700 transition-all"
+                placeholder="Busque por cidade, estado ou nome do local..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+            />
+        </div>
+
+        {/* Navegador A-Z */}
+        <div className="flex flex-wrap justify-center gap-2 mb-12">
+            {alphabet.map(letter => (
+                <button 
+                    key={letter}
+                    onClick={() => setActiveLetter(letter)}
+                    className={`text-xs font-bold w-9 h-9 rounded-full transition-all border ${
+                        activeLetter === letter 
+                            ? 'bg-[#0097A8] text-white border-[#0097A8] shadow-md scale-110' 
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-[#0097A8] hover:text-[#0097A8]'
+                    }`}
+                >
+                    {letter}
+                </button>
+            ))}
+        </div>
+
+        {loading ? (
+            <div className="text-center py-32">
+                <div className="animate-spin w-12 h-12 border-4 border-[#0097A8] border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p className="text-slate-400">Carregando índice...</p>
+            </div>
+        ) : (
+            <div className="space-y-12">
+                {Object.keys(grouped).sort().map(letter => (
+                    <div key={letter} className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+                        <h2 className="text-3xl font-bold text-[#0097A8] mb-6 border-b border-slate-100 pb-4">{letter}</h2>
+                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-3">
+                            {grouped[letter].map((link, i) => (
+                                <button 
+                                    key={i}
+                                    onClick={() => navigate(link.url)}
+                                    className="text-sm text-slate-600 hover:text-[#0097A8] hover:translate-x-1 transition-all text-left w-full truncate flex items-center group py-1"
+                                >
+                                    <span className="truncate flex-1">{link.name}</span>
+                                    
+                                    {/* Badges de Tipo */}
+                                    {link.type === 'estado' && <span className="ml-2 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider group-hover:bg-blue-100">Estado</span>}
+                                    {link.type === 'cidade' && <span className="ml-2 text-[10px] bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-bold border border-orange-100 uppercase tracking-wider group-hover:bg-orange-100">Cidade</span>}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+
+                {filteredLinks.length === 0 && (
+                    <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                        <p className="text-slate-400 text-lg">Nenhum resultado encontrado para "{searchTerm}".</p>
+                        <button onClick={()=>{setSearchTerm(""); setActiveLetter("ALL")}} className="text-[#0097A8] font-bold mt-4 hover:underline">Limpar Filtros</button>
+                    </div>
+                )}
+            </div>
+        )}
+    </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -3465,6 +3816,8 @@ const App = () => {
         <Route path="/portaria" element={<Layout><StaffDashboard /></Layout>} />
         <Route path="/politica-de-privacidade" element={<Layout><PrivacyPage /></Layout>} />
         <Route path="/termos-de-uso" element={<Layout><TermsPage /></Layout>} />
+        <Route path="/mapa-do-site" element={<Layout><SiteMapPage /></Layout>} />
+
       </Routes>
   );
 };
