@@ -5,7 +5,24 @@ import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification, getAuth,updateProfile, updateEmail, updatePassword } from 'firebase/auth';
+import { 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged, 
+  sendPasswordResetEmail, 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  sendEmailVerification, 
+  getAuth,
+  updateProfile, 
+  updateEmail, 
+  updatePassword,
+  applyActionCode, 
+  verifyPasswordResetCode, 
+  confirmPasswordReset 
+} from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award,} from 'lucide-react';
@@ -3151,8 +3168,65 @@ const TermsPage = () => (
 );
 
 // --- ESTRUTURA PRINCIPAL ---// ...
-// COMPONENTE: GERENCIADOR DE AÇÕES DE AUTH (Link de E-mail)
-const AuthActionHandler = ({ onVerificationSuccess }) => {
+const ResetPasswordModal = ({ isOpen, onClose, actionCode, email }) => {
+  const [newPassword, setNewPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await confirmPasswordReset(auth, actionCode, newPassword);
+      setSuccess(true);
+    } catch (error) {
+      alert("Erro ao redefinir senha. O link pode ter expirado. Tente solicitar novamente.");
+      console.error(error);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-sm w-full animate-fade-in">
+        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Lock size={32}/>
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">
+            {success ? "Senha Alterada!" : "Nova Senha"}
+        </h2>
+        
+        {success ? (
+            <div className="space-y-4">
+                <p className="text-slate-600 text-sm">Sua senha foi atualizada com sucesso. Você já pode fazer login.</p>
+                <Button onClick={onClose} className="w-full justify-center">Ir para Login</Button>
+            </div>
+        ) : (
+            <form onSubmit={handleReset} className="space-y-4">
+                <p className="text-slate-600 text-sm">Defina uma nova senha para <strong>{email}</strong>.</p>
+                <input 
+                    type="password" 
+                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-[#0097A8]" 
+                    placeholder="Nova senha" 
+                    value={newPassword} 
+                    onChange={e=>setNewPassword(e.target.value)} 
+                    required 
+                    minLength={6}
+                />
+                <Button type="submit" className="w-full justify-center" disabled={loading}>
+                    {loading ? 'Salvando...' : 'Salvar Nova Senha'}
+                </Button>
+            </form>
+        )}
+      </div>
+    </ModalOverlay>
+  );
+};
+
+// COMPONENTE: GERENCIADOR DE AÇÕES DE AUTH (Link de E-mail) - ATUALIZADO
+const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest }) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const mode = searchParams.get('mode'); 
@@ -3161,19 +3235,37 @@ const AuthActionHandler = ({ onVerificationSuccess }) => {
   useEffect(() => {
     const handleAction = async () => {
       if (!mode || !actionCode) return;
+      
+      // Evita execução duplicada em re-renders (opcional, mas boa prática)
+      // Aqui vamos confiar no useEffect rodando ao montar
+
       try {
+        // 1. CONFIRMAÇÃO DE E-MAIL
         if (mode === 'verifyEmail') {
-          // O Firebase aplica o código e confirma o e-mail
-          await auth.applyActionCode(actionCode);
+          await applyActionCode(auth, actionCode);
+          
+          // Força atualização do usuário local para refletir a mudança
+          if (auth.currentUser) {
+              await auth.currentUser.reload();
+          }
+          
           onVerificationSuccess(); 
           navigate('/'); 
         } 
+        // 2. REDEFINIÇÃO DE SENHA
+        else if (mode === 'resetPassword') {
+            // Verifica se o código é válido e pega o e-mail
+            const email = await verifyPasswordResetCode(auth, actionCode);
+            onResetPasswordRequest(actionCode, email);
+        }
       } catch (error) {
         console.error("Erro na ação de auth:", error);
+        alert("O link é inválido ou já foi utilizado.");
+        navigate('/');
       }
     };
     handleAction();
-  }, [mode, actionCode, navigate, onVerificationSuccess]);
+  }, [mode, actionCode, navigate, onVerificationSuccess, onResetPasswordRequest]);
 
   return null;
 };
@@ -3185,6 +3277,10 @@ const Layout = ({ children }) => {
   const [logoError, setLogoError] = useState(false); 
   const [verificationStatus, setVerificationStatus] = useState('none'); // 'none', 'pending', 'success'
   
+  // Estados para Reset de Senha
+  const [resetCode, setResetCode] = useState(null);
+  const [resetEmail, setResetEmail] = useState('');
+
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -3202,7 +3298,6 @@ const Layout = ({ children }) => {
           unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
              if (docSnap.exists()) {
                  const userData = docSnap.data();
-                 // Mescla dados do Auth (u) com dados do Firestore (userData)
                  const currentUser = { 
                      ...u, 
                      role: userData.role || 'user',
@@ -3211,6 +3306,7 @@ const Layout = ({ children }) => {
                  setUser(currentUser);
 
                  // Verifica status do e-mail para a barra de aviso
+                 // Usa u.emailVerified que vem do Auth, mas precisa do reload() para atualizar na sessão atual
                  if (u.emailVerified) {
                      if (verificationStatus === 'pending') setVerificationStatus('success');
                  } else {
@@ -3257,6 +3353,17 @@ const Layout = ({ children }) => {
      else navigate('/minhas-viagens');
   };
 
+  // Callback quando o AuthActionHandler confirma o e-mail
+  const handleVerificationSuccess = async () => {
+      // Força reload do usuário no state para atualizar a barra imediatamente
+      if (auth.currentUser) {
+          await auth.currentUser.reload();
+          // O listener onAuthStateChanged vai pegar a mudança, mas podemos forçar visualmente
+          setVerificationStatus('success');
+          setTimeout(() => setVerificationStatus('none'), 5000);
+      }
+  };
+
   // Efeito do Favicon
   useEffect(() => {
     const link = document.querySelector("link[rel~='icon']");
@@ -3270,11 +3377,26 @@ const Layout = ({ children }) => {
       <GlobalStyles />
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       
+      {/* MODAL DE REDEFINIÇÃO DE SENHA (NOVO) */}
+      <ResetPasswordModal 
+        isOpen={!!resetCode}
+        actionCode={resetCode}
+        email={resetEmail}
+        onClose={() => {
+            setResetCode(null);
+            navigate('/'); // Limpa URL
+            setShowLogin(true); // Abre login após redefinir
+        }}
+      />
+      
       {/* HANDLER DE URL (Captura retorno do e-mail) */}
-      <AuthActionHandler onVerificationSuccess={() => {
-          setVerificationStatus('success');
-          setTimeout(() => setVerificationStatus('none'), 5000);
-      }} />
+      <AuthActionHandler 
+        onVerificationSuccess={handleVerificationSuccess}
+        onResetPasswordRequest={(code, email) => {
+            setResetCode(code);
+            setResetEmail(email);
+        }}
+      />
 
       {/* BARRA DE NOTIFICAÇÃO (E-mail não verificado) */}
       {verificationStatus === 'pending' && user && !user.emailVerified && (
