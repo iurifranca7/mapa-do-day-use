@@ -1,58 +1,62 @@
 import { MailtrapClient } from "mailtrap";
 import * as admin from 'firebase-admin';
 
-// Variável para capturar o erro exato da inicialização
-let initError = null;
+// Função auxiliar para inicializar o Firebase de forma segura
+// Retorna true se sucesso, ou lança erro
+function initFirebaseAdmin() {
+  if (admin.apps.length > 0) return; // Já inicializado
 
-// --- INICIALIZAÇÃO BLINDADA DO FIREBASE ADMIN ---
-if (!admin.apps.length) {
-  try {
-    // 1. Tenta via BASE64 (A PROVA DE FALHAS DE FORMATAÇÃO)
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+  // 1. Tenta via BASE64 (Prioridade)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+      try {
         const buffer = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64');
         const serviceAccount = JSON.parse(buffer.toString('utf-8'));
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
         });
-        console.log("✅ Firebase Admin (Email) iniciado via Base64.");
-    } 
-    // 2. Tenta via Variável JSON (Legado)
-    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        console.log("✅ Firebase Admin iniciado via Base64.");
+        return;
+      } catch (e) {
+        throw new Error(`Falha ao ler FIREBASE_SERVICE_ACCOUNT_BASE64: ${e.message}`);
+      }
+  } 
+  
+  // 2. Tenta via Variável JSON
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      try {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
         });
-        console.log("✅ Firebase Admin (Email) iniciado via JSON.");
-    } 
-    // 3. Fallback para variáveis individuais (Legado)
-    else {
-        const projectId = process.env.FIREBASE_PROJECT_ID;
-        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-        const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
+        console.log("✅ Firebase Admin iniciado via JSON.");
+        return;
+      } catch (e) {
+        throw new Error(`Falha ao ler FIREBASE_SERVICE_ACCOUNT: ${e.message}`);
+      }
+  } 
+  
+  // 3. Fallback para variáveis individuais
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-        if (projectId && clientEmail && privateKeyRaw) {
-            let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
-            if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-                privateKey = privateKey.slice(1, -1);
-            }
-
-            admin.initializeApp({
-                credential: admin.credential.cert({
-                    projectId,
-                    clientEmail,
-                    privateKey,
-                }),
-            });
-            console.log("✅ Firebase Admin (Email) iniciado via Chaves.");
-        } else {
-            initError = "Variáveis de ambiente (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY) estão faltando ou vazias.";
-            console.error("❌ " + initError);
-        }
-    }
-  } catch (e) { 
-      console.error("❌ Erro fatal ao iniciar Firebase Admin (Email):", e.message); 
-      initError = e.message; // Captura a mensagem real do erro
+  if (projectId && clientEmail && privateKeyRaw) {
+      let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+      if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+          privateKey = privateKey.slice(1, -1);
+      }
+      admin.initializeApp({
+          credential: admin.credential.cert({
+              projectId,
+              clientEmail,
+              privateKey,
+          }),
+      });
+      console.log("✅ Firebase Admin iniciado via Chaves Individuais.");
+      return;
   }
+
+  throw new Error("Nenhuma credencial do Firebase encontrada nas Variáveis de Ambiente.");
 }
 
 const TOKEN = process.env.MAILTRAP_TOKEN;
@@ -68,22 +72,20 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Verificações de segurança antes de prosseguir
-  if (!admin.apps.length) {
-      return res.status(500).json({ 
-          error: 'Erro Crítico de Configuração', 
-          message: 'O Firebase Admin não conseguiu inicializar.',
-          details: initError || 'Verifique os logs do servidor.'
-      });
-  }
-  if (!TOKEN) {
-      return res.status(500).json({ error: 'Erro de Configuração: MAILTRAP_TOKEN ausente.' });
-  }
-
-  const { email, type, name, newEmail } = req.body;
-  const targetEmail = newEmail || email;
-
   try {
+    // 1. Inicializa Firebase (Pode lançar erro se config estiver errada)
+    initFirebaseAdmin();
+
+    // 2. Verifica Mailtrap
+    if (!TOKEN) {
+        throw new Error("MAILTRAP_TOKEN não configurado na Vercel.");
+    }
+
+    const { email, type, name, newEmail } = req.body;
+    const targetEmail = newEmail || email;
+
+    if (!targetEmail) throw new Error("E-mail não fornecido.");
+
     const auth = admin.auth();
     let link = '';
     let subject = '';
@@ -94,7 +96,7 @@ export default async function handler(req, res) {
         handleCodeInApp: true,
     };
 
-    console.log(`Gerando link do tipo ${type} para ${targetEmail}...`);
+    console.log(`Gerando link (${type}) para ${targetEmail}...`);
 
     if (type === 'reset_password') {
         link = await auth.generatePasswordResetLink(targetEmail, actionCodeSettings);
@@ -124,9 +126,10 @@ export default async function handler(req, res) {
             </div>
         `;
     } else {
-        return res.status(400).json({ error: "Tipo inválido" });
+        throw new Error("Tipo de ação inválido.");
     }
 
+    // 3. Envio Mailtrap
     const client = new MailtrapClient({ token: TOKEN });
     
     await client.send({
@@ -141,7 +144,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
 
   } catch (error) {
-    console.error("❌ Erro Auth Email:", error);
-    return res.status(500).json({ error: error.message });
+    console.error("❌ Erro na API de E-mail:", error);
+    // Retorna o erro detalhado para facilitar o debug no frontend
+    return res.status(500).json({ 
+        error: 'Erro no processamento', 
+        message: error.message,
+        code: error.code || 'unknown'
+    });
   }
 }
