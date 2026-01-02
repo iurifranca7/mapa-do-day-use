@@ -8,22 +8,7 @@ if (!admin.apps.length) {
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-    if (projectId && clientEmail && privateKeyRaw) {
-        // Tratamento robusto para a chave privada (remove aspas extras e corrige quebras de linha)
-        let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
-        if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-            privateKey = privateKey.slice(1, -1);
-        }
-
-        admin.initializeApp({
-            credential: admin.credential.cert({
-                projectId,
-                clientEmail,
-                privateKey,
-            }),
-        });
-        console.log("✅ Firebase Admin (Email) iniciado com sucesso.");
-    } else {
+    {
         console.error("❌ Credenciais do Firebase incompletas (send-auth-link). Verifique PROJECT_ID, CLIENT_EMAIL e PRIVATE_KEY.");
     }
   } catch (e) { 
