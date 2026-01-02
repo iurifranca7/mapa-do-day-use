@@ -21,7 +21,8 @@ import {
   updatePassword,
   applyActionCode, 
   verifyPasswordResetCode, 
-  confirmPasswordReset 
+  confirmPasswordReset,
+  verifyBeforeUpdateEmail
 } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -658,9 +659,12 @@ const UserProfile = () => {
   const [user, setUser] = useState(auth.currentUser);
   const [data, setData] = useState({ name: '', phone: '', photoURL: '' });
   const [loading, setLoading] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
   
-  const isStaff = user?.role === 'staff'; // Verifica se é staff
+  // Novos States
+  const [newEmail, setNewEmail] = useState('');
+  const [newPass, setNewPass] = useState('');
+
+  const isStaff = user?.role === 'staff';
 
   useEffect(() => {
     const fetch = async () => {
@@ -678,6 +682,11 @@ const UserProfile = () => {
     };
     fetch();
   }, [user]);
+
+  const actionCodeSettings = {
+    url: 'https://mapadodayuse.com/profile',
+    handleCodeInApp: true,
+  };
 
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
@@ -699,29 +708,47 @@ const UserProfile = () => {
             photoURL: data.photoURL
         });
 
-        // Troca de e-mail apenas se não for Staff
+        // CORREÇÃO: Troca de e-mail segura
         if (!isStaff && newEmail && newEmail !== user.email) {
-            await updateEmail(user, newEmail);
-            await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
-            alert("E-mail atualizado! Verifique sua nova caixa de entrada.");
+            await verifyBeforeUpdateEmail(user, newEmail, actionCodeSettings);
+            alert(`Um e-mail de verificação foi enviado para ${newEmail}. Clique no link desse e-mail para confirmar a alteração.`);
+        }
+
+        if (newPass) {
+            await updatePassword(user, newPass);
+            alert("Senha alterada com sucesso!");
         }
 
         alert("Perfil salvo com sucesso!");
-        setNewEmail('');
+        setNewPass(''); setNewEmail('');
+        
     } catch (err) {
         console.error(err);
-        if (err.code === 'auth/requires-recent-login') alert("Faça logout e login novamente para alterar dados sensíveis.");
-        else alert("Erro ao atualizar: " + err.message);
+        if (err.code === 'auth/requires-recent-login') {
+            alert("Para alterar e-mail ou senha, por favor faça logout e login novamente.");
+        } else if (err.code === 'auth/operation-not-allowed') {
+            alert("Operação não permitida. Verifique se o novo e-mail é válido.");
+        } else {
+            alert("Erro ao atualizar: " + err.message);
+        }
     } finally { setLoading(false); }
   };
 
   const resendVerify = async () => {
       try {
-        await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
-        alert(`Link enviado para ${user.email}!`);
-      } catch(e) { alert("Erro ao enviar. Tente mais tarde."); }
+        await sendEmailVerification(user, actionCodeSettings);
+        alert("Link enviado! Verifique sua caixa de entrada e Spam.");
+      } catch(e) {
+          console.error(e);
+          if (e.code === 'auth/too-many-requests') alert("Muitas tentativas. Aguarde.");
+          else alert("Erro ao enviar.");
+      }
   };
 
+  const handleRequestAdmin = () => {
+      alert("Solicitação enviada ao administrador.");
+  };
+  
   const sendPasswordReset = async () => {
       if (confirm(`Enviar link de redefinição de senha para ${user.email}?`)) {
           try {
@@ -729,13 +756,6 @@ const UserProfile = () => {
               alert("E-mail de redefinição enviado!");
           } catch(e) { alert("Erro ao enviar."); }
       }
-  };
-
-  // Staff solicitando alteração ao dono
-  const handleRequestAdmin = async () => {
-      // Aqui você poderia criar uma coleção 'requests' no firebase, mas por hora vamos simular/alertar
-      // Em uma implementação completa, isso criaria um documento que apareceria no painel do parceiro.
-      alert("Solicitação enviada ao administrador do estabelecimento. Aguarde o contato.");
   };
 
   if(!user) return null;
@@ -748,10 +768,17 @@ const UserProfile = () => {
          
          <div className="flex flex-col items-center gap-4 mb-6">
              <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
-                 {data.photoURL ? <img src={data.photoURL} className="w-full h-full object-cover" /> : <User size={40} className="text-slate-400"/>}
-                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">Alterar<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label>
+                 {data.photoURL ? (
+                     <img src={data.photoURL} className="w-full h-full object-cover" />
+                 ) : (
+                     <User size={40} className="text-slate-400"/>
+                 )}
+                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">
+                     Alterar
+                     <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                 </label>
              </div>
-             <p className="text-xs text-slate-400">Clique na foto para alterar.</p>
+             <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
          </div>
 
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label><input className="w-full border p-3 rounded-lg" value={data.name} onChange={e=>setData({...data, name: e.target.value})} /></div>
@@ -774,10 +801,9 @@ const UserProfile = () => {
                      </>
                  )}
 
-                 {/* Status de Verificação */}
                  {!user.emailVerified ? (
                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500 font-bold">
-                         <AlertCircle size={12}/> Não verificado. 
+                         <AlertCircle size={12}/> E-mail não verificado. 
                          <span onClick={resendVerify} className="underline cursor-pointer text-[#0097A8]">Reenviar link</span>
                      </div>
                  ) : (
@@ -3225,90 +3251,102 @@ const ResetPasswordModal = ({ isOpen, onClose, actionCode, email }) => {
   );
 };
 
+// COMPONENTE: MODAL DE FEEDBACK (Reutilizável para Sucesso/Erro Global)
+const FeedbackModal = ({ isOpen, onClose, type, title, msg }) => {
+  if (!isOpen) return null;
+  return (
+    <ModalOverlay onClose={onClose}>
+        <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                type === 'success' ? 'bg-green-100 text-green-600' : 
+                type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'
+            }`}>
+                {type === 'success' ? <CheckCircle size={40}/> : type === 'warning' ? <AlertCircle size={40}/> : <X size={40}/>}
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">{title}</h2>
+            <p className="text-slate-600 mb-6">{msg}</p>
+            <Button onClick={onClose} className="w-full justify-center" variant={type === 'error' ? 'danger' : 'primary'}>
+                Fechar
+            </Button>
+        </div>
+    </ModalOverlay>
+  );
+};
+
 // COMPONENTE: GERENCIADOR DE AÇÕES DE AUTH (Link de E-mail) - ATUALIZADO
-const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest }) => {
+const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setGlobalFeedback }) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const mode = searchParams.get('mode'); 
   const actionCode = searchParams.get('oobCode');
+  
+  const effectRan = useRef(false);
 
   useEffect(() => {
-    const handleAction = async () => {
-      if (!mode || !actionCode) return;
-      
-      // Evita execução duplicada em re-renders (opcional, mas boa prática)
-      // Aqui vamos confiar no useEffect rodando ao montar
+    if (!mode || !actionCode || effectRan.current) return;
+    effectRan.current = true; 
 
+    const handleAction = async () => {
       try {
-        // 1. CONFIRMAÇÃO DE E-MAIL
         if (mode === 'verifyEmail') {
           await applyActionCode(auth, actionCode);
-          
-          // Força atualização do usuário local para refletir a mudança
-          if (auth.currentUser) {
-              await auth.currentUser.reload();
-          }
-          
+          if (auth.currentUser) await auth.currentUser.reload();
           onVerificationSuccess(); 
           navigate('/'); 
         } 
-        // 2. REDEFINIÇÃO DE SENHA
         else if (mode === 'resetPassword') {
-            // Verifica se o código é válido e pega o e-mail
             const email = await verifyPasswordResetCode(auth, actionCode);
             onResetPasswordRequest(actionCode, email);
         }
       } catch (error) {
-        console.error("Erro na ação de auth:", error);
-        alert("O link é inválido ou já foi utilizado.");
+        console.error("Erro Auth:", error);
+        // Usa o novo modal se a função estiver disponível
+        if (setGlobalFeedback) {
+            setGlobalFeedback({
+                type: 'error',
+                title: 'Link Inválido',
+                msg: 'Este link de verificação já foi utilizado ou expirou. Por favor, solicite um novo.'
+            });
+        }
         navigate('/');
       }
     };
     handleAction();
-  }, [mode, actionCode, navigate, onVerificationSuccess, onResetPasswordRequest]);
+  }, [mode, actionCode, navigate, onVerificationSuccess, onResetPasswordRequest, setGlobalFeedback]);
 
   return null;
 };
 
-// --- ESTRUTURA PRINCIPAL (LAYOUT) ---
+// ... (Layout e restante do arquivo)
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
   const [logoError, setLogoError] = useState(false); 
-  const [verificationStatus, setVerificationStatus] = useState('none'); // 'none', 'pending', 'success'
+  const [verificationStatus, setVerificationStatus] = useState('none'); 
   
-  // Estados para Reset de Senha
   const [resetCode, setResetCode] = useState(null);
   const [resetEmail, setResetEmail] = useState('');
+  
+  // Estado global para o novo FeedbackModal
+  const [globalFeedback, setGlobalFeedback] = useState(null);
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
 
-  // Listener em Tempo Real (Auth + Firestore)
   useEffect(() => {
     let unsubscribeDoc = () => {};
-
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
        if(u) {
-          // Conecta ao documento do usuário para pegar foto e role em tempo real
           unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
              if (docSnap.exists()) {
                  const userData = docSnap.data();
-                 const currentUser = { 
-                     ...u, 
-                     role: userData.role || 'user',
-                     photoURL: userData.photoURL || u.photoURL
-                 };
+                 const currentUser = { ...u, role: userData.role || 'user', photoURL: userData.photoURL || u.photoURL };
                  setUser(currentUser);
-
-                 // Verifica status do e-mail para a barra de aviso
-                 // Usa u.emailVerified que vem do Auth, mas precisa do reload() para atualizar na sessão atual
+                 
                  if (u.emailVerified) {
-                     if (verificationStatus === 'pending') setVerificationStatus('success');
+                     if (verificationStatus !== 'success') setVerificationStatus('success');
                  } else {
                      setVerificationStatus('pending');
                  }
@@ -3322,29 +3360,20 @@ const Layout = ({ children }) => {
           if(unsubscribeDoc) unsubscribeDoc();
        }
     });
-
-    return () => {
-       unsubscribeAuth();
-       if(unsubscribeDoc) unsubscribeDoc();
-    };
+    return () => { unsubscribeAuth(); if(unsubscribeDoc) unsubscribeDoc(); };
   }, []);
 
-  // Helper: Reenviar E-mail (Nativo Firebase)
   const handleResend = async () => {
       if(!user) return;
       try {
           await sendEmailVerification(user, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
-          alert(`E-mail enviado para ${user.email}. Verifique a caixa de entrada e Spam.`);
+          setGlobalFeedback({ type: 'success', title: 'E-mail Enviado', msg: `Link enviado para ${user.email}. Verifique caixa de entrada e spam.` });
       } catch(e) { 
-          console.error(e);
-          alert("Erro ao enviar. Tente novamente em alguns minutos."); 
+          setGlobalFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível enviar o e-mail. Tente novamente em alguns minutos.' });
       }
   };
 
-  const handleLogout = async () => {
-     await signOut(auth);
-     navigate('/');
-  };
+  const handleLogout = async () => { await signOut(auth); navigate('/'); };
 
   const handleLoginSuccess = (userWithRole) => {
      setShowLogin(false);
@@ -3353,23 +3382,19 @@ const Layout = ({ children }) => {
      else navigate('/minhas-viagens');
   };
 
-  // Callback quando o AuthActionHandler confirma o e-mail
   const handleVerificationSuccess = async () => {
-      // Força reload do usuário no state para atualizar a barra imediatamente
       if (auth.currentUser) {
           await auth.currentUser.reload();
-          // O listener onAuthStateChanged vai pegar a mudança, mas podemos forçar visualmente
           setVerificationStatus('success');
-          setTimeout(() => setVerificationStatus('none'), 5000);
+          setTimeout(() => {
+             setVerificationStatus(current => current === 'success' ? 'none' : current);
+          }, 8000);
       }
   };
 
-  // Efeito do Favicon
   useEffect(() => {
     const link = document.querySelector("link[rel~='icon']");
-    if (link) {
-        link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
-    }
+    if (link) link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
   }, []);
 
   return (
@@ -3377,35 +3402,35 @@ const Layout = ({ children }) => {
       <GlobalStyles />
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       
-      {/* MODAL DE REDEFINIÇÃO DE SENHA (NOVO) */}
       <ResetPasswordModal 
         isOpen={!!resetCode}
         actionCode={resetCode}
         email={resetEmail}
-        onClose={() => {
-            setResetCode(null);
-            navigate('/'); // Limpa URL
-            setShowLogin(true); // Abre login após redefinir
-        }}
+        onClose={() => { setResetCode(null); navigate('/'); setShowLogin(true); }}
       />
       
-      {/* HANDLER DE URL (Captura retorno do e-mail) */}
       <AuthActionHandler 
         onVerificationSuccess={handleVerificationSuccess}
-        onResetPasswordRequest={(code, email) => {
-            setResetCode(code);
-            setResetEmail(email);
-        }}
+        onResetPasswordRequest={(code, email) => { setResetCode(code); setResetEmail(email); }}
+        setGlobalFeedback={setGlobalFeedback}
       />
 
-      {/* BARRA DE NOTIFICAÇÃO (E-mail não verificado) */}
+      {/* MODAL GLOBAL DE FEEDBACK */}
+      <FeedbackModal 
+         isOpen={!!globalFeedback} 
+         onClose={() => setGlobalFeedback(null)}
+         type={globalFeedback?.type}
+         title={globalFeedback?.title}
+         msg={globalFeedback?.msg}
+      />
+
+      {/* BARRA DE NOTIFICAÇÃO */}
       {verificationStatus === 'pending' && user && !user.emailVerified && (
           <div className="bg-yellow-50 text-yellow-800 text-xs font-bold text-center py-2 px-4 flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 relative z-50 border-b border-yellow-100">
-              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado. Para sua segurança, confirme-o.</span>
+              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado.</span>
               <button onClick={handleResend} className="underline hover:text-yellow-900">Reenviar link</button>
           </div>
       )}
-      {/* BARRA DE SUCESSO (Após clicar no link) */}
       {verificationStatus === 'success' && (
           <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2">
               <CheckCircle size={14}/> E-mail confirmado com sucesso!
@@ -3414,7 +3439,6 @@ const Layout = ({ children }) => {
 
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
-           {/* LOGO */}
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
@@ -3436,14 +3460,11 @@ const Layout = ({ children }) => {
                  </>
               ) : (
                  <div className="flex gap-2 md:gap-4 items-center">
-                    {/* Botões de Navegação */}
                     {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
                     {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
                     {user.role !== 'partner' && user.role !== 'staff' && (
                         <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>
                     )}
-
-                    {/* FOTO DO USUÁRIO NO HEADER */}
                     <div 
                         className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform cursor-pointer overflow-hidden" 
                         title={user.email}
@@ -3455,7 +3476,6 @@ const Layout = ({ children }) => {
                             user.email ? user.email[0].toUpperCase() : <User size={20}/>
                         )}
                     </div>
-                    
                     <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Sair"><LogOut size={20}/></button>
                  </div>
               )}
@@ -3471,36 +3491,13 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (<img src="/logo.svg?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para você descobrir e reservar experiências incríveis.</p>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.</p>
                   <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm"><Mail size={16} /> contato@mapadodayuse.com</a>
                </div>
-               
-               <div>
-                  <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
-                  <ul className="space-y-3 text-sm text-slate-500">
-                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
-                     <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
-                     <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
-                     <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
-                  </ul>
-               </div>
-
-               <div>
-                   <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
-                   <ul className="space-y-3 text-sm text-slate-500 mb-6">
-                      <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
-                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
-                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
-                   </ul>
-                   <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
-                       Seja um Parceiro
-                   </button>
-               </div>
+               <div><h4 className="font-bold text-slate-900 mb-4">Institucional</h4><ul className="space-y-3 text-sm text-slate-500"><li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li><li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li><li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li><li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li></ul></div>
+               <div><h4 className="font-bold text-slate-900 mb-4">Explore</h4><ul className="space-y-3 text-sm text-slate-500 mb-6"><li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li><li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li><li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li></ul><button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">Seja um Parceiro</button></div>
             </div>
-            <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
-               <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
-               <p className="flex items-center gap-1">Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" className="font-bold text-slate-600 hover:text-[#0097A8]">Iuri França</a></p>
-            </div>
+            <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400"><p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p><p className="flex items-center gap-1">Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" className="font-bold text-slate-600 hover:text-[#0097A8]">Iuri França</a></p></div>
          </div>
       </footer>
       <CookieConsent />
