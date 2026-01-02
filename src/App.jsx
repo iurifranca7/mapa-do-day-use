@@ -182,6 +182,21 @@ const ModalOverlay = ({ children, onClose }) => (
   </div>
 );
 
+// COMPONENTE DE LOADING (SKELETON)
+const SkeletonCard = () => (
+  <div className="bg-white rounded-3xl overflow-hidden border border-slate-100 h-full">
+    <div className="h-64 bg-slate-200 animate-pulse" />
+    <div className="p-6 space-y-4">
+      <div className="h-6 bg-slate-200 rounded animate-pulse w-3/4" />
+      <div className="h-4 bg-slate-200 rounded animate-pulse w-1/2" />
+      <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
+         <div className="h-8 bg-slate-200 rounded animate-pulse w-1/3" />
+         <div className="h-10 bg-slate-200 rounded-xl animate-pulse w-1/3" />
+      </div>
+    </div>
+  </div>
+);
+
 const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }) => {
   if (!isOpen) return null;
   return (
@@ -626,10 +641,9 @@ const UserProfile = () => {
   const [user, setUser] = useState(auth.currentUser);
   const [data, setData] = useState({ name: '', phone: '', photoURL: '' });
   const [loading, setLoading] = useState(false);
-  
-  // Novos States para Gestão de Segurança
   const [newEmail, setNewEmail] = useState('');
-  const [newPass, setNewPass] = useState('');
+  
+  const isStaff = user?.role === 'staff'; // Verifica se é staff
 
   useEffect(() => {
     const fetch = async () => {
@@ -648,13 +662,6 @@ const UserProfile = () => {
     fetch();
   }, [user]);
 
-  // Configuração para redirecionamento após clicar no e-mail
-  const actionCodeSettings = {
-    url: 'https://mapadodayuse.com/profile',
-    handleCodeInApp: true,
-  };
-
-  // Upload de Foto/Logo (Base64)
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -668,108 +675,109 @@ const UserProfile = () => {
   const handleSave = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-        // 1. Atualiza Perfil no Auth (Nome apenas, Foto Base64 quebra no Auth)
         await updateProfile(user, { displayName: data.name });
-
-        // 2. Salva no Firestore (Incluindo a Foto Base64)
         await updateDoc(doc(db, "users", user.uid), { 
             name: data.name, 
             phone: data.phone,
             photoURL: data.photoURL
         });
 
-        // 3. Atualiza E-mail (Requer login recente)
-        if (newEmail && newEmail !== user.email) {
+        // Troca de e-mail apenas se não for Staff
+        if (!isStaff && newEmail && newEmail !== user.email) {
             await updateEmail(user, newEmail);
-            await sendEmailVerification(user, actionCodeSettings);
-            alert("E-mail atualizado! Um link de confirmação foi enviado para o novo endereço.");
-        }
-
-        // 4. Atualiza Senha (Requer login recente)
-        if (newPass) {
-            await updatePassword(user, newPass);
-            alert("Senha alterada com sucesso!");
+            await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
+            alert("E-mail atualizado! Verifique sua nova caixa de entrada.");
         }
 
         alert("Perfil salvo com sucesso!");
-        setNewPass(''); setNewEmail('');
-        
+        setNewEmail('');
     } catch (err) {
         console.error(err);
-        if (err.code === 'auth/requires-recent-login') {
-            alert("Para mudar e-mail ou senha, por segurança, faça logout e login novamente.");
-        } else {
-            alert("Erro ao atualizar: " + err.message);
-        }
+        if (err.code === 'auth/requires-recent-login') alert("Faça logout e login novamente para alterar dados sensíveis.");
+        else alert("Erro ao atualizar: " + err.message);
     } finally { setLoading(false); }
   };
 
-  // Helper de E-mail
   const resendVerify = async () => {
       try {
-        await sendEmailVerification(user, actionCodeSettings);
-        alert("Link enviado! Verifique sua caixa de entrada e Spam.");
-      } catch(e) {
-          console.error(e);
-          if (e.code === 'auth/too-many-requests') alert("Muitas tentativas. Aguarde um pouco.");
-          else alert("Erro ao enviar.");
+        await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
+        alert(`Link enviado para ${user.email}!`);
+      } catch(e) { alert("Erro ao enviar. Tente mais tarde."); }
+  };
+
+  const sendPasswordReset = async () => {
+      if (confirm(`Enviar link de redefinição de senha para ${user.email}?`)) {
+          try {
+              await sendPasswordResetEmail(auth, user.email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
+              alert("E-mail de redefinição enviado!");
+          } catch(e) { alert("Erro ao enviar."); }
       }
+  };
+
+  // Staff solicitando alteração ao dono
+  const handleRequestAdmin = async () => {
+      // Aqui você poderia criar uma coleção 'requests' no firebase, mas por hora vamos simular/alertar
+      // Em uma implementação completa, isso criaria um documento que apareceria no painel do parceiro.
+      alert("Solicitação enviada ao administrador do estabelecimento. Aguarde o contato.");
   };
 
   if(!user) return null;
 
   return (
     <div className="max-w-xl mx-auto py-12 px-4 animate-fade-in">
-      <h1 className="text-3xl font-bold mb-8 text-slate-900">Meu Perfil</h1>
+      <h1 className="text-3xl font-bold mb-8 text-slate-900">Meu Perfil {isStaff && <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle">EQUIPE</span>}</h1>
       
       <form onSubmit={handleSave} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
          
-         {/* FOTO / LOGO */}
          <div className="flex flex-col items-center gap-4 mb-6">
              <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
-                 {data.photoURL ? (
-                     <img src={data.photoURL} className="w-full h-full object-cover" />
-                 ) : (
-                     <User size={40} className="text-slate-400"/>
-                 )}
-                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">
-                     Alterar
-                     <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-                 </label>
+                 {data.photoURL ? <img src={data.photoURL} className="w-full h-full object-cover" /> : <User size={40} className="text-slate-400"/>}
+                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">Alterar<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label>
              </div>
-             <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
+             <p className="text-xs text-slate-400">Clique na foto para alterar.</p>
          </div>
 
-         {/* DADOS BÁSICOS */}
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label><input className="w-full border p-3 rounded-lg" value={data.name} onChange={e=>setData({...data, name: e.target.value})} /></div>
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Telefone</label><input className="w-full border p-3 rounded-lg" value={data.phone} onChange={e=>setData({...data, phone: e.target.value})} placeholder="(00) 00000-0000"/></div>
          
-         {/* E-MAIL E SENHA (SENSÍVEL) */}
          <div className="pt-4 border-t border-slate-100">
              <h3 className="font-bold text-slate-900 mb-4">Segurança</h3>
              
              <div className="mb-4">
                  <label className="text-sm font-bold text-slate-700 block mb-1">E-mail</label>
-                 <input className="w-full border p-3 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
-                 <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter o atual.</p>
-                 
+                 {isStaff ? (
+                     <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
+                         <span className="text-slate-500 text-sm">{user.email}</span>
+                         <span className="text-xs text-slate-400 italic">Gerenciado pelo Admin</span>
+                     </div>
+                 ) : (
+                     <>
+                        <input className="w-full border p-3 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
+                        <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter o atual.</p>
+                     </>
+                 )}
+
                  {/* Status de Verificação */}
                  {!user.emailVerified ? (
                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500 font-bold">
-                         <AlertCircle size={12}/> E-mail não verificado. 
+                         <AlertCircle size={12}/> Não verificado. 
                          <span onClick={resendVerify} className="underline cursor-pointer text-[#0097A8]">Reenviar link</span>
                      </div>
                  ) : (
-                     <div className="mt-2 flex items-center gap-2 text-xs text-green-600 font-bold">
-                         <CheckCircle size={12}/> E-mail verificado.
-                     </div>
+                     <div className="mt-2 flex items-center gap-2 text-xs text-green-600 font-bold"><CheckCircle size={12}/> Verificado</div>
                  )}
              </div>
 
              <div>
-                 <label className="text-sm font-bold text-slate-700 block mb-1">Nova Senha</label>
-                 <input className="w-full border p-3 rounded-lg" type="password" placeholder="********" value={newPass} onChange={e=>setNewPass(e.target.value)} />
-                 <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter a atual.</p>
+                 <label className="text-sm font-bold text-slate-700 block mb-1">Senha</label>
+                 {isStaff ? (
+                     <button type="button" onClick={handleRequestAdmin} className="text-sm text-[#0097A8] hover:underline font-bold">Solicitar alteração de senha ao administrador</button>
+                 ) : (
+                     <button type="button" onClick={sendPasswordReset} className="w-full border p-3 rounded-lg text-left text-sm text-slate-600 hover:bg-slate-50 flex justify-between items-center">
+                         <span>Redefinir minha senha</span>
+                         <Mail size={16}/>
+                     </button>
+                 )}
              </div>
          </div>
 
@@ -778,21 +786,6 @@ const UserProfile = () => {
     </div>
   );
 };
-
-// COMPONENTE DE LOADING (SKELETON)
-const SkeletonCard = () => (
-  <div className="bg-white rounded-3xl overflow-hidden border border-slate-100 h-full">
-    <div className="h-64 bg-slate-200 animate-pulse" />
-    <div className="p-6 space-y-4">
-      <div className="h-6 bg-slate-200 rounded animate-pulse w-3/4" />
-      <div className="h-4 bg-slate-200 rounded animate-pulse w-1/2" />
-      <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
-         <div className="h-8 bg-slate-200 rounded animate-pulse w-1/3" />
-         <div className="h-10 bg-slate-200 rounded-xl animate-pulse w-1/3" />
-      </div>
-    </div>
-  </div>
-);
 
 // --- PÁGINAS PRINCIPAIS ---
 
@@ -3158,11 +3151,40 @@ const TermsPage = () => (
 );
 
 // --- ESTRUTURA PRINCIPAL ---// ...
+// COMPONENTE: GERENCIADOR DE AÇÕES DE AUTH (Link de E-mail)
+const AuthActionHandler = ({ onVerificationSuccess }) => {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const mode = searchParams.get('mode'); 
+  const actionCode = searchParams.get('oobCode');
 
+  useEffect(() => {
+    const handleAction = async () => {
+      if (!mode || !actionCode) return;
+      try {
+        if (mode === 'verifyEmail') {
+          // O Firebase aplica o código e confirma o e-mail
+          await auth.applyActionCode(actionCode);
+          onVerificationSuccess(); 
+          navigate('/'); 
+        } 
+      } catch (error) {
+        console.error("Erro na ação de auth:", error);
+      }
+    };
+    handleAction();
+  }, [mode, actionCode, navigate, onVerificationSuccess]);
+
+  return null;
+};
+
+// --- ESTRUTURA PRINCIPAL (LAYOUT) ---
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
   const [logoError, setLogoError] = useState(false); 
+  const [verificationStatus, setVerificationStatus] = useState('none'); // 'none', 'pending', 'success'
+  
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -3170,29 +3192,37 @@ const Layout = ({ children }) => {
     window.scrollTo(0, 0);
   }, [pathname]);
 
-  // Listener em Tempo Real (Atualizado para pegar a Foto do Firestore)
+  // Listener em Tempo Real (Auth + Firestore)
   useEffect(() => {
     let unsubscribeDoc = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
        if(u) {
-          // Ouve mudanças no perfil em tempo real
+          // Conecta ao documento do usuário para pegar foto e role em tempo real
           unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
              if (docSnap.exists()) {
                  const userData = docSnap.data();
-                 setUser({ 
+                 // Mescla dados do Auth (u) com dados do Firestore (userData)
+                 const currentUser = { 
                      ...u, 
                      role: userData.role || 'user',
-                     // Prioriza a foto salva no Banco (Base64), senão usa a do Auth Google
                      photoURL: userData.photoURL || u.photoURL
-                 });
+                 };
+                 setUser(currentUser);
+
+                 // Verifica status do e-mail para a barra de aviso
+                 if (u.emailVerified) {
+                     if (verificationStatus === 'pending') setVerificationStatus('success');
+                 } else {
+                     setVerificationStatus('pending');
+                 }
              } else {
-                 // Fallback se o documento não existir ainda
                  setUser({ ...u, role: 'user' });
              }
           });
        } else {
           setUser(null);
+          setVerificationStatus('none');
           if(unsubscribeDoc) unsubscribeDoc();
        }
     });
@@ -3203,13 +3233,17 @@ const Layout = ({ children }) => {
     };
   }, []);
 
-  // Efeito do Favicon
-  useEffect(() => {
-    const link = document.querySelector("link[rel~='icon']");
-    if (link) {
-        link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
-    }
-  }, []);
+  // Helper: Reenviar E-mail (Nativo Firebase)
+  const handleResend = async () => {
+      if(!user) return;
+      try {
+          await sendEmailVerification(user, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
+          alert(`E-mail enviado para ${user.email}. Verifique a caixa de entrada e Spam.`);
+      } catch(e) { 
+          console.error(e);
+          alert("Erro ao enviar. Tente novamente em alguns minutos."); 
+      }
+  };
 
   const handleLogout = async () => {
      await signOut(auth);
@@ -3223,10 +3257,39 @@ const Layout = ({ children }) => {
      else navigate('/minhas-viagens');
   };
 
+  // Efeito do Favicon
+  useEffect(() => {
+    const link = document.querySelector("link[rel~='icon']");
+    if (link) {
+        link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
+    }
+  }, []);
+
   return (
-    <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50">
+    <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50 relative">
       <GlobalStyles />
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
+      
+      {/* HANDLER DE URL (Captura retorno do e-mail) */}
+      <AuthActionHandler onVerificationSuccess={() => {
+          setVerificationStatus('success');
+          setTimeout(() => setVerificationStatus('none'), 5000);
+      }} />
+
+      {/* BARRA DE NOTIFICAÇÃO (E-mail não verificado) */}
+      {verificationStatus === 'pending' && user && !user.emailVerified && (
+          <div className="bg-yellow-50 text-yellow-800 text-xs font-bold text-center py-2 px-4 flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 relative z-50 border-b border-yellow-100">
+              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado. Para sua segurança, confirme-o.</span>
+              <button onClick={handleResend} className="underline hover:text-yellow-900">Reenviar link</button>
+          </div>
+      )}
+      {/* BARRA DE SUCESSO (Após clicar no link) */}
+      {verificationStatus === 'success' && (
+          <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2">
+              <CheckCircle size={14}/> E-mail confirmado com sucesso!
+          </div>
+      )}
+
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
            {/* LOGO */}
@@ -3279,7 +3342,6 @@ const Layout = ({ children }) => {
       </header>
       <main className="flex-1 w-full max-w-full overflow-x-hidden">{children}</main>
       
-      {/* Footer Atualizado */}
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
             <div className="grid md:grid-cols-4 gap-8 mb-8">
@@ -3287,7 +3349,7 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (<img src="/logo.svg?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para descobrir e reservar experiências incríveis.</p>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para você descobrir e reservar experiências incríveis.</p>
                   <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm"><Mail size={16} /> contato@mapadodayuse.com</a>
                </div>
                
