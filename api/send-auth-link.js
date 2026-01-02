@@ -1,11 +1,13 @@
 import { MailtrapClient } from "mailtrap";
 import * as admin from 'firebase-admin';
 
+// Variável para capturar o erro exato da inicialização
+let initError = null;
+
 // --- INICIALIZAÇÃO BLINDADA DO FIREBASE ADMIN ---
 if (!admin.apps.length) {
   try {
     // 1. Tenta via BASE64 (A PROVA DE FALHAS DE FORMATAÇÃO)
-    // Converta seu arquivo service-account.json para Base64 e cole nesta variável
     if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
         const buffer = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64');
         const serviceAccount = JSON.parse(buffer.toString('utf-8'));
@@ -43,11 +45,13 @@ if (!admin.apps.length) {
             });
             console.log("✅ Firebase Admin (Email) iniciado via Chaves.");
         } else {
-            console.error("❌ Credenciais do Firebase incompletas. Verifique as variáveis de ambiente.");
+            initError = "Variáveis de ambiente (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY) estão faltando ou vazias.";
+            console.error("❌ " + initError);
         }
     }
   } catch (e) { 
       console.error("❌ Erro fatal ao iniciar Firebase Admin (Email):", e.message); 
+      initError = e.message; // Captura a mensagem real do erro
   }
 }
 
@@ -66,7 +70,11 @@ export default async function handler(req, res) {
 
   // Verificações de segurança antes de prosseguir
   if (!admin.apps.length) {
-      return res.status(500).json({ error: 'Erro de Configuração: Firebase Admin não foi inicializado.' });
+      return res.status(500).json({ 
+          error: 'Erro Crítico de Configuração', 
+          message: 'O Firebase Admin não conseguiu inicializar.',
+          details: initError || 'Verifique os logs do servidor.'
+      });
   }
   if (!TOKEN) {
       return res.status(500).json({ error: 'Erro de Configuração: MAILTRAP_TOKEN ausente.' });
