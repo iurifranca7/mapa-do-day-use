@@ -3,9 +3,23 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, updateProfile, updateEmail, updatePassword } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification, getAuth } from 'firebase/auth';
+import { 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged, 
+  sendPasswordResetEmail, 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  sendEmailVerification, 
+  getAuth,
+  updateProfile, 
+  updateEmail, 
+  updatePassword 
+} from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award,} from 'lucide-react';
