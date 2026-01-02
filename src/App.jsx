@@ -772,7 +772,7 @@ const UserProfile = () => {
   const [data, setData] = useState({ name: '', phone: '', photoURL: '' });
   const [loading, setLoading] = useState(false);
   
-  // Novos States para Gestão de Segurança
+  // Novos States
   const [newEmail, setNewEmail] = useState('');
   const [newPass, setNewPass] = useState('');
 
@@ -793,7 +793,6 @@ const UserProfile = () => {
     fetch();
   }, [user]);
 
-  // Upload de Foto/Logo (Base64)
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -807,27 +806,32 @@ const UserProfile = () => {
   const handleSave = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-        // 1. Atualiza Perfil (Nome e Foto)
-        await updateProfile(user, { displayName: data.name, photoURL: data.photoURL });
+        // 1. Atualiza Perfil no Auth (SOMENTE NOME, SEM FOTO BASE64)
+        // O Base64 é muito grande para o Auth, salvamos apenas no Firestore
+        await updateProfile(user, { displayName: data.name });
+
+        // 2. Salva Tudo no Firestore (Incluindo a Foto Base64)
         await updateDoc(doc(db, "users", user.uid), { 
             name: data.name, 
             phone: data.phone,
-            photoURL: data.photoURL
+            photoURL: data.photoURL // Aqui pode salvar strings grandes
         });
 
-        // 2. Atualiza E-mail (Requer re-autenticação se falhar, mas vamos tentar direto)
+        // 3. Atualiza E-mail
         if (newEmail && newEmail !== user.email) {
-            await updateEmail(user, newEmail);
-            // Manda e-mail de verificação para o NOVO endereço via Mailtrap
+            // Manda e-mail de verificação para o NOVO endereço via API
             await fetch('/api/send-auth-link', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: newEmail, type: 'update_email', name: data.name })
             });
+            // O updateEmail real só deve ser feito após verificação em sistemas ideais, 
+            // mas aqui atualizamos direto e pedimos verificação.
+            await updateEmail(user, newEmail);
             alert("E-mail atualizado! Um link de confirmação foi enviado para o novo endereço.");
         }
 
-        // 3. Atualiza Senha
+        // 4. Atualiza Senha
         if (newPass) {
             await updatePassword(user, newPass);
             alert("Senha alterada com sucesso!");
@@ -846,18 +850,18 @@ const UserProfile = () => {
     } finally { setLoading(false); }
   };
 
-  // Helper de E-mail
   const resendVerify = async () => {
       try {
-        await fetch('/api/send-auth-link', {
+        const res = await fetch('/api/send-auth-link', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: user.email, type: 'verify_email', name: data.name })
         });
-        alert("Link enviado! Verifique sua caixa de entrada.");
+        if (res.ok) alert("Link enviado! Verifique sua caixa de entrada.");
+        else alert("Erro ao enviar e-mail. Tente mais tarde.");
       } catch(e) {
           console.error(e);
-          alert("Erro ao enviar.");
+          alert("Erro de conexão.");
       }
   };
 
@@ -869,7 +873,6 @@ const UserProfile = () => {
       
       <form onSubmit={handleSave} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
          
-         {/* FOTO / LOGO */}
          <div className="flex flex-col items-center gap-4 mb-6">
              <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
                  {data.photoURL ? (
@@ -885,11 +888,9 @@ const UserProfile = () => {
              <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
          </div>
 
-         {/* DADOS BÁSICOS */}
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label><input className="w-full border p-3 rounded-lg" value={data.name} onChange={e=>setData({...data, name: e.target.value})} /></div>
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Telefone</label><input className="w-full border p-3 rounded-lg" value={data.phone} onChange={e=>setData({...data, phone: e.target.value})} placeholder="(00) 00000-0000"/></div>
          
-         {/* E-MAIL E SENHA (SENSÍVEL) */}
          <div className="pt-4 border-t border-slate-100">
              <h3 className="font-bold text-slate-900 mb-4">Segurança</h3>
              
@@ -898,7 +899,6 @@ const UserProfile = () => {
                  <input className="w-full border p-3 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
                  <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter o atual.</p>
                  
-                 {/* Status de Verificação */}
                  {!user.emailVerified && (
                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500 font-bold">
                          <AlertCircle size={12}/> E-mail não verificado. 
