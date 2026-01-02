@@ -23,4 +23,4 @@ dist-ssr
 *.sln
 *.sw?
 
-echo "service-account.json" >> .gitignore
+echo "service-account.json" >> .gitignore"service-account.json" 

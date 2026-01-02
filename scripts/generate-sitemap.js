@@ -30,63 +30,68 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const BASE_URL = 'https://mapadodayuse.com';
 
+// Função auxiliar para formatar slug de cidade (mesma lógica do App.jsx)
+const generateSlug = (text) => {
+    return text.toString().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, '-')
+      .replace(/[^\w\-]+/g, '')
+      .replace(/\-\-+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '');
+};
+
 const generateSitemap = async () => {
     try {
-        console.log("🔍 Lendo Day Uses do banco de dados...");
+        console.log("🔍 Iniciando mapeamento de URLs...");
         
-        // CORREÇÃO: Removido o filtro .where('paused', '!=', true)
-        // Agora buscamos TODOS os anúncios para garantir a indexação SEO de locais pausados (estratégia de seeding)
+        // Busca TODOS os anúncios (para indexar até os pausados/seeding)
         const snapshot = await db.collection('dayuses').get();
 
-        if (snapshot.empty) {
-            console.log("⚠️ Nenhum day use encontrado.");
-            return;
-        }
-
-        console.log(`✅ Encontrados ${snapshot.size} locais (ativos e pausados).`);
+        console.log(`✅ Encontrados ${snapshot.size} locais no banco de dados.`);
 
         const lastMod = new Date().toISOString().split('T')[0];
         
-        // Cabeçalho e Páginas Estáticas
-        let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <!-- Páginas Estáticas -->
-  <url>
-    <loc>${BASE_URL}/</loc>
-    <lastmod>${lastMod}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>${BASE_URL}/politica-de-privacidade</loc>
-    <lastmod>${lastMod}</lastmod>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>${BASE_URL}/termos-de-uso</loc>
-    <lastmod>${lastMod}</lastmod>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>${BASE_URL}/partner-register</loc>
-    <lastmod>${lastMod}</lastmod>
-    <priority>0.8</priority>
-  </url>`;
+        // 1. URLs Estáticas (Institucionais, Blog, etc.)
+        const staticPages = [
+            { url: '/', priority: '1.0', freq: 'daily' },
+            { url: '/sobre-nos', priority: '0.8', freq: 'monthly' },
+            { url: '/contato', priority: '0.8', freq: 'monthly' },
+            { url: '/day-use', priority: '0.9', freq: 'weekly' }, // Hub do Blog
+            { url: '/day-use/o-que-e-day-use', priority: '0.8', freq: 'monthly' }, // Artigo
+            { url: '/mapa-do-site', priority: '0.5', freq: 'weekly' },
+            { url: '/seja-parceiro', priority: '0.9', freq: 'monthly' },
+            { url: '/politica-de-privacidade', priority: '0.5', freq: 'yearly' },
+            { url: '/termos-de-uso', priority: '0.5', freq: 'yearly' },
+            { url: '/partner-register', priority: '0.7', freq: 'monthly' },
+        ];
 
-        // Sets para coletar Estados e Cidades únicos enquanto percorre os locais
+        let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
+
+        // Adiciona Páginas Estáticas
+        staticPages.forEach(page => {
+            xml += `
+  <url>
+    <loc>${BASE_URL}${page.url}</loc>
+    <lastmod>${lastMod}</lastmod>
+    <changefreq>${page.freq}</changefreq>
+    <priority>${page.priority}</priority>
+  </url>`;
+        });
+
+        // 2. URLs Dinâmicas (Locais, Cidades, Estados)
         const states = new Set();
         const cities = new Set();
-        let pagesCount = 4; // Contando as estáticas
+        let countLocais = 0;
 
-        // Processa cada Day Use
         snapshot.forEach(doc => {
             const data = doc.data();
             if (data.slug && data.state) {
                 const stateLower = data.state.toLowerCase();
-                // Usa a data de atualização se existir, senão usa hoje
                 const itemMod = data.updatedAt ? new Date(data.updatedAt.toDate()).toISOString().split('T')[0] : lastMod;
 
-                // 1. Adiciona a URL do Local (Day Use)
+                // A. URL do Local (Day Use)
                 xml += `
   <url>
     <loc>${BASE_URL}/${stateLower}/${data.slug}</loc>
@@ -94,56 +99,55 @@ const generateSitemap = async () => {
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>`;
-                pagesCount++;
+                countLocais++;
 
-                // 2. Coleta Estado para criar página de listagem
+                // B. Coleta Estado
                 states.add(stateLower);
 
-                // 3. Coleta Cidade para criar página de listagem
+                // C. Coleta Cidade
                 if (data.city) {
-                    const citySlug = data.city.toLowerCase()
-                        .normalize('NFD').replace(/[\u0300-\u036f]/g, "")
-                        .replace(/\s+/g, '-')
-                        .replace(/[^\w\-]+/g, '');
+                    const citySlug = generateSlug(data.city);
                     cities.add(`${stateLower}/${citySlug}`);
                 }
             }
         });
 
-        console.log(`🗺️  Gerando páginas para ${states.size} Estados e ${cities.size} Cidades identificadas...`);
-
-        // Adiciona URLs de Estados no XML (ex: /mg)
+        // Adiciona URLs de Estados
         states.forEach(s => {
             xml += `
   <url>
     <loc>${BASE_URL}/${s}</loc>
+    <lastmod>${lastMod}</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>`;
-            pagesCount++;
         });
 
-        // Adiciona URLs de Cidades no XML (ex: /mg/belo-horizonte)
+        // Adiciona URLs de Cidades
         cities.forEach(c => {
             xml += `
   <url>
     <loc>${BASE_URL}/${c}</loc>
+    <lastmod>${lastMod}</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>`;
-            pagesCount++;
         });
 
         xml += `
 </urlset>`;
 
-        // Salva o arquivo na pasta public
+        // Salva o arquivo
         const publicPath = join(__dirname, '../public/sitemap.xml');
         fs.writeFileSync(publicPath, xml);
 
-        console.log(`🎉 Sitemap gerado com sucesso em: ${publicPath}`);
-        console.log(`📊 Total de URLs indexadas: ${pagesCount}`);
-        console.log("👉 Agora faça o commit e push para subir o arquivo atualizado.");
+        console.log(`\n🎉 Sitemap gerado com sucesso!`);
+        console.log(`   - Páginas Estáticas: ${staticPages.length}`);
+        console.log(`   - Day Uses: ${countLocais}`);
+        console.log(`   - Estados: ${states.size}`);
+        console.log(`   - Cidades: ${cities.size}`);
+        console.log(`\n📂 Arquivo salvo em: ${publicPath}`);
+        console.log("👉 Execute: git add public/sitemap.xml && git commit -m 'Update sitemap' && git push");
 
     } catch (error) {
         console.error("❌ Erro ao gerar sitemap:", error);

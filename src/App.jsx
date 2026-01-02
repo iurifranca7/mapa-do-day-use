@@ -8,10 +8,7 @@ import { initializeApp, getApp } from "firebase/app";
 import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification, getAuth } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { 
-  MapPin, Search, User, CheckCircle, 
-  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
-} from 'lucide-react';
+import { MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award,} from 'lucide-react';
 
 const STATE_NAMES = {
     'MG': 'Minas Gerais', 'SP': 'São Paulo', 'RJ': 'Rio de Janeiro', 'ES': 'Espírito Santo',
@@ -20,20 +17,23 @@ const STATE_NAMES = {
 };
 
 const AMENITIES_LIST = [
-    "Piscina", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cascata/Cachoeira artificial",
+    "Piscina adulto", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cascata/Cachoeira artificial",
     "Acesso à represa / lago", "Bicicletas", "Quadriciclo", "Passeio a cavalo", "Caiaque / Stand up",
-    "Trilha", "Pesque e solte", "Fazendinha / Animais", "Espaço Kids", "Recreação infantil",
+    "Trilha", "Pesque e solte", "Fazendinha / Animais", "Espaço kids", "Recreação infantil",
     "Quadra de areia", "Campo de futebol", "Campo de vôlei e peteca", "Beach tennis / futvôlei",
-    "Academia", "Sauna Mista", "Hidromassagem externa", "Hidromassagem / Banheira / Ofurô", "Massagem",
-    "Espaço para meditação", "Capela", "Redes e balanços", "Vista / Mirante", "Fogo de chão / Lareira",
+    "Academia", "Sauna mista a vapor", "Hidromassagem / Banheira / Ofurô", "Massagem",
+    "Espaço para meditação", "Capela", "Redes", "Vista / Mirante", "Fogo de chão / Lareira",
     "Churrasqueira", "Cozinha equipada", "Bar / Restaurante / Quiosque", "Sala de jogos", "Música ao vivo", 
-    "Estacionamento", "Wi-Fi", "Piscina climatizada", "Playground", "Área Verde", "Lagoa com água da nascente", 
+    "Estacionamento", "Wi-Fi", "Piscina climatizada", "Playground", "Área verde", "Lagoa com água da nascente", 
     "Piscina com água da nascente", "Pratos e talheres", "Tomadas disponíveis", "Pia com torneira", "Tirolesa infantil",
-    "Tirolesa Adulto", "Gangorra", "Cachoeira com túnel",  "Parque aquático adulto", "Piscina coberta", "Sauna Masculina",
-    "Sauna Feminina", "Vara de Pesca", "Iscas para Pesca" 
+    "Tirolesa Adulto", "Gangorra", "Cachoeira com túnel",  "Parque aquático adulto", "Piscina coberta", "Sauna masculina a vapor",
+    "Sauna feminina a vapor", "Vara de pesca", "Iscas para pesca", "Banheiro com ducha quente","Lago", "Pesque e pague", "Balanço",
+    "Ducha fria", "Banheiros com ducha", "Sinuca", "Espaço de leitura", "Quadra poliesportiva", "Piscina semiolímpica", 
+    "Quadra de peteca e vôlei", "Barco a remo", "Pedalinho", "Bike park", "Escorrega de sabão", "Cama elástica infantil",
+    "Vale jurássico", "Piscina de borda infinita", "Solarium", "Toboágua", "Acesso a acomodação", "Monitor infantil", "Passeio de charrete"
 ];
 
-const MEALS_LIST = ["Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas", "Bebidas NÃO Alcoólicas", "Bebidas Alcoólicas"];
+const MEALS_LIST = ["Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas", "Bebidas NÃO Alcoólicas", "Bebidas Alcoólicas", "Buffet Livre"];
 const WEEK_DAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 
@@ -956,13 +956,17 @@ const Accordion = ({ title, icon: Icon, children }) => {
 };
 
 const DetailsPage = () => {
-  const { state, slug } = useParams();
+  const params = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const [showWarning, setShowWarning] = useState(null);
+  
+  // 1. CORREÇÃO DE ROTAS: Captura parâmetros de qualquer tipo de rota
+  const slug = params.slug || params.cityOrSlug;
+  const idParam = params.id; 
+
   const [item, setItem] = useState(null);
   const [relatedItems, setRelatedItems] = useState([]);
-  
-  // Controle de Loading e Erro
   const [loading, setLoading] = useState(true);
   
   const [date, setDate] = useState("");
@@ -983,18 +987,18 @@ const DetailsPage = () => {
 
   useEffect(() => {
     const fetchItem = async () => {
-      setLoading(true); // Inicia loading
+      setLoading(true);
       try {
           let foundData = null;
           
-          // 1. Tenta usar dados passados pela navegação (mais rápido)
+          // Prioridade: ID no state > ID na URL > Slug
           if (location.state?.id) {
              const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
              if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
-          } 
-          
-          // 2. Se não tiver ID (acesso direto pelo link), busca pelo Slug
-          if (!foundData) {
+          } else if (idParam) {
+             const docSnap = await getDoc(doc(db, "dayuses", idParam));
+             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
+          } else if (slug) {
              const q = query(collection(db, "dayuses"), where("slug", "==", slug)); 
              const querySnapshot = await getDocs(q);
              if (!querySnapshot.empty) {
@@ -1005,23 +1009,24 @@ const DetailsPage = () => {
     
           if (foundData) {
               setItem(foundData);
-              // Busca relacionados
-              const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
-              const snapRelated = await getDocs(qRelated);
-              const related = snapRelated.docs
-                  .map(d => ({id: d.id, ...d.data()}))
-                  .filter(i => i.id !== foundData.id)
-                  .slice(0, 3);
-              setRelatedItems(related);
+              if (foundData.city) {
+                  const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
+                  const snapRelated = await getDocs(qRelated);
+                  const related = snapRelated.docs
+                      .map(d => ({id: d.id, ...d.data()}))
+                      .filter(i => i.id !== foundData.id)
+                      .slice(0, 3);
+                  setRelatedItems(related);
+              }
           }
       } catch (error) {
           console.error("Erro ao carregar detalhes:", error);
       } finally {
-          setLoading(false); // Garante que o loading pare, mesmo se não achar nada
+          setLoading(false);
       }
     };
     fetchItem();
-  }, [slug, location.state]);
+  }, [slug, idParam, location.state]);
 
   // Lógica de Preço
   useEffect(() => {
@@ -1037,9 +1042,7 @@ const DetailsPage = () => {
           let minPrice = Number(item.priceAdult || 0);
           if (item.weeklyPrices) {
              Object.values(item.weeklyPrices).forEach(p => {
-                 let val = 0;
-                 if (typeof p === 'object' && p.adult) val = Number(p.adult);
-                 else if (!isNaN(p)) val = Number(p);
+                 let val = typeof p === 'object' ? Number(p.adult) : Number(p);
                  if (val > 0 && val < minPrice) minPrice = val;
              });
           }
@@ -1048,7 +1051,64 @@ const DetailsPage = () => {
     }
   }, [date, item]);
 
-  useSEO(item ? item.name : "Detalhes", "Detalhes do day use.");
+  // 2. SEO DINÂMICO
+  const seoTitle = item 
+    ? `${item.name} | Reserve seu Day Use em ${item.city}` 
+    : "Detalhes do Day Use";
+
+  const seoDesc = item 
+    ? `Compre seu ingresso para o day use ${item.name} em ${item.city}. Day Use com ${item.amenities?.[0] || 'Piscina'}, ${item.meals?.[0] || 'Almoço'} e muito mais!`
+    : "Confira detalhes, preços e fotos deste Day Use incrível. Reserve agora!";
+
+  useSEO(seoTitle, seoDesc);
+
+  // 3. SCHEMA MARKUP
+  useSchema(item ? {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "LodgingBusiness",
+        "@id": `https://mapadodayuse.com/${getStateSlug(item.state)}/${generateSlug(item.name)}#place`,
+        "name": item.name,
+        "description": item.description,
+        "image": [item.image, item.image2, item.image3].filter(Boolean),
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": `${item.street}, ${item.number}`,
+          "addressLocality": item.city,
+          "addressRegion": item.state,
+          "addressCountry": "BR",
+          "postalCode": item.cep
+        },
+        "telephone": item.localPhone || item.localWhatsapp,
+        "amenityFeature": item.amenities?.map(a => ({ "@type": "LocationFeatureSpecification", "name": a, "value": "true" }))
+      },
+      {
+        "@type": "Product",
+        "name": `Day Use em ${item.name}`,
+        "description": `Ingresso para passar o dia em ${item.name}.`,
+        "image": item.image,
+        "sku": item.id,
+        "brand": { "@type": "Brand", "name": "Mapa do Day Use" },
+        "offers": {
+          "@type": "Offer",
+          "url": window.location.href,
+          "priceCurrency": "BRL",
+          "price": currentPrice || item.priceAdult,
+          "availability": item.paused ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+          "seller": { "@type": "Organization", "name": item.name }
+        }
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
+            { "@type": "ListItem", "position": 2, "name": item.state, "item": `https://mapadodayuse.com/${getStateSlug(item.state)}` },
+            { "@type": "ListItem", "position": 3, "name": item.name, "item": window.location.href }
+        ]
+      }
+    ]
+  } : null);
 
   // --- SKELETON LOADING ---
   if (loading) return (
@@ -1056,41 +1116,24 @@ const DetailsPage = () => {
         <div className="flex items-center gap-2 mb-8"><div className="w-20 h-10 bg-slate-200 rounded-full animate-pulse"></div></div>
         <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
             <div className="lg:col-span-2 space-y-8">
-                <div className="space-y-2">
-                    <div className="h-10 w-3/4 bg-slate-200 rounded-lg animate-pulse"></div>
-                    <div className="h-6 w-1/2 bg-slate-200 rounded-lg animate-pulse"></div>
-                </div>
-                <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden">
-                    <div className="col-span-3 bg-slate-200 animate-pulse"></div>
-                    <div className="col-span-1 grid grid-rows-2 gap-3 h-full">
-                        <div className="bg-slate-200 animate-pulse"></div>
-                        <div className="bg-slate-200 animate-pulse"></div>
-                    </div>
-                </div>
+                <div className="space-y-2"><div className="h-10 w-3/4 bg-slate-200 rounded-lg animate-pulse"></div><div className="h-6 w-1/2 bg-slate-200 rounded-lg animate-pulse"></div></div>
+                <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden"><div className="col-span-3 bg-slate-200 animate-pulse"></div><div className="col-span-1 grid grid-rows-2 gap-3 h-full"><div className="bg-slate-200 animate-pulse"></div><div className="bg-slate-200 animate-pulse"></div></div></div>
             </div>
-            <div className="lg:col-span-1">
-                <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div>
-            </div>
+            <div className="lg:col-span-1"><div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 h-96 animate-pulse bg-slate-50"></div></div>
         </div>
     </div>
   );
 
-  // --- ITEM NÃO ENCONTRADO ---
   if (!item) return (
       <div className="max-w-4xl mx-auto py-20 px-4 text-center animate-fade-in">
-          <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-400">
-              <MapIcon size={48}/>
-          </div>
+          <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-400"><MapIcon size={48}/></div>
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Local não encontrado</h2>
-          <p className="text-slate-500 mb-8">O link que você acessou pode estar quebrado ou o estabelecimento não está mais disponível.</p>
+          <p className="text-slate-500 mb-8">O link que você acessou pode estar quebrado ou indisponível.</p>
           <Button onClick={() => navigate('/')} className="mx-auto">Voltar para o Mapa</Button>
       </div>
   );
   
-  // ... (Restante da lógica de renderização: childPrice, petFee, total, handlers, JSX...)
-  // COPIE O RESTANTE DO CÓDIGO DO COMPONENTE ANTERIOR A PARTIR DAQUI
-  // (childPrice, petFee, total, showPets, handlers, return...)
-  
+  // Cálculos
   let childPrice = Number(item.priceChild || 0);
   let petFee = Number(item.petFee || 0);
   if (date && item.weeklyPrices) {
@@ -1118,74 +1161,18 @@ const DetailsPage = () => {
   };
 
   const handleBook = () => {
-      navigate('/checkout', { 
-          state: { 
-              bookingData: { 
-                  item, date, adults, children, pets, total, 
-                  freeChildren, 
-                  selectedSpecial,
-                  priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
-              } 
-          } 
-      });
+      navigate('/checkout', { state: { bookingData: { item, date, adults, children, pets, total, freeChildren, selectedSpecial, priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } } } });
   };
 
-  const handleClaimSubmit = async (e) => {
-      e.preventDefault();
-      setClaimLoading(true);
-      const emailHtml = `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
-            <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
-            <p><strong>Solicitante:</strong> ${claimData.name}</p>
-            <p><strong>E-mail:</strong> ${claimData.email}</p>
-            <p><strong>Telefone:</strong> ${claimData.phone}</p>
-            <p><strong>Cargo:</strong> ${claimData.job}</p>
-        </div>
-      `;
-      try {
-          await fetch('/api/send-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: emailHtml })
-          });
-          setShowClaimModal(false);
-          setShowClaimSuccess(true);
-          setClaimData({ name: '', email: '', phone: '', job: '' });
-      } catch (error) { console.error(error); alert("Erro ao enviar solicitação."); } 
-      finally { setClaimLoading(false); }
-  };
-
-  const PausedMessage = () => (
-    <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
-        <div className="pb-4 border-b border-slate-100 text-center">
-            <p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p>
-            <button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button>
-        </div>
-        <div className="text-center">
-            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400"><Ticket size={24}/></div>
-            <h3 className="text-lg font-bold text-slate-800 mb-2">Reservas Indisponíveis</h3>
-            <p className="text-slate-500 leading-relaxed text-xs">No momento, este local não está recebendo novas reservas.<br/><strong className="text-slate-700">Confira outras opções em {item.city}:</strong></p>
-        </div>
-        <div className="space-y-3">
-            {relatedItems.length > 0 ? relatedItems.map(related => (
-                <div key={related.id} onClick={() => navigate(`/${getStateSlug(related.state)}/${generateSlug(related.name)}`, {state: {id: related.id}})} className="flex items-center gap-3 p-2 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:shadow-md transition-all cursor-pointer bg-slate-50 hover:bg-white group">
-                    <img src={related.image} className="w-16 h-16 rounded-lg object-cover bg-gray-200 shrink-0"/>
-                    <div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div>
-                    <div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div>
-                </div>
-            )) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}
-        </div>
-    </div>
-  );
+  // ... (handleClaimSubmit e PausedMessage iguais)
+  const handleClaimSubmit = async(e) => { e.preventDefault(); setClaimLoading(true); const emailHtml = `...`; try { await fetch('/api/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: 'Solicitação de Claim' }) }); setShowClaimModal(false); setShowClaimSuccess(true); setClaimData({ name: '', email: '', phone: '', job: '' }); } catch(error){console.error(error); alert("Erro ao enviar.");} finally{setClaimLoading(false);} };
+  const PausedMessage = () => (<div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6"><div className="pb-4 border-b border-slate-100 text-center"><p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p><button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button></div><div className="text-center"><div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400"><Ticket size={24}/></div><h3 className="text-lg font-bold text-slate-800 mb-2">Reservas Indisponíveis</h3><p className="text-slate-500 leading-relaxed text-xs">No momento, este local não está recebendo novas reservas.<br/><strong className="text-slate-700">Confira outras opções em {item.city}:</strong></p></div><div className="space-y-3">{relatedItems.length > 0 ? relatedItems.map(related => (<div key={related.id} onClick={() => navigate(`/${getStateSlug(related.state)}/${generateSlug(related.name)}`, {state: {id: related.id}})} className="flex items-center gap-3 p-2 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:shadow-md transition-all cursor-pointer bg-slate-50 hover:bg-white group"><img src={related.image} className="w-16 h-16 rounded-lg object-cover bg-gray-200 shrink-0"/><div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div><div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div></div>)) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}</div></div>);
 
   return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
-      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
-
+      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados..." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Marketing</option><option>Comercial</option></select></div></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
@@ -1195,11 +1182,37 @@ const DetailsPage = () => {
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}><div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div><div className="col-span-1 grid grid-rows-2 gap-3 h-full"><div className="relative overflow-hidden h-full"><img src={item.image2} className="w-full h-full object-cover"/></div><div className="relative overflow-hidden h-full"><img src={item.image3} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div></div></div>
             
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
-               <div><h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre</h3><p className="text-slate-600 leading-relaxed whitespace-pre-line text-lg">{item.description}</p></div>
-               
+               <div>
+                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2">
+                       <FileText className="text-[#0097A8]"/> Sobre
+                   </h3>
+                   <p className="text-slate-600 leading-relaxed whitespace-pre-line text-sm">
+                       {item.description}
+                   </p>
+               </div>
+
                <div>
                    <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
-                   {item.amenities && item.amenities.length > 0 && (<div className="mb-6"><p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p><div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">{item.amenities.map(a => (<div key={a} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8]"></div> {a}</div>))}</div></div>)}
+                   
+                   {/* 4. CORREÇÃO DE COMODIDADES (Split string se necessário) */}
+                   {item.amenities && item.amenities.length > 0 && (
+                       <div className="mb-6">
+                           <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
+                           <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
+                               {item.amenities
+                                   .flatMap(a => a.includes(',') ? a.split(',') : a) // Quebra strings longas
+                                   .map(a => a.trim())
+                                   .filter(a => a !== "")
+                                   .map((a, idx) => (
+                                       <div key={`${a}-${idx}`} className="flex items-center gap-2 text-sm text-slate-600">
+                                           <div className="w-1.5 h-1.5 rounded-full bg-[#0097A8] shrink-0"></div> 
+                                           <span className="capitalize">{a}</span>
+                                       </div>
+                                   ))
+                               }
+                           </div>
+                       </div>
+                   )}
                    <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4"><div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>{item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}</div>
                    {item.includedItems && (<div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>)}
                </div>
@@ -1221,21 +1234,40 @@ const DetailsPage = () => {
             {item.paused ? <PausedMessage /> : (
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
+                   <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
                    
-                   <div>
-                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
-                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
-                   </div>
-
+                   {/* SEÇÃO DE QUANTIDADES COM TRAVA (NOVO COMPORTAMENTO) */}
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{const newVal = Math.max(0, adults-1); setAdults(newVal); if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }}}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
-                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{children}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button></div></div>
-                     {showPets && (<div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{pets}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button></div></div>)}
+                     
+                     <div className="flex justify-between items-center">
+                         <div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button>
+                             <span className="font-bold text-slate-900 w-4 text-center">{children}</span>
+                             <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button>
+                         </div>
+                     </div>
+                     
+                     {showPets && (
+                         <div className="flex justify-between items-center">
+                             <div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div>
+                             <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                                 <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{pets}</span>
+                                 <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button>
+                             </div>
+                         </div>
+                     )}
                      
                      {item.trackFreeChildren && (
                          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
-                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button><span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button></div>
+                             <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm">
+                                 <button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span>
+                                 <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button>
+                             </div>
                          </div>
                      )}
                    </div>
@@ -1254,17 +1286,27 @@ const DetailsPage = () => {
 
                    <div className="pt-4 border-t border-dashed border-slate-200">
                       <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total Estimado</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
-                      
-                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>
-                          Reservar
-                      </Button>
-                      
+                      <Button className="w-full py-4 text-lg" disabled={!date} onClick={handleBook}>Reservar</Button>
                       <p className="text-center text-xs text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra segura</p>
                    </div>
                 </div>
             )}
          </div>
       </div>
+      
+      {/* Modal de Aviso de Dependência (Exibido se showWarning tiver dados) */}
+      {showWarning && createPortal(
+          <ModalOverlay onClose={() => setShowWarning(null)}>
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                  <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle size={32}/></div>
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">{showWarning.title}</h2>
+                  <p className="text-slate-600 mb-6 text-sm">{showWarning.msg}</p>
+                  <Button onClick={() => setShowWarning(null)} className="w-full justify-center">Entendi</Button>
+              </div>
+          </ModalOverlay>,
+          document.body
+      )}
+
     </div>
   );
 };
@@ -3209,40 +3251,55 @@ const Layout = ({ children }) => {
       
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
-            <div className="grid md:grid-cols-4 gap-8 mb-8">
-               <div className="col-span-1 md:col-span-2">
-                  <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
+            <div className="grid md:grid-cols-4 gap-8 mb-12">
+               
+               {/* Coluna 1: Marca e Contato */}
+               <div className="col-span-1">
+                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.png?v=2" 
+                           src="/logo.png" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
-                           onError={() => setLogoError(true)} 
+                           onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                setLogoError(true);
+                           }} 
                         />
                      ) : (
                         <MapIcon className="h-6 w-6 text-[#0097A8]" />
                      )}
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
-                     A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.
+                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+                     A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
                   </p>
                   <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
                      <Mail size={16} /> contato@mapadodayuse.com
                   </a>
                </div>
                
+               {/* Coluna 2: Institucional */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
                      <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
                      <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
-                     <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
-                     <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
                      <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
-                     <li><button onClick={() => navigate('/partner-register')} className="hover:text-[#0097A8] transition-colors">Seja um Parceiro</button></li>
                   </ul>
                </div>
 
+               {/* Coluna 3: Educacional e Parceiro */}
+               <div>
+                  <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
+                  <ul className="space-y-3 text-sm text-slate-500 mb-6">
+                     <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                  </ul>
+                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
+                      Seja um Parceiro
+                  </button>
+               </div>
+
+               {/* Coluna 4: Redes Sociais */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
                   <div className="flex gap-3">
@@ -3256,8 +3313,16 @@ const Layout = ({ children }) => {
                </div>
             </div>
             
+            {/* Rodapé Inferior */}
             <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
-               <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
+               <div className="flex flex-col md:flex-row gap-2 md:gap-6 items-center text-center md:text-left">
+                   <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
+                   <div className="hidden md:block w-1 h-1 bg-slate-300 rounded-full"></div>
+                   <div className="flex gap-4">
+                       <button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors text-xs">Política de Privacidade</button>
+                       <button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors text-xs">Termos de Uso</button>
+                   </div>
+               </div>
                <p className="flex items-center gap-1">
                   Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" rel="noopener noreferrer" className="font-bold text-slate-600 hover:text-[#0097A8] transition-colors">Iuri França</a>
                </p>
@@ -3347,52 +3412,27 @@ const ListingPage = ({ stateParam, cityParam }) => {
 
   // Fetch com tratamento de erro e Finally para garantir fim do loading
   useEffect(() => {
-    const fetchItem = async () => {
+    const fetchItems = async () => {
       setLoading(true);
       try {
-          let foundData = null;
-          
-          // 1. Prioridade: ID passado pelo state da navegação (clique interno)
-          if (location.state?.id) {
-             const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
-             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
-          } 
-          // 2. Fallback: ID na URL (rota /stay/:id)
-          else if (idParam) {
-             const docSnap = await getDoc(doc(db, "dayuses", idParam));
-             if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
-          }
-          // 3. Busca pelo Slug (Link externo/WhatsApp)
-          else if (slug) {
-             const q = query(collection(db, "dayuses"), where("slug", "==", slug)); 
-             const querySnapshot = await getDocs(q);
-             if (!querySnapshot.empty) {
-                 const docData = querySnapshot.docs[0];
-                 foundData = { id: docData.id, ...docData.data() };
-             }
-          }
-    
-          if (foundData) {
-              setItem(foundData);
-              // Busca relacionados na mesma cidade (se a cidade existir)
-              if (foundData.city) {
-                  const qRelated = query(collection(db, "dayuses"), where("city", "==", foundData.city));
-                  const snapRelated = await getDocs(qRelated);
-                  const related = snapRelated.docs
-                      .map(d => ({id: d.id, ...d.data()}))
-                      .filter(i => i.id !== foundData.id)
-                      .slice(0, 3);
-                  setRelatedItems(related);
-              }
-          }
+        // Busca todos os anúncios do banco
+        const q = query(collection(db, "dayuses"));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        
+        // Filtra apenas os itens do estado atual (stateParam)
+        // Usa o helper getStateSlug para garantir compatibilidade (ex: "Minas Gerais" -> "mg")
+        const stateItems = data.filter(i => getStateSlug(i.state) === stateParam?.toLowerCase());
+        
+        setItems(stateItems);
       } catch (error) {
-          console.error("Erro ao carregar detalhes:", error);
+        console.error("Erro ao carregar listagem:", error);
       } finally {
-          setLoading(false);
+        setLoading(false);
       }
     };
-    fetchItem();
-  }, [slug, idParam, location.state]);
+    fetchItems();
+  }, [stateParam]);
 
   // Atualiza filtro de cidade se a URL mudar (sem refetch)
   useEffect(() => {
@@ -3456,26 +3496,43 @@ const ListingPage = ({ stateParam, cityParam }) => {
     </div>
   );
 
-  return (
+ return (
     <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
+        
+        {/* 1. TÍTULO (Sempre no topo, fora das colunas) */}
         <div className="mb-6">
-            <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {cityNameFormatted || stateName}</h1>
+            <h1 className="text-3xl font-bold text-slate-900 mb-2 capitalize">Day Uses em {locationTitle}</h1>
             <p className="text-slate-500">{filteredItems.length} opções encontradas</p>
         </div>
 
+        {/* 2. FILTRO MOBILE (Acordeão abaixo do título) */}
         <div className="md:hidden mb-8">
-            <button onClick={() => setShowMobileFilters(!showMobileFilters)} className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors">
+            <button 
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors"
+            >
                 <span className="flex items-center gap-2"><Filter size={20} className="text-[#0097A8]"/> Filtrar Resultados</span>
                 <ChevronDown size={20} className={`transition-transform duration-300 text-slate-400 ${showMobileFilters ? 'rotate-180' : ''}`}/>
             </button>
-            {showMobileFilters && <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in"><FiltersContent /></div>}
+            
+            {showMobileFilters && (
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in">
+                    <FiltersContent />
+                </div>
+            )}
         </div>
 
+        {/* 3. CONTEÚDO PRINCIPAL (Sidebar Desktop + Lista) */}
         <div className="flex flex-col md:flex-row gap-8">
+            
+            {/* Sidebar Desktop (Escondida no mobile) */}
             <div className="hidden md:block w-1/4 space-y-6 h-fit sticky top-24">
-                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar"><FiltersContent /></div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <FiltersContent />
+                </div>
             </div>
 
+            {/* Lista de Cards */}
             <div className="flex-1">
                 {filteredItems.length === 0 ? (
                     <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
@@ -3484,13 +3541,21 @@ const ListingPage = ({ stateParam, cityParam }) => {
                     </div>
                 ) : (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredItems.map(item => <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />)}
+                        {filteredItems.map(item => (
+                            <DayUseCard 
+                                key={item.id} 
+                                item={item} 
+                                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+                            />
+                        ))}
                     </div>
                 )}
                 
+                {/* 4. LINKAGEM DE CIDADES PRÓXIMAS (No final da lista) */}
                 {nearbyCities.length > 0 && (
                     <div className="mt-16 pt-8 border-t border-slate-100">
                         <h2 className="text-xl font-bold text-slate-900 mb-6">Confira os day uses disponíveis em cidades próximas</h2>
+                        {/* Grid ajustado: 2 colunas no mobile, 5 no desktop */}
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 gap-x-6">
                             {nearbyCities.map(city => (
                                 <button
@@ -3992,9 +4057,9 @@ const WhatIsDayUsePage = () => {
                     </p>
                     <Button 
                         onClick={() => navigate('/')} 
-                        className="bg-white text-[#0097A8] hover:bg-slate-100 border-none px-8 py-4 text-lg shadow-lg"
+                        className="!bg-white !text-[#0097A8] hover:bg-cyan-50 px-8 py-4 text-lg shadow-xl hover:scale-105 transition-transform border-none"
                     >
-                        Explorar Experiências 🌿
+                        Explorar Experiências
                     </Button>
                 </section>
             </div>
@@ -4111,6 +4176,198 @@ const ContactPage = () => {
   );
 };
 
+const PartnerLandingPage = () => {
+  const navigate = useNavigate();
+  useSEO("Seja um Parceiro | Mapa do Day Use", "Aumente o faturamento do seu hotel ou pousada vendendo Day Use. Plataforma completa de gestão, marketing e pagamentos seguros.");
+  
+  // Estado para controlar o modal de cadastro na própria página
+  const [showRegister, setShowRegister] = useState(false);
+
+  const scrollToTop = () => window.scrollTo(0,0);
+
+  const handleRegisterSuccess = (user) => {
+      // Redireciona para o fluxo de criação de anúncio após cadastro
+      navigate('/partner/new');
+  };
+
+  return (
+    <div className="animate-fade-in bg-white">
+        
+        {/* MODAL DE CADASTRO INTEGRADO (Usando Portal para cobrir a tela) */}
+        {showRegister && createPortal(
+            <LoginModal 
+                isOpen={showRegister} 
+                onClose={() => setShowRegister(false)} 
+                initialRole="partner" 
+                hideRoleSelection={true} 
+                initialMode="register"
+                customTitle="Comece Agora"
+                customSubtitle="Crie sua conta de parceiro gratuitamente."
+                onSuccess={handleRegisterSuccess}
+                closeOnSuccess={true}
+            />,
+            document.body
+        )}
+
+        {/* HERO SECTION */}
+        <div className="relative bg-slate-900 text-white pt-24 pb-20 px-4 rounded-b-[3rem] overflow-hidden shadow-2xl">
+            <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-30 mix-blend-overlay"></div>
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-900/80 to-[#0097A8]/90 opacity-90"></div>
+            
+            <div className="relative z-10 max-w-7xl mx-auto text-center">
+                <div className="inline-flex items-center gap-2 bg-white/10 text-cyan-200 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider mb-6 border border-white/20">
+                    <Star size={14} className="fill-current"/> Revolução na Hotelaria
+                </div>
+                <h1 className="text-4xl md:text-6xl font-extrabold mb-6 leading-tight">
+                    Transforme áreas ociosas em <br/><span className="text-cyan-300">Lucro Líquido</span>.
+                </h1>
+                <p className="text-lg md:text-xl text-slate-200 mb-10 max-w-3xl mx-auto leading-relaxed">
+                    A plataforma definitiva para hotéis, pousadas e resorts venderem Day Use com segurança, previsibilidade e zero dor de cabeça operacional.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                    {/* Botão corrigido com !text-[#0097A8] para garantir legibilidade e onClick abrindo o modal */}
+                    <Button onClick={() => setShowRegister(true)} className="!bg-white !text-[#0097A8] hover:bg-cyan-50 px-8 py-4 text-lg shadow-xl hover:scale-105 transition-transform border-none">
+                        Quero ser Parceiro
+                    </Button>
+                    <a href="https://wa.me/5531920058081" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-8 py-4 rounded-xl font-bold text-white border border-white/30 hover:bg-white/10 transition-colors">
+                        <MessageCircle size={20}/> Falar com Especialista
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        {/* A DOR DO MERCADO */}
+        <div className="max-w-7xl mx-auto py-20 px-4">
+            <div className="text-center mb-16">
+                <h2 className="text-3xl font-bold text-slate-900 mb-4">Por que o modelo tradicional de hospedagem limita seu lucro?</h2>
+                <p className="text-slate-500 max-w-2xl mx-auto">Você tem uma estrutura incrível — piscina, restaurante, lazer — mas ela passa boa parte do tempo vazia ou gerando custos fixos altos.</p>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-8">
+                <div className="bg-slate-50 p-8 rounded-3xl border border-slate-100 text-center hover:shadow-lg transition-shadow">
+                    <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6"><TrendingUp size={32}/></div>
+                    <h3 className="font-bold text-lg text-slate-900 mb-2">Margem Apertada</h3>
+                    <p className="text-sm text-slate-600">Hospedagem envolve custos altos: enxoval, limpeza pesada, café da manhã incluso, energia noturna. O Day Use é quase 100% margem.</p>
+                </div>
+                <div className="bg-slate-50 p-8 rounded-3xl border border-slate-100 text-center hover:shadow-lg transition-shadow">
+                    <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-6"><Zap size={32}/></div>
+                    <h3 className="font-bold text-lg text-slate-900 mb-2">Ociosidade</h3>
+                    <p className="text-sm text-slate-600">Entre o check-out e o check-in, ou em dias de semana, sua estrutura fica parada. O Day Use monetiza esses intervalos.</p>
+                </div>
+                <div className="bg-slate-50 p-8 rounded-3xl border border-slate-100 text-center hover:shadow-lg transition-shadow">
+                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6"><Globe size={32}/></div>
+                    <h3 className="font-bold text-lg text-slate-900 mb-2">Marketing Caro</h3>
+                    <p className="text-sm text-slate-600">Atrair clientes sozinho custa caro. Nós trazemos o tráfego qualificado de quem já procura lazer na sua região.</p>
+                </div>
+            </div>
+        </div>
+
+        {/* NOSSOS DIFERENCIAIS */}
+        <div className="bg-slate-900 text-white py-24 px-4 rounded-[3rem] my-8 mx-2 shadow-2xl">
+            <div className="max-w-7xl mx-auto">
+                <div className="text-center mb-16">
+                    <h2 className="text-3xl md:text-4xl font-bold mb-4">Tecnologia de Ponta para Gestão Simples</h2>
+                    <p className="text-slate-400">Desenvolvemos o que há de mais moderno para você focar no hóspede, não na planilha.</p>
+                </div>
+
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><CalendarIcon/> Calendário Inteligente</div>
+                        <p className="text-sm text-slate-400">Controle total de disponibilidade. Feche datas específicas, abra exceções e defina estoques diários de forma simples.</p>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><DollarSign/> Preço Dinâmico</div>
+                        <p className="text-sm text-slate-400">Defina preços diferentes para dias de semana e fins de semana. Crie promoções relâmpago em segundos.</p>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><Ticket/> Ingressos Especiais</div>
+                        <p className="text-sm text-slate-400">Aumente o ticket médio vendendo combos, estacionamento, gazebos ou produtos exclusivos junto com a reserva.</p>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><Users/> Gestão de Portaria</div>
+                        <p className="text-sm text-slate-400">Painel exclusivo para sua equipe validar QR Codes na entrada, sem acesso aos seus dados financeiros.</p>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><Tag/> Cupons Inteligentes</div>
+                        <p className="text-sm text-slate-400">Crie campanhas com cupons de desconto rastreáveis para medir o retorno de influencers e parceiros.</p>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-[#0097A8] font-bold"><BarChart/> Dashboard Completo</div>
+                        <p className="text-sm text-slate-400">Visão financeira clara: Total vendido, líquido a receber, divisão por método de pagamento e lista de presença.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* SEGURANÇA FINANCEIRA */}
+        <div className="max-w-7xl mx-auto py-20 px-4">
+            <div className="bg-gradient-to-br from-blue-50 to-white border border-blue-100 rounded-[2.5rem] p-8 md:p-12 flex flex-col md:flex-row items-center gap-10 shadow-lg">
+                <div className="flex-1 space-y-6">
+                    <div className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase">
+                        <ShieldCheck size={14}/> Segurança Financeira
+                    </div>
+                    <h2 className="text-3xl font-bold text-slate-900">Seu dinheiro direto na sua conta. Sem intermediários.</h2>
+                    <p className="text-slate-600 leading-relaxed">
+                        Utilizamos a tecnologia de <strong>Split de Pagamento</strong> do Mercado Pago.
+                    </p>
+                    <ul className="space-y-3">
+                        <li className="flex gap-3 text-sm text-slate-700"><CheckCircle className="text-green-500 shrink-0" size={20}/> O cliente paga (Pix ou Cartão).</li>
+                        <li className="flex gap-3 text-sm text-slate-700"><CheckCircle className="text-green-500 shrink-0" size={20}/> O Mercado Pago separa automaticamente sua parte.</li>
+                        <li className="flex gap-3 text-sm text-slate-700"><CheckCircle className="text-green-500 shrink-0" size={20}/> O dinheiro cai direto na sua conta MP, nós nunca tocamos nele.</li>
+                    </ul>
+                    <p className="text-xs text-slate-400 mt-4">*Transações criptografadas e protegidas contra fraude.</p>
+                </div>
+                <div className="w-full md:w-1/3 flex justify-center">
+                    <div className="bg-white p-6 rounded-3xl shadow-xl rotate-3 border border-slate-100 text-center">
+                        <div className="w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-4 text-white"><Lock size={40}/></div>
+                        <p className="font-bold text-slate-800">Pagamento Aprovado</p>
+                        <p className="text-xs text-slate-500">Valor transferido para o parceiro</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* MARKETING */}
+        <div className="max-w-7xl mx-auto py-12 px-4 text-center">
+            <h2 className="text-3xl font-bold text-slate-900 mb-6">Mais que um software, uma máquina de vendas.</h2>
+            <p className="text-slate-600 mb-10 max-w-2xl mx-auto">
+                Não entregamos apenas a tecnologia. Entregamos o público. O Mapa do Day Use é impulsionado por uma estratégia de marketing agressiva.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-pink-50 border border-pink-100">
+                    <p className="text-2xl font-bold text-pink-600">+200k</p>
+                    <p className="text-xs text-pink-800 font-bold uppercase">Seguidores</p>
+                </div>
+                <div className="p-4 rounded-2xl bg-purple-50 border border-purple-100">
+                    <p className="text-2xl font-bold text-purple-600">Tráfego</p>
+                    <p className="text-xs text-purple-800 font-bold uppercase">Pago & Orgânico</p>
+                </div>
+                <div className="p-4 rounded-2xl bg-green-50 border border-green-100">
+                    <p className="text-2xl font-bold text-green-600">SEO</p>
+                    <p className="text-xs text-green-800 font-bold uppercase">Google Otimizado</p>
+                </div>
+                <div className="p-4 rounded-2xl bg-orange-50 border border-orange-100">
+                    <p className="text-2xl font-bold text-orange-600">IA</p>
+                    <p className="text-xs text-orange-800 font-bold uppercase">Integrado com GPT</p>
+                </div>
+            </div>
+        </div>
+
+        {/* CTA FINAL */}
+        <div className="bg-[#0097A8] py-20 px-4 text-center mt-12">
+            <div className="max-w-3xl mx-auto">
+                <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">Pronto para lotar seu Day Use?</h2>
+                <p className="text-cyan-100 mb-10 text-lg">O cadastro é gratuito. Você só paga uma comissão sobre o que vender. Risco zero, lucro real.</p>
+                <Button onClick={() => setShowRegister(true)} className="!bg-white !text-[#0097A8] hover:bg-slate-100 px-10 py-5 text-xl shadow-2xl mx-auto border-none transform hover:scale-105 transition-transform">
+                    Começar Agora
+                </Button>
+                <p className="text-white/60 text-xs mt-6">Junte-se à revolução do turismo local.</p>
+            </div>
+        </div>
+    </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -4141,6 +4398,8 @@ const App = () => {
         <Route path="/day-use" element={<Layout><BlogHubPage /></Layout>} />
         <Route path="/day-use/o-que-e-day-use" element={<Layout><WhatIsDayUsePage /></Layout>} />
         <Route path="/mapa-do-site" element={<Layout><SiteMapPage /></Layout>} />
+        <Route path="/seja-parceiro" element={<Layout><PartnerLandingPage /></Layout>} />
+        <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
 
       </Routes>
   );

@@ -1,0 +1,15 @@
+[
+  {
+    "name": "Restaurante Samburá",
+    "image": "https://lh3.googleusercontent.com/p/AF1QipOszmGCxQ-gn-nRCppXAzLrBFGtI6f9PKiFmyR_=s1360-w1360-h1020",
+    "images": "https://lh3.googleusercontent.com/p/AF1QipP0-qQWyZu5o7d-AIu9qafalShrusZ0L8MrQine=s1360-w1360-h1020",
+    "description": "",
+    "amenities": "Pesque e solte",
+    "meals": "",
+    "notIncludedItems": "Não é permitido levar o peixe \nNão é permitido levar bebida e comida\n",
+    "priceAdult": "30",
+    "city": "Nova Lima",
+    "state": "MG",
+    "whats": "31985880306"
+  }
+]
