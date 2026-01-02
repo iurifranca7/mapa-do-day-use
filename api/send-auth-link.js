@@ -4,12 +4,40 @@ import * as admin from 'firebase-admin';
 // --- INICIALIZAÇÃO BLINDADA DO FIREBASE ADMIN ---
 if (!admin.apps.length) {
   try {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
+    // 1. Tenta via Variável JSON (Mais seguro e recomendado para Vercel)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+        });
+        console.log("✅ Firebase Admin (Email) iniciado via JSON.");
+    } 
+    // 2. Fallback para variáveis individuais (Com tratamento de erro)
+    else {
+        const projectId = process.env.FIREBASE_PROJECT_ID;
+        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+        const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-    {
-        console.error("❌ Credenciais do Firebase incompletas (send-auth-link). Verifique PROJECT_ID, CLIENT_EMAIL e PRIVATE_KEY.");
+        if (projectId && clientEmail && privateKeyRaw) {
+            // Tratamento robusto para a chave privada (Obrigatório na Vercel)
+            let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+            
+            // Remove aspas extras se houver
+            if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+                privateKey = privateKey.slice(1, -1);
+            }
+
+            admin.initializeApp({
+                credential: admin.credential.cert({
+                    projectId,
+                    clientEmail,
+                    privateKey,
+                }),
+            });
+            console.log("✅ Firebase Admin (Email) iniciado via Chaves.");
+        } else {
+            console.error("❌ Credenciais do Firebase incompletas. Verifique as variáveis de ambiente.");
+        }
     }
   } catch (e) { 
       console.error("❌ Erro fatal ao iniciar Firebase Admin (Email):", e.message); 
@@ -29,8 +57,9 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // Verificações de segurança antes de prosseguir
   if (!admin.apps.length) {
-      return res.status(500).json({ error: 'Erro de Configuração: Firebase Admin não inicializado.' });
+      return res.status(500).json({ error: 'Erro de Configuração: Firebase Admin não foi inicializado.' });
   }
   if (!TOKEN) {
       return res.status(500).json({ error: 'Erro de Configuração: MAILTRAP_TOKEN ausente.' });
