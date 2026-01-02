@@ -5,21 +5,7 @@ import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
 import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
-import { 
-  signInWithPopup, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged, 
-  sendPasswordResetEmail, 
-  RecaptchaVerifier, 
-  signInWithPhoneNumber, 
-  sendEmailVerification, 
-  getAuth,
-  updateProfile, 
-  updateEmail, 
-  updatePassword 
-} from 'firebase/auth';
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, RecaptchaVerifier, signInWithPhoneNumber, sendEmailVerification, getAuth,updateProfile, updateEmail, updatePassword } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award,} from 'lucide-react';
@@ -432,7 +418,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   if (!isOpen) return null;
 
   // Estados de Fluxo
-  const [view, setView] = useState(initialMode); // 'login', 'register', 'forgot', 'phone_start', 'phone_verify', 'email_sent'
+  const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -441,76 +427,21 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [confirmObj, setConfirmObj] = useState(null);
-
-  // Referência para o Recaptcha (Melhor que window global em alguns casos)
-  const recaptchaRef = React.useRef(null);
-
-  // Helper para chamar API de e-mail (Mailtrap)
-  // Isso substitui o envio nativo do Firebase que estava falhando
-  const sendAuthEmail = async (type, userEmail, userName = '') => {
-      try {
-          await fetch('/api/send-auth-link', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: userEmail, type, name: userName })
-          });
-          return true;
-      } catch (e) {
-          console.error("Erro ao enviar email via API:", e);
-          return false;
-      }
-  };
 
   // Reset de estados ao abrir
   useEffect(() => {
     if (isOpen) {
         setError(''); setInfo('');
         setView(initialMode); setRole(initialRole);
-        setEmail(''); setPassword(''); setPhone(''); setCode('');
+        setEmail(''); setPassword('');
     }
   }, [isOpen, initialMode, initialRole]);
 
-  // Lógica do Recaptcha (Telefone)
-  useEffect(() => {
-    if (!isOpen || view !== 'phone_start') {
-        // Limpeza
-        if (recaptchaRef.current) {
-             try { recaptchaRef.current.clear(); } catch(e){}
-             recaptchaRef.current = null;
-        }
-        return;
-    }
-
-    const initRecaptcha = async () => {
-        // Delay para garantir DOM
-        await new Promise(r => setTimeout(r, 500));
-        
-        const container = document.getElementById('recaptcha-container');
-        if (container && !recaptchaRef.current) {
-            try {
-                const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                    'size': 'invisible',
-                    'callback': () => console.log("Recaptcha resolvido"),
-                    'expired-callback': () => setError("Sessão expirada. Tente novamente.")
-                });
-                recaptchaRef.current = verifier;
-                await verifier.render();
-            } catch (e) { console.log("Status Recaptcha:", e); }
-        }
-    };
-
-    initRecaptcha();
-
-    return () => {
-        if (recaptchaRef.current) {
-             try { recaptchaRef.current.clear(); } catch(e){}
-             recaptchaRef.current = null;
-        }
-    };
-  }, [view, isOpen]);
+  // Configuração para onde o usuário volta após clicar no link do e-mail
+  const actionCodeSettings = {
+    url: 'https://mapadodayuse.com/minhas-viagens', 
+    handleCodeInApp: true,
+  };
 
   const ensureProfile = async (u) => {
     const ref = doc(db, "users", u.uid);
@@ -520,8 +451,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     else { 
         await setDoc(ref, { 
             email: u.email || "", 
-            phone: u.phoneNumber || "",
-            name: u.displayName || (u.phoneNumber ? "Usuário Móvel" : u.email?.split('@')[0] || "Usuário"), 
+            name: u.displayName || u.email?.split('@')[0] || "Usuário", 
             role: role, 
             createdAt: new Date() 
         }); 
@@ -545,13 +475,17 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         if (view === 'register') {
             res = await createUserWithEmailAndPassword(auth, email, password);
             
-            // 1. Envia E-mail de Confirmação via API Mailtrap
-            sendAuthEmail('verify_email', email, email.split('@')[0]);
+            // ENVIO NATIVO FIREBASE (Confirmação)
+            try {
+                await sendEmailVerification(res.user, actionCodeSettings);
+            } catch (emailError) {
+                console.error("Erro ao enviar verificação:", emailError);
+                // Não bloqueia o fluxo se falhar o envio, apenas avisa ou segue
+            }
             
-            // 2. Cria Perfil
             await ensureProfile(res.user);
             
-            // 3. Muda para tela de sucesso (Email Sent)
+            // Muda para a tela de aviso "Verifique seu e-mail"
             setView('email_sent');
             setLoading(false);
             return;
@@ -562,6 +496,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         onSuccess(userWithRole);
         if (closeOnSuccess) onClose();
     } catch (err) {
+        console.error(err);
         if (err.code === 'auth/email-already-in-use') setError("E-mail já cadastrado.");
         else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setError("Dados incorretos.");
         else setError("Erro: " + err.code);
@@ -571,73 +506,18 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleForgot = async (e) => {
       e.preventDefault(); setLoading(true); setError(''); setInfo('');
       try {
-          // Usa API Mailtrap para reset de senha
-          const sent = await sendAuthEmail('reset_password', email);
-          
-          if(sent) {
-            setInfo("Link enviado! Verifique sua caixa de entrada e Spam.");
-          } else {
-            setError("Erro ao enviar. Tente novamente mais tarde.");
-          }
+          // ENVIO NATIVO FIREBASE (Reset de Senha)
+          await sendPasswordResetEmail(auth, email, actionCodeSettings);
+          setInfo("Se o e-mail estiver cadastrado, você receberá um link em instantes.");
       } catch (err) { 
-          setError("Erro ao enviar. Verifique se o e-mail está correto."); 
+          console.error(err);
+          // Por segurança, mostramos sucesso mesmo se o e-mail não existir
+          setInfo("Se o e-mail estiver cadastrado, você receberá um link em instantes.");
       } finally { setLoading(false); }
-  };
-
-  const handlePhoneStart = async (e) => {
-      e.preventDefault(); 
-      setLoading(true); setError('');
-      
-      const cleanPhone = phone.replace(/\D/g, '');
-      if (cleanPhone.length < 10) { 
-          setError("Número inválido."); setLoading(false); return; 
-      }
-      
-      const formatted = "+55" + cleanPhone;
-      
-      try {
-          if (!recaptchaRef.current) {
-               // Fallback: Tenta criar se não existir
-               const container = document.getElementById('recaptcha-container');
-               if(container) recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' });
-               else throw new Error("Erro interno: Recaptcha não carregou.");
-          }
-          
-          const confirmation = await signInWithPhoneNumber(auth, formatted, recaptchaRef.current);
-          setConfirmObj(confirmation);
-          setView('phone_verify');
-      } catch (err) {
-          console.error("Erro SMS:", err);
-          let msg = "Erro ao enviar SMS.";
-          
-          if (JSON.stringify(err).includes("403") || JSON.stringify(err).includes("401")) {
-              msg = "Bloqueio de API: Domínio não autorizado no Google Cloud.";
-          } else if (err.code === 'auth/quota-exceeded') {
-              msg = "Limite diário de SMS atingido.";
-          } else if (err.code === 'auth/invalid-phone-number') {
-              msg = "Número inválido.";
-          }
-          
-          setError(msg);
-          if(recaptchaRef.current) { try{ recaptchaRef.current.clear(); }catch(e){} recaptchaRef.current = null; }
-      } finally { setLoading(false); }
-  };
-
-  const handlePhoneVerify = async (e) => {
-      e.preventDefault(); setLoading(true); setError('');
-      try {
-          const res = await confirmObj.confirm(code);
-          const userWithRole = await ensureProfile(res.user);
-          onSuccess(userWithRole);
-          if (closeOnSuccess) onClose();
-      } catch (err) { setError("Código inválido."); }
-      finally { setLoading(false); }
   };
 
   const getTitle = () => {
       if (view === 'forgot') return 'Recuperar Senha';
-      if (view === 'phone_start') return 'Entrar com Celular';
-      if (view === 'phone_verify') return 'Confirmar Código';
       if (view === 'email_sent') return 'Verifique seu E-mail';
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
@@ -654,9 +534,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
         <div className="p-6">
             
-            {/* CONTAINER RECAPTCHA */}
-            <div id="recaptcha-container" className={view === 'phone_start' ? 'mb-4' : 'hidden'}></div>
-
             {/* TELA DE SUCESSO DE EMAIL */}
             {view === 'email_sent' ? (
                 <div className="text-center py-6 space-y-4">
@@ -664,8 +541,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         <Mail size={32}/>
                     </div>
                     <div>
-                        <h3 className="text-lg font-bold text-slate-800">Conta Criada com Sucesso!</h3>
-                        <p className="text-slate-500 text-sm mt-2">
+                        <h3 className="text-lg font-bold text-slate-800">Conta Criada!</h3>
+                        <p className="text-slate-600 text-sm mt-2">
                             Enviamos um link de confirmação para <strong>{email}</strong>.
                             <br/>Por favor, confirme seu e-mail para ativar todos os recursos.
                         </p>
@@ -712,34 +589,12 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         </form>
                     )}
 
-                    {/* CELULAR (INÍCIO) */}
-                    {view === 'phone_start' && (
-                        <form onSubmit={handlePhoneStart} className="space-y-4">
-                            <div className="border border-slate-300 rounded-xl p-3 flex items-center focus-within:ring-2 focus-within:ring-black">
-                                <span className="text-slate-500 mr-2 border-r pr-2">+55</span>
-                                <input className="w-full outline-none" placeholder="(11) 99999-9999" value={phone} onChange={e=>setPhone(e.target.value)} type="tel" required autoFocus/>
-                            </div>
-                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Enviando...' : 'Enviar Código'}</Button>
-                        </form>
-                    )}
-
-                    {/* CELULAR (VERIFICAÇÃO) */}
-                    {view === 'phone_verify' && (
-                        <form onSubmit={handlePhoneVerify} className="space-y-4">
-                            <p className="text-sm text-slate-600">Digite o código enviado para <strong>+55 {phone}</strong></p>
-                            <input className="w-full border border-slate-300 p-3 rounded-xl text-center text-2xl tracking-[0.5em] font-mono outline-none" maxLength={6} value={code} onChange={e=>setCode(e.target.value)} required autoFocus/>
-                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Validando...' : 'Confirmar'}</Button>
-                            <p className="text-center text-xs text-slate-400 mt-4 cursor-pointer hover:underline" onClick={()=>setView('phone_start')}>Corrigir número</p>
-                        </form>
-                    )}
-
                     {/* BOTÕES SOCIAIS E TROCA DE MODO */}
                     {(view === 'login' || view === 'register') && (
                         <>
                             <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou</span><div className="flex-grow border-t border-slate-200"></div></div>
                             <div className="space-y-3">
                                 <button type="button" onClick={handleGoogle} className="w-full border-2 border-slate-200 rounded-xl py-3 flex items-center justify-between px-4 hover:bg-slate-50 transition-all"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" /><span className="text-sm font-semibold text-slate-700">Google</span><div className="w-5"></div></button>
-                                <button type="button" onClick={()=>setView('phone_start')} className="w-full border-2 border-slate-200 rounded-xl py-3 flex items-center justify-between px-4 hover:bg-slate-50 transition-all"><Phone size={20} className="text-slate-700"/><span className="text-sm font-semibold text-slate-700">Celular</span><div className="w-5"></div></button>
                             </div>
                             {view === 'login' ? (
                                 <div className="mt-4 text-center">
@@ -755,7 +610,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         </>
                     )}
                     
-                    {(view === 'phone_start' || view === 'phone_verify' || view === 'forgot') && (
+                    {view === 'forgot' && (
                         <p className="text-center text-xs font-bold underline cursor-pointer mt-6" onClick={()=>setView('login')}>Voltar</p>
                     )}
                 </>
@@ -772,7 +627,7 @@ const UserProfile = () => {
   const [data, setData] = useState({ name: '', phone: '', photoURL: '' });
   const [loading, setLoading] = useState(false);
   
-  // Novos States
+  // Novos States para Gestão de Segurança
   const [newEmail, setNewEmail] = useState('');
   const [newPass, setNewPass] = useState('');
 
@@ -793,6 +648,13 @@ const UserProfile = () => {
     fetch();
   }, [user]);
 
+  // Configuração para redirecionamento após clicar no e-mail
+  const actionCodeSettings = {
+    url: 'https://mapadodayuse.com/profile',
+    handleCodeInApp: true,
+  };
+
+  // Upload de Foto/Logo (Base64)
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -806,32 +668,24 @@ const UserProfile = () => {
   const handleSave = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-        // 1. Atualiza Perfil no Auth (SOMENTE NOME, SEM FOTO BASE64)
-        // O Base64 é muito grande para o Auth, salvamos apenas no Firestore
+        // 1. Atualiza Perfil no Auth (Nome apenas, Foto Base64 quebra no Auth)
         await updateProfile(user, { displayName: data.name });
 
-        // 2. Salva Tudo no Firestore (Incluindo a Foto Base64)
+        // 2. Salva no Firestore (Incluindo a Foto Base64)
         await updateDoc(doc(db, "users", user.uid), { 
             name: data.name, 
             phone: data.phone,
-            photoURL: data.photoURL // Aqui pode salvar strings grandes
+            photoURL: data.photoURL
         });
 
-        // 3. Atualiza E-mail
+        // 3. Atualiza E-mail (Requer login recente)
         if (newEmail && newEmail !== user.email) {
-            // Manda e-mail de verificação para o NOVO endereço via API
-            await fetch('/api/send-auth-link', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: newEmail, type: 'update_email', name: data.name })
-            });
-            // O updateEmail real só deve ser feito após verificação em sistemas ideais, 
-            // mas aqui atualizamos direto e pedimos verificação.
             await updateEmail(user, newEmail);
+            await sendEmailVerification(user, actionCodeSettings);
             alert("E-mail atualizado! Um link de confirmação foi enviado para o novo endereço.");
         }
 
-        // 4. Atualiza Senha
+        // 4. Atualiza Senha (Requer login recente)
         if (newPass) {
             await updatePassword(user, newPass);
             alert("Senha alterada com sucesso!");
@@ -843,25 +697,22 @@ const UserProfile = () => {
     } catch (err) {
         console.error(err);
         if (err.code === 'auth/requires-recent-login') {
-            alert("Para mudar e-mail ou senha, por favor faça logout e login novamente por segurança.");
+            alert("Para mudar e-mail ou senha, por segurança, faça logout e login novamente.");
         } else {
             alert("Erro ao atualizar: " + err.message);
         }
     } finally { setLoading(false); }
   };
 
+  // Helper de E-mail
   const resendVerify = async () => {
       try {
-        const res = await fetch('/api/send-auth-link', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: user.email, type: 'verify_email', name: data.name })
-        });
-        if (res.ok) alert("Link enviado! Verifique sua caixa de entrada.");
-        else alert("Erro ao enviar e-mail. Tente mais tarde.");
+        await sendEmailVerification(user, actionCodeSettings);
+        alert("Link enviado! Verifique sua caixa de entrada e Spam.");
       } catch(e) {
           console.error(e);
-          alert("Erro de conexão.");
+          if (e.code === 'auth/too-many-requests') alert("Muitas tentativas. Aguarde um pouco.");
+          else alert("Erro ao enviar.");
       }
   };
 
@@ -873,6 +724,7 @@ const UserProfile = () => {
       
       <form onSubmit={handleSave} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
          
+         {/* FOTO / LOGO */}
          <div className="flex flex-col items-center gap-4 mb-6">
              <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
                  {data.photoURL ? (
@@ -888,9 +740,11 @@ const UserProfile = () => {
              <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
          </div>
 
+         {/* DADOS BÁSICOS */}
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label><input className="w-full border p-3 rounded-lg" value={data.name} onChange={e=>setData({...data, name: e.target.value})} /></div>
          <div><label className="text-sm font-bold text-slate-700 block mb-1">Telefone</label><input className="w-full border p-3 rounded-lg" value={data.phone} onChange={e=>setData({...data, phone: e.target.value})} placeholder="(00) 00000-0000"/></div>
          
+         {/* E-MAIL E SENHA (SENSÍVEL) */}
          <div className="pt-4 border-t border-slate-100">
              <h3 className="font-bold text-slate-900 mb-4">Segurança</h3>
              
@@ -899,10 +753,15 @@ const UserProfile = () => {
                  <input className="w-full border p-3 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
                  <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter o atual.</p>
                  
-                 {!user.emailVerified && (
+                 {/* Status de Verificação */}
+                 {!user.emailVerified ? (
                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500 font-bold">
                          <AlertCircle size={12}/> E-mail não verificado. 
                          <span onClick={resendVerify} className="underline cursor-pointer text-[#0097A8]">Reenviar link</span>
+                     </div>
+                 ) : (
+                     <div className="mt-2 flex items-center gap-2 text-xs text-green-600 font-bold">
+                         <CheckCircle size={12}/> E-mail verificado.
                      </div>
                  )}
              </div>
