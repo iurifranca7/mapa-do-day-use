@@ -699,39 +699,49 @@ const UserProfile = () => {
   };
 
   const handleSave = async (e) => {
-    e.preventDefault(); setLoading(true);
+    e.preventDefault(); 
+    setLoading(true);
+    
     try {
+        // 1. Atualiza Perfil no Auth (Nome apenas, Foto Base64 quebra no Auth)
         await updateProfile(user, { displayName: data.name });
+
+        // 2. Salva no Firestore (Incluindo a Foto Base64)
         await updateDoc(doc(db, "users", user.uid), { 
             name: data.name, 
             phone: data.phone,
             photoURL: data.photoURL
         });
 
-        // CORREÇÃO: Troca de e-mail segura
-        if (!isStaff && newEmail && newEmail !== user.email) {
+        // 3. Atualiza E-mail (Fluxo Seguro com verifyBeforeUpdateEmail)
+        if (newEmail && newEmail !== user.email) {
+            // Envia e-mail de verificação para o NOVO endereço antes de trocar
             await verifyBeforeUpdateEmail(user, newEmail, actionCodeSettings);
-            alert(`Um e-mail de verificação foi enviado para ${newEmail}. Clique no link desse e-mail para confirmar a alteração.`);
+            alert(`Um link de confirmação foi enviado para ${newEmail}.\n\nPor favor, acesse seu novo e-mail e clique no link para concluir a alteração.`);
         }
 
+        // 4. Atualiza Senha
         if (newPass) {
             await updatePassword(user, newPass);
             alert("Senha alterada com sucesso!");
         }
 
         alert("Perfil salvo com sucesso!");
-        setNewPass(''); setNewEmail('');
+        setNewPass(''); 
+        setNewEmail('');
         
     } catch (err) {
         console.error(err);
         if (err.code === 'auth/requires-recent-login') {
             alert("Para alterar e-mail ou senha, por favor faça logout e login novamente.");
         } else if (err.code === 'auth/operation-not-allowed') {
-            alert("Operação não permitida. Verifique se o novo e-mail é válido.");
+            alert("Operação não permitida ou provedor desabilitado.");
         } else {
             alert("Erro ao atualizar: " + err.message);
         }
-    } finally { setLoading(false); }
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   const resendVerify = async () => {
@@ -3415,6 +3425,21 @@ const Layout = ({ children }) => {
         setGlobalFeedback={setGlobalFeedback}
       />
 
+      {/* BARRA DE NOTIFICAÇÃO (E-mail não verificado) */}
+      {verificationStatus === 'pending' && user && !user.emailVerified && (
+          <div className="bg-yellow-50 text-yellow-800 text-xs font-bold text-center py-2 px-4 flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 relative z-50 border-b border-yellow-100">
+              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado. Para sua segurança, confirme-o.</span>
+              <button onClick={handleResend} className="underline hover:text-yellow-900">Reenviar link</button>
+          </div>
+      )}
+      
+      {/* BARRA DE SUCESSO (Após clicar no link) */}
+      {verificationStatus === 'success' && (
+          <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2">
+              <CheckCircle size={14}/> E-mail confirmado com sucesso!
+          </div>
+      )}
+
       {/* MODAL GLOBAL DE FEEDBACK */}
       <FeedbackModal 
          isOpen={!!globalFeedback} 
@@ -3423,19 +3448,6 @@ const Layout = ({ children }) => {
          title={globalFeedback?.title}
          msg={globalFeedback?.msg}
       />
-
-      {/* BARRA DE NOTIFICAÇÃO */}
-      {verificationStatus === 'pending' && user && !user.emailVerified && (
-          <div className="bg-yellow-50 text-yellow-800 text-xs font-bold text-center py-2 px-4 flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 relative z-50 border-b border-yellow-100">
-              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado.</span>
-              <button onClick={handleResend} className="underline hover:text-yellow-900">Reenviar link</button>
-          </div>
-      )}
-      {verificationStatus === 'success' && (
-          <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2">
-              <CheckCircle size={14}/> E-mail confirmado com sucesso!
-          </div>
-      )}
 
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
