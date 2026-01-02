@@ -3311,22 +3311,30 @@ const Layout = ({ children }) => {
     window.scrollTo(0, 0);
   }, [pathname]);
 
-  // CORREÇÃO: Listener em Tempo Real
+  // Listener em Tempo Real (Atualizado para pegar a Foto do Firestore)
   useEffect(() => {
     let unsubscribeDoc = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
        if(u) {
-          // Ao logar, conecta-se diretamente ao documento do usuário no banco
-          // Se o documento mudar (ex: acabar de ser criado com role 'partner'), a UI atualiza na hora.
+          // Ouve mudanças no perfil em tempo real
           unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
-             const userData = docSnap.exists() ? docSnap.data() : {};
-             const role = userData.role || 'user'; // Padrão é user se ainda não carregou
-             setUser({ ...u, role });
+             if (docSnap.exists()) {
+                 const userData = docSnap.data();
+                 setUser({ 
+                     ...u, 
+                     role: userData.role || 'user',
+                     // Prioriza a foto salva no Banco (Base64), senão usa a do Auth Google
+                     photoURL: userData.photoURL || u.photoURL
+                 });
+             } else {
+                 // Fallback se o documento não existir ainda
+                 setUser({ ...u, role: 'user' });
+             }
           });
        } else {
           setUser(null);
-          if(unsubscribeDoc) unsubscribeDoc(); // Limpa o listener anterior
+          if(unsubscribeDoc) unsubscribeDoc();
        }
     });
 
@@ -3362,16 +3370,14 @@ const Layout = ({ children }) => {
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
+           {/* LOGO */}
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.png?v=2" 
+                    src="/logo.svg?v=2" 
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
-                    onError={(e) => {
-                        e.currentTarget.style.display = 'none'; 
-                        setLogoError(true); 
-                    }} 
+                    onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
                  />
               ) : (
                  <MapIcon className="h-8 w-8 text-[#0097A8]" />
@@ -3386,23 +3392,25 @@ const Layout = ({ children }) => {
                  </>
               ) : (
                  <div className="flex gap-2 md:gap-4 items-center">
-                    {/* Botões condicionais por Role */}
+                    {/* Botões de Navegação */}
                     {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
-                    
                     {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
-                    
-                    {/* Exibe "Meus Ingressos" APENAS se NÃO for parceiro E NÃO for staff */}
                     {user.role !== 'partner' && user.role !== 'staff' && (
-                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')}>Meus Ingressos</Button>
+                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>
                     )}
 
-                    <button 
-                        className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform" 
+                    {/* FOTO DO USUÁRIO NO HEADER */}
+                    <div 
+                        className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform cursor-pointer overflow-hidden" 
                         title={user.email}
                         onClick={()=>navigate('/profile')}
                     >
-                        {user.email[0].toUpperCase()}
-                    </button>
+                        {user.photoURL ? (
+                            <img src={user.photoURL} className="w-full h-full object-cover" alt="Perfil" />
+                        ) : (
+                            user.email ? user.email[0].toUpperCase() : <User size={20}/>
+                        )}
+                    </div>
                     
                     <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Sair"><LogOut size={20}/></button>
                  </div>
@@ -3412,83 +3420,43 @@ const Layout = ({ children }) => {
       </header>
       <main className="flex-1 w-full max-w-full overflow-x-hidden">{children}</main>
       
+      {/* Footer Atualizado */}
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
-            <div className="grid md:grid-cols-4 gap-8 mb-12">
-               
-               {/* Coluna 1: Marca e Contato */}
-               <div className="col-span-1">
-                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {!logoError ? (
-                        <img 
-                           src="/logo.png" 
-                           alt="Mapa do Day Use" 
-                           className="h-8 w-auto object-contain" 
-                           onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                                setLogoError(true);
-                           }} 
-                        />
-                     ) : (
-                        <MapIcon className="h-6 w-6 text-[#0097A8]" />
-                     )}
+            <div className="grid md:grid-cols-4 gap-8 mb-8">
+               <div className="col-span-1 md:col-span-2">
+                  <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
+                     {!logoError ? (<img src="/logo.svg?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">
-                     A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
-                  </p>
-                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
-                     <Mail size={16} /> contato@mapadodayuse.com
-                  </a>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para descobrir e reservar experiências incríveis.</p>
+                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm"><Mail size={16} /> contato@mapadodayuse.com</a>
                </div>
                
-               {/* Coluna 2: Institucional */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
+                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
                      <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
                      <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
                      <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
                   </ul>
                </div>
 
-               {/* Coluna 3: Educacional e Parceiro */}
                <div>
-                  <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
-                  <ul className="space-y-3 text-sm text-slate-500 mb-6">
-                     <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
-                  </ul>
-                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
-                      Seja um Parceiro
-                  </button>
-               </div>
-
-               {/* Coluna 4: Redes Sociais */}
-               <div>
-                  <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
-                  <div className="flex gap-3">
-                     <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
-                        <Instagram size={20} />
-                     </a>
-                     <a href="https://tiktok.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-gray-100 text-slate-400 hover:text-black transition-all border border-slate-100 hover:border-gray-300">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
-                     </a>
-                  </div>
+                   <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
+                   <ul className="space-y-3 text-sm text-slate-500 mb-6">
+                      <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                      <li><button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button></li>
+                      <li><button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button></li>
+                   </ul>
+                   <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
+                       Seja um Parceiro
+                   </button>
                </div>
             </div>
-            
-            {/* Rodapé Inferior */}
             <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
-               <div className="flex flex-col md:flex-row gap-2 md:gap-6 items-center text-center md:text-left">
-                   <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
-                   <div className="hidden md:block w-1 h-1 bg-slate-300 rounded-full"></div>
-                   <div className="flex gap-4">
-                       <button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors text-xs">Política de Privacidade</button>
-                       <button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors text-xs">Termos de Uso</button>
-                   </div>
-               </div>
-               <p className="flex items-center gap-1">
-                  Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" rel="noopener noreferrer" className="font-bold text-slate-600 hover:text-[#0097A8] transition-colors">Iuri França</a>
-               </p>
+               <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
+               <p className="flex items-center gap-1">Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" className="font-bold text-slate-600 hover:text-[#0097A8]">Iuri França</a></p>
             </div>
          </div>
       </footer>
