@@ -4,25 +4,32 @@ import * as admin from 'firebase-admin';
 // --- INICIALIZAÇÃO BLINDADA DO FIREBASE ADMIN ---
 if (!admin.apps.length) {
   try {
-    // 1. Tenta via Variável JSON (Mais seguro e recomendado para Vercel)
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    // 1. Tenta via BASE64 (A PROVA DE FALHAS DE FORMATAÇÃO)
+    // Converta seu arquivo service-account.json para Base64 e cole nesta variável
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+        const buffer = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64');
+        const serviceAccount = JSON.parse(buffer.toString('utf-8'));
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+        });
+        console.log("✅ Firebase Admin (Email) iniciado via Base64.");
+    } 
+    // 2. Tenta via Variável JSON (Legado)
+    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
         });
         console.log("✅ Firebase Admin (Email) iniciado via JSON.");
     } 
-    // 2. Fallback para variáveis individuais (Com tratamento de erro)
+    // 3. Fallback para variáveis individuais (Legado)
     else {
         const projectId = process.env.FIREBASE_PROJECT_ID;
         const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
         const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
         if (projectId && clientEmail && privateKeyRaw) {
-            // Tratamento robusto para a chave privada (Obrigatório na Vercel)
             let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
-            
-            // Remove aspas extras se houver
             if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
                 privateKey = privateKey.slice(1, -1);
             }
