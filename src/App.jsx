@@ -119,45 +119,59 @@ const validateCNPJ = (cnpj) => cnpj.replace(/[^\d]+/g, '').length === 14;
 const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/; const match = url.match(regExp); return (match && match[2].length === 11) ? match[2] : null; };
 
 // --- HOOK DE SEO (DEFINIDO NO INÍCIO PARA EVITAR ERROS) ---
-const useSEO = (title, description, noIndex = false) => {
+const useSEO = (title, description, image = null, noIndex = false) => {
+  // Ajuste de compatibilidade: Se o 3º argumento for booleano, trata como noIndex
+  if (typeof image === 'boolean') {
+      noIndex = image;
+      image = null;
+  }
+
+  // URL da imagem padrão
+  const defaultImage = `${window.location.origin}/logo.svg`; 
+  const finalImage = image || defaultImage;
+  const currentUrl = window.location.href;
+  const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
+
   useEffect(() => {
-    // 1. Título
-    document.title = (title === "Home" || !title) ? "Mapa do Day Use" : title;
-    
-    // 2. Meta Description
-    let metaDesc = document.querySelector("meta[name='description']");
-    if (!metaDesc) {
-        metaDesc = document.createElement("meta");
-        metaDesc.name = "description";
-        document.head.appendChild(metaDesc);
-    }
-    metaDesc.content = description || "Encontre e reserve os melhores day uses perto de você.";
+    // 1. Título da Aba
+    document.title = siteTitle;
 
-    // 3. Meta Robots (Controle de Indexação)
-    let metaRobots = document.querySelector("meta[name='robots']");
-    if (!metaRobots) {
-        metaRobots = document.createElement("meta");
-        metaRobots.name = "robots";
-        document.head.appendChild(metaRobots);
-    }
-    
-    if (noIndex) {
-        metaRobots.content = "noindex, nofollow"; // BLOQUEIA GOOGLE
-    } else {
-        metaRobots.content = "index, follow"; // PERMITE GOOGLE
-    }
-
-    // Limpeza ao desmontar (volta ao padrão index para não afetar a próxima página)
-    return () => {
-        metaRobots.content = "index, follow";
+    // Função auxiliar para criar/atualizar meta tags
+    const setMeta = (attrName, attrValue, content) => {
+        let element = document.querySelector(`meta[${attrName}='${attrValue}']`);
+        if (!element) {
+            element = document.createElement('meta');
+            element.setAttribute(attrName, attrValue);
+            document.head.appendChild(element);
+        }
+        element.setAttribute('content', content || "");
     };
 
-  }, [title, description, noIndex]);
+    // 2. Meta Tags Padrão
+    setMeta('name', 'description', description);
+    setMeta('name', 'robots', noIndex ? "noindex, nofollow" : "index, follow");
+
+    // 3. Open Graph (Facebook, WhatsApp, LinkedIn)
+    setMeta('property', 'og:title', siteTitle);
+    setMeta('property', 'og:description', description);
+    setMeta('property', 'og:image', finalImage);
+    setMeta('property', 'og:url', currentUrl);
+    setMeta('property', 'og:type', 'website');
+    setMeta('property', 'og:site_name', 'Mapa do Day Use');
+    setMeta('property', 'og:locale', 'pt_BR');
+
+    // 4. Twitter Card
+    setMeta('name', 'twitter:card', 'summary_large_image');
+    setMeta('name', 'twitter:title', siteTitle);
+    setMeta('name', 'twitter:description', description);
+    setMeta('name', 'twitter:image', finalImage);
+
+  }, [title, description, finalImage, noIndex, currentUrl, siteTitle]);
 };
 
+// --- HOOK DE SCHEMA MARKUP (DADOS ESTRUTURADOS) ---
 const useSchema = (schemaData) => {
   useEffect(() => {
-    // Se não houver dados (null/undefined), não faz nada
     if (!schemaData) return;
 
     const script = document.createElement('script');
@@ -165,7 +179,6 @@ const useSchema = (schemaData) => {
     script.text = JSON.stringify(schemaData);
     document.head.appendChild(script);
 
-    // Limpeza: remove o script quando o componente desmonta ou os dados mudam
     return () => {
       document.head.removeChild(script);
     };
@@ -947,7 +960,7 @@ const HomePage = () => {
         "@type": "Organization",
         "name": "Mapa do Day Use",
         "url": "https://mapadodayuse.com",
-        "logo": "https://mapadodayuse.com/logo.svg",
+        "logo": "https://mapadodayuse.com/logo.png",
         "contactPoint": {
           "@type": "ContactPoint",
           "email": "contato@mapadodayuse.com",
@@ -3445,7 +3458,7 @@ const Layout = ({ children }) => {
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.svg?v=2" 
+                    src="/logo.png?v=2" 
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
                     onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
@@ -3495,7 +3508,7 @@ const Layout = ({ children }) => {
                {/* Coluna 1: Marca e Contato */}
                <div className="col-span-1 md:col-span-2">
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {!logoError ? (<img src="/logo.svg?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
+                     {!logoError ? (<img src="/logo.png?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
                   </div>
                   <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
                      A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.
@@ -4111,7 +4124,7 @@ const WhatIsDayUsePage = () => {
         "@type": "Article",
         "headline": "Day Use: o que é, como funciona e quando vale a pena",
         "description": "Saiba o que é day use, como funciona, quem pode usar e as vantagens. Encontre experiências de day use para curtir o dia.",
-        "image": "https://mapadodayuse.com/logo.svg", // Idealmente uma imagem de capa do artigo
+        "image": "https://mapadodayuse.com/logo.png", // Idealmente uma imagem de capa do artigo
         "author": {
             "@type": "Person",
             "name": "Iuri França"
@@ -4121,7 +4134,7 @@ const WhatIsDayUsePage = () => {
             "name": "Mapa do Day Use",
             "logo": {
                 "@type": "ImageObject",
-                "url": "https://mapadodayuse.com/logo.svg"
+                "url": "https://mapadodayuse.com/logo.png"
             }
         },
         "datePublished": "2026-01-01",
