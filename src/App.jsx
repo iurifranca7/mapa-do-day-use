@@ -22,11 +22,14 @@ import {
   applyActionCode, 
   verifyPasswordResetCode, 
   confirmPasswordReset,
-  verifyBeforeUpdateEmail
+  verifyBeforeUpdateEmail,
+  deleteUser,
+  FacebookAuthProvider,
+  OAuthProvider
 } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Bell, Youtube } from 'lucide-react';
+import { BookOpen, MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Bell, Youtube, Facebook, Smartphone, Apple } from 'lucide-react';
 
 const STATE_NAMES = {
     'MG': 'Minas Gerais', 'SP': 'São Paulo', 'RJ': 'Rio de Janeiro', 'ES': 'Espírito Santo',
@@ -464,7 +467,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   if (!isOpen) return null;
 
   // Estados de Fluxo
-  const [view, setView] = useState(initialMode); 
+  const [view, setView] = useState(initialMode); // 'login', 'register', 'forgot', 'email_sent'
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -474,6 +477,21 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // Helper para chamar nossa API de e-mail (Mailtrap)
+  const sendAuthEmail = async (type, userEmail, userName = '') => {
+      try {
+          await fetch('/api/send-auth-link', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: userEmail, type, name: userName })
+          });
+          return true;
+      } catch (e) {
+          console.error("Erro ao enviar email via API:", e);
+          return false;
+      }
+  };
+
   // Reset de estados ao abrir
   useEffect(() => {
     if (isOpen) {
@@ -482,12 +500,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         setEmail(''); setPassword('');
     }
   }, [isOpen, initialMode, initialRole]);
-
-  // Configuração para onde o usuário volta após clicar no link do e-mail
-  const actionCodeSettings = {
-    url: 'https://mapadodayuse.com/minhas-viagens', 
-    handleCodeInApp: true,
-  };
 
   const ensureProfile = async (u) => {
     const ref = doc(db, "users", u.uid);
@@ -499,19 +511,31 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
             email: u.email || "", 
             name: u.displayName || u.email?.split('@')[0] || "Usuário", 
             role: role, 
+            photoURL: u.photoURL || "",
             createdAt: new Date() 
         }); 
     }
     return { ...u, role: userRole };
   };
 
-  const handleGoogle = async () => {
+  // Handler Genérico para Social Login (Google, Facebook)
+  const handleSocialLogin = async (provider) => {
+    setError('');
     try {
-       const res = await signInWithPopup(auth, googleProvider);
+       const res = await signInWithPopup(auth, provider);
        const userWithRole = await ensureProfile(res.user);
        onSuccess(userWithRole);
        if (closeOnSuccess) onClose();
-    } catch (e) { setError("Erro ao conectar com Google."); }
+    } catch (e) { 
+        console.error(e);
+        if (e.code === 'auth/account-exists-with-different-credential') {
+            setError("Já existe uma conta com este e-mail usando outro método de login.");
+        } else if (e.code === 'auth/popup-closed-by-user') {
+            setError("Login cancelado.");
+        } else {
+            setError("Erro ao conectar. Tente novamente."); 
+        }
+    }
   };
 
   const handleEmailAuth = async (e) => {
@@ -521,17 +545,13 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         if (view === 'register') {
             res = await createUserWithEmailAndPassword(auth, email, password);
             
-            // ENVIO NATIVO FIREBASE (Confirmação)
-            try {
-                await sendEmailVerification(res.user, actionCodeSettings);
-            } catch (emailError) {
-                console.error("Erro ao enviar verificação:", emailError);
-                // Não bloqueia o fluxo se falhar o envio, apenas avisa ou segue
-            }
+            // 1. Envia E-mail de Confirmação via API Mailtrap
+            sendAuthEmail('verify_email', email, email.split('@')[0]);
             
+            // 2. Cria Perfil
             await ensureProfile(res.user);
             
-            // Muda para a tela de aviso "Verifique seu e-mail"
+            // 3. Muda para tela de sucesso (Email Sent)
             setView('email_sent');
             setLoading(false);
             return;
@@ -542,9 +562,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         onSuccess(userWithRole);
         if (closeOnSuccess) onClose();
     } catch (err) {
-        console.error(err);
         if (err.code === 'auth/email-already-in-use') setError("E-mail já cadastrado.");
-        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setError("Dados incorretos.");
+        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') setError("E-mail ou senha incorretos.");
         else setError("Erro: " + err.code);
     } finally { setLoading(false); }
   };
@@ -552,13 +571,16 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleForgot = async (e) => {
       e.preventDefault(); setLoading(true); setError(''); setInfo('');
       try {
-          // ENVIO NATIVO FIREBASE (Reset de Senha)
-          await sendPasswordResetEmail(auth, email, actionCodeSettings);
-          setInfo("Se o e-mail estiver cadastrado, você receberá um link em instantes.");
+          // Usa API Mailtrap para reset de senha
+          const sent = await sendAuthEmail('reset_password', email);
+          
+          if(sent) {
+            setInfo("Link enviado! Verifique sua caixa de entrada e Spam.");
+          } else {
+            setError("Erro ao enviar. Tente novamente mais tarde.");
+          }
       } catch (err) { 
-          console.error(err);
-          // Por segurança, mostramos sucesso mesmo se o e-mail não existir
-          setInfo("Se o e-mail estiver cadastrado, você receberá um link em instantes.");
+          setError("Erro ao enviar. Verifique se o e-mail está correto."); 
       } finally { setLoading(false); }
   };
 
@@ -571,7 +593,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   return (
     <ModalOverlay onClose={onClose}>
       <div className="bg-white w-full rounded-2xl shadow-xl overflow-hidden relative animate-fade-in">
-        
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
             <button onClick={onClose} className="p-1 rounded-full hover:bg-slate-100 transition-colors"><X size={18} className="text-slate-800"/></button>
             <h2 className="font-bold text-slate-800 text-base">{getTitle()}</h2>
@@ -599,10 +620,10 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                 </div>
             ) : (
                 <>
-                    {!hideRoleSelection && (view === 'register' || view === 'login') && (
+                    {!hideRoleSelection && ['login','register'].includes(view) && (
                        <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-                           <button onClick={()=>setRole('user')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${role==='user'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Viajante</button>
-                           <button onClick={()=>setRole('partner')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${role==='partner'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Parceiro</button>
+                           <button onClick={()=>setRole('user')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${role==='user'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Viajante</button>
+                           <button onClick={()=>setRole('partner')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${role==='partner'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Parceiro</button>
                        </div>
                     )}
 
@@ -610,54 +631,49 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                     {info && <div className="mb-4 p-3 bg-green-50 text-green-700 text-xs rounded-lg flex items-center gap-2"><CheckCircle size={16}/> {info}</div>}
 
                     {/* LOGIN / CADASTRO EMAIL */}
-                    {(view === 'login' || view === 'register') && (
-                        <form onSubmit={handleEmailAuth} className="space-y-4">
-                            <div className="border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-black focus-within:border-transparent">
-                                <input type="email" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500 border-b border-slate-200" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
-                                <input type="password" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
-                            </div>
-                            
-                            {view === 'register' && (
-                                <p className="text-[11px] text-slate-500 leading-tight">Ao continuar, concordo com os <span className="underline cursor-pointer" onClick={()=>window.open('/termos-de-uso')}>Termos</span> e <span className="underline cursor-pointer" onClick={()=>window.open('/politica-de-privacidade')}>Política de Privacidade</span>.</p>
-                            )}
-
-                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Continuar' : 'Concordar e continuar')}</Button>
-                        </form>
-                    )}
-
-                    {/* RECUPERAR SENHA */}
-                    {view === 'forgot' && (
-                        <form onSubmit={handleForgot} className="space-y-4">
-                            <p className="text-sm text-slate-600">Insira seu e-mail para receber o link de redefinição.</p>
-                            <input className="w-full p-3 border border-slate-300 rounded-xl outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
-                            <Button type="submit" className="w-full" disabled={loading}>Enviar link</Button>
-                            <p className="text-center text-xs font-bold underline cursor-pointer mt-4" onClick={()=>setView('login')}>Voltar</p>
-                        </form>
-                    )}
-
-                    {/* BOTÕES SOCIAIS E TROCA DE MODO */}
-                    {(view === 'login' || view === 'register') && (
+                    {['login','register'].includes(view) && (
                         <>
-                            <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou</span><div className="flex-grow border-t border-slate-200"></div></div>
-                            <div className="space-y-3">
-                                <button type="button" onClick={handleGoogle} className="w-full border-2 border-slate-200 rounded-xl py-3 flex items-center justify-between px-4 hover:bg-slate-50 transition-all"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" /><span className="text-sm font-semibold text-slate-700">Google</span><div className="w-5"></div></button>
-                            </div>
-                            {view === 'login' ? (
-                                <div className="mt-4 text-center">
-                                    <span className="text-xs text-slate-500 hover:underline cursor-pointer mr-4" onClick={()=>setView('forgot')}>Esqueceu a senha?</span>
-                                    <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('register'); setError('');}}>Cadastre-se</span>
-                                </div>
-                            ) : (
-                                <div className="mt-4 text-center">
-                                    <span className="text-xs text-slate-500">Já tem conta? </span>
-                                    <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('login'); setError('');}}>Entrar</span>
-                                </div>
+                        <form onSubmit={handleEmailAuth} className="space-y-4">
+                            <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
+                            <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required/>
+                            
+                            {/* AVISO LEGAL NO CADASTRO (NOVO) */}
+                            {view === 'register' && (
+                                <p className="text-[11px] text-slate-500 leading-tight text-center">
+                                   Ao se cadastrar, você concorda com nossos <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>window.open('/termos-de-uso', '_blank')}>Termos de Uso</span> e <span className="text-[#0097A8] cursor-pointer hover:underline" onClick={()=>window.open('/politica-de-privacidade', '_blank')}>Política de Privacidade</span>.
+                                </p>
                             )}
+
+                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view==='login' ? 'Entrar' : 'Cadastrar')}</Button>
+                        </form>
+                        
+                        <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou entre com</span><div className="flex-grow border-t border-slate-200"></div></div>
+                        
+                        <div className="space-y-3">
+                            {/* GOOGLE */}
+                            <button onClick={() => handleSocialLogin(googleProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-slate-50 transition-all font-semibold text-slate-600 text-sm">
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5"/> Continuar com Google
+                            </button>
+                            
+                            {/* FACEBOOK */}
+                            <button onClick={() => handleSocialLogin(facebookProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-[#1877F2] hover:text-white hover:border-[#1877F2] transition-all font-semibold text-slate-600 text-sm group">
+                                <Facebook size={20} className="text-[#1877F2] group-hover:text-white transition-colors" fill="currentColor" /> Continuar com Facebook
+                            </button>
+                        </div>
+
+                        <div className="mt-6 text-center text-xs text-slate-500">
+                            {view==='login' ? <><span onClick={()=>setView('forgot')} className="cursor-pointer hover:underline">Esqueci a senha</span> • <span onClick={()=>setView('register')} className="cursor-pointer font-bold text-[#0097A8]">Criar conta</span></> : <span onClick={()=>setView('login')} className="cursor-pointer font-bold text-[#0097A8]">Já tenho conta</span>}
+                        </div>
                         </>
                     )}
-                    
+
                     {view === 'forgot' && (
-                        <p className="text-center text-xs font-bold underline cursor-pointer mt-6" onClick={()=>setView('login')}>Voltar</p>
+                        <form onSubmit={handleForgot} className="space-y-4">
+                            <p className="text-sm text-slate-600">Digite seu e-mail para redefinir a senha.</p>
+                            <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
+                            <Button type="submit" className="w-full" disabled={loading}>Enviar Link</Button>
+                            <p className="text-center text-xs cursor-pointer mt-4" onClick={()=>setView('login')}>Voltar</p>
+                        </form>
                     )}
                 </>
             )}
@@ -682,6 +698,12 @@ const UserProfile = () => {
   // States de UI (Modais)
   const [feedback, setFeedback] = useState(null); // { type, title, msg }
   const [confirmAction, setConfirmAction] = useState(null); // { type }
+  
+  // States LGPD (Exclusão)
+  const [deleteStep, setDeleteStep] = useState(0); // 0=fechado, 1=confirmação, 2=motivo
+  const [deleteReason, setDeleteReason] = useState('');
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetch = async () => {
@@ -702,7 +724,6 @@ const UserProfile = () => {
     fetch();
   }, [user]);
 
-  // Upload de Foto/Logo
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -716,7 +737,6 @@ const UserProfile = () => {
       }
   };
 
-  // Salvar Dados Básicos (e E-mail/Senha se não for Staff)
   const handleSave = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
@@ -747,26 +767,20 @@ const UserProfile = () => {
             }
         }
         
-        // Se não houve erro até aqui e não foi apenas troca de email pendente
         if (!newEmail && !newPass) {
              setFeedback({ type: 'success', title: 'Salvo', msg: 'Dados do perfil atualizados.' });
         }
-        
         setNewPass(''); setNewEmail('');
-        
     } catch (err) {
         console.error(err);
         if (err.code === 'auth/requires-recent-login') {
             setFeedback({ type: 'warning', title: 'Login Necessário', msg: 'Para alterar dados sensíveis, faça logout e entre novamente.' });
-        } else if (err.code === 'auth/operation-not-allowed') {
-            setFeedback({ type: 'error', title: 'Não Permitido', msg: 'Operação não permitida ou provedor desabilitado.' });
         } else {
             setFeedback({ type: 'error', title: 'Erro', msg: err.message });
         }
     } finally { setLoading(false); }
   };
 
-  // Botão de Solicitação (Abre Modal de Confirmação)
   const initiateRequest = (type) => {
       if (!ownerId) { 
           setFeedback({ type: 'error', title: 'Erro', msg: 'Usuário não vinculado a um parceiro.' });
@@ -776,55 +790,87 @@ const UserProfile = () => {
           setFeedback({ type: 'warning', title: 'Atenção', msg: 'Digite o novo e-mail desejado.' });
           return;
       }
-
       setConfirmAction({ type: type === 'email' ? 'request_email' : 'request_password' });
   };
-  
-  const initiatePasswordReset = () => {
-      setConfirmAction({ type: 'reset_self' });
-  };
 
-  // Executa a solicitação após confirmação
-  const executeAction = async () => {
+  const executeRequest = async () => {
       if (!confirmAction) return;
-      const { type } = confirmAction;
-      
+      const type = confirmAction.type === 'request_email' ? 'email' : 'password';
       try {
-          if (type === 'request_email' || type === 'request_password') {
-              await addDoc(collection(db, "requests"), {
-                  type: type === 'request_email' ? 'email' : 'password',
-                  staffId: user.uid,
-                  staffName: data.name,
-                  staffEmail: user.email,
-                  ownerId: ownerId, 
-                  status: 'pending',
-                  createdAt: new Date(),
-                  newEmailValue: type === 'request_email' ? newEmail : null 
-              });
-              setFeedback({ type: 'success', title: 'Solicitação Enviada', msg: 'O administrador foi notificado.' });
-              setNewEmail(''); 
-          } else if (type === 'reset_self') {
-              await sendPasswordResetEmail(auth, user.email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
-              setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Verifique seu e-mail para redefinir a senha.' });
-          }
+          await addDoc(collection(db, "requests"), {
+              type: type,
+              staffId: user.uid,
+              staffName: data.name,
+              staffEmail: user.email,
+              ownerId: ownerId, 
+              status: 'pending',
+              createdAt: new Date(),
+              newEmailValue: type === 'email' ? newEmail : null 
+          });
+          setFeedback({ type: 'success', title: 'Solicitação Enviada', msg: 'O administrador foi notificado.' });
+          setNewEmail(''); 
       } catch (e) {
-          console.error(e);
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível completar a ação.' });
+          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível enviar a solicitação.' });
       } finally {
           setConfirmAction(null);
       }
   };
 
-  // Helper de E-mail (Reenviar verificação)
+  // --- LÓGICA DE EXCLUSÃO (LGPD) ---
+  const handleDeleteAccount = async () => {
+      setLoading(true);
+      try {
+          // 1. Opcional: Salvar o motivo da exclusão em uma coleção separada para feedback do negócio
+          if (deleteReason) {
+              await addDoc(collection(db, "deletion_reasons"), {
+                  uid: user.uid,
+                  reason: deleteReason,
+                  role: user.role || 'user',
+                  date: new Date()
+              });
+          }
+
+          // 2. Apagar dados do Firestore (Perfil)
+          await deleteDoc(doc(db, "users", user.uid));
+          
+          // 3. Apagar Conta de Autenticação (Irreversível)
+          await deleteUser(user);
+          
+          alert("Sua conta foi excluída com sucesso. Sentiremos sua falta!");
+          navigate('/');
+
+      } catch (error) {
+          console.error("Erro ao excluir:", error);
+          if (error.code === 'auth/requires-recent-login') {
+              setFeedback({ type: 'warning', title: 'Segurança', msg: 'Para excluir sua conta, por favor faça logout e login novamente para confirmar sua identidade.' });
+          } else {
+              setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível excluir a conta. Tente novamente mais tarde.' });
+          }
+      } finally {
+          setLoading(false);
+          setDeleteStep(0);
+      }
+  };
+
   const resendVerify = async () => {
       try {
         await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
         setFeedback({ type: 'success', title: 'Enviado', msg: 'Verifique sua caixa de entrada e Spam.' });
       } catch(e) {
-          console.error(e);
           if (e.code === 'auth/too-many-requests') setFeedback({ type: 'warning', title: 'Aguarde', msg: 'Muitas tentativas. Tente novamente em breve.' });
           else setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar e-mail.' });
       }
+  };
+
+  const initiatePasswordReset = () => { setConfirmAction({ type: 'reset_self' }); };
+
+  const executePasswordReset = async () => {
+      try {
+          await sendPasswordResetEmail(auth, user.email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
+          setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Verifique seu e-mail para redefinir a senha.' });
+      } catch(e) { 
+          setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar e-mail de redefinição.' }); 
+      } finally { setConfirmAction(null); }
   };
 
   if(!user) return null;
@@ -833,34 +879,72 @@ const UserProfile = () => {
     <div className="max-w-xl mx-auto py-12 px-4 animate-fade-in">
       <h1 className="text-3xl font-bold mb-8 text-slate-900">Meu Perfil {isStaff && <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle">EQUIPE</span>}</h1>
       
-      {/* MODAL GLOBAL DE FEEDBACK */}
-      {feedback && createPortal(
-         <FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, 
-         document.body
-      )}
-
-      {/* MODAL DE CONFIRMAÇÃO GENÉRICO */}
+      {/* Modais Globais */}
+      {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
+      
       {confirmAction && createPortal(
           <ModalOverlay onClose={() => setConfirmAction(null)}>
               <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Info size={32}/>
+                  <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Info size={40}/>
                   </div>
                   <h2 className="text-xl font-bold text-slate-900 mb-2">Confirmação</h2>
-                  <p className="text-slate-600 mb-6 text-sm">
+                  <p className="text-slate-600 mb-6 text-sm px-2">
                       {confirmAction.type === 'request_email' && `Solicitar troca de e-mail para ${newEmail}?`}
                       {confirmAction.type === 'request_password' && "Solicitar redefinição de senha ao administrador?"}
                       {confirmAction.type === 'reset_self' && `Enviar link de redefinição para ${user.email}?`}
                   </p>
                   <div className="flex gap-3">
                       <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
-                      <Button 
-                        onClick={executeAction} 
-                        className="flex-1 justify-center"
-                      >
-                          Confirmar
-                      </Button>
+                      <Button onClick={confirmAction.type === 'reset_self' ? executePasswordReset : executeRequest} className="flex-1 justify-center">Confirmar</Button>
                   </div>
+              </div>
+          </ModalOverlay>, document.body
+      )}
+
+      {/* --- FLUXO DE EXCLUSÃO (LGPD) - VISUAL UNIFICADO --- */}
+      {deleteStep > 0 && createPortal(
+          <ModalOverlay onClose={() => setDeleteStep(0)}>
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                  {/* Ícone Padronizado */}
+                  <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Trash2 size={40}/>
+                  </div>
+                  
+                  {deleteStep === 1 ? (
+                      <>
+                          <h2 className="text-xl font-bold text-slate-900 mb-2">Excluir Conta?</h2>
+                          <p className="text-slate-600 mb-6 text-sm px-2">
+                              Tem certeza que deseja excluir sua conta permanentemente? <br/>
+                              <strong>Essa ação é irreversível</strong> e você perderá acesso ao histórico de reservas.
+                          </p>
+                          <div className="flex gap-3">
+                              <Button onClick={() => setDeleteStep(0)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
+                              <Button onClick={() => setDeleteStep(2)} variant="danger" className="flex-1 justify-center">Sim, Excluir</Button>
+                          </div>
+                      </>
+                  ) : (
+                      <>
+                          <h2 className="text-xl font-bold text-slate-900 mb-2">Que pena ver você ir!</h2>
+                          <p className="text-slate-600 mb-4 text-sm px-2">
+                              Poderia nos contar o motivo? Isso nos ajuda a melhorar. (Opcional)
+                          </p>
+                          <textarea 
+                              className="w-full border p-3 rounded-xl mb-6 text-sm h-24 resize-none focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none"
+                              placeholder="Conte-nos o motivo..."
+                              value={deleteReason}
+                              onChange={e => setDeleteReason(e.target.value)}
+                          />
+                          <div className="flex gap-3 flex-col">
+                              <Button onClick={handleDeleteAccount} variant="danger" className="w-full justify-center" disabled={loading}>
+                                  {loading ? 'Excluindo...' : 'Confirmar Exclusão Definitiva'}
+                              </Button>
+                              <button onClick={() => setDeleteStep(0)} className="text-xs text-slate-400 hover:text-slate-600 underline">
+                                  Mudei de ideia, quero ficar
+                              </button>
+                          </div>
+                      </>
+                  )}
               </div>
           </ModalOverlay>,
           document.body
@@ -871,15 +955,8 @@ const UserProfile = () => {
          {/* FOTO / LOGO */}
          <div className="flex flex-col items-center gap-4 mb-6">
              <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
-                 {data.photoURL ? (
-                     <img src={data.photoURL} className="w-full h-full object-cover" />
-                 ) : (
-                     <User size={40} className="text-slate-400"/>
-                 )}
-                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">
-                     Alterar
-                     <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-                 </label>
+                 {data.photoURL ? <img src={data.photoURL} className="w-full h-full object-cover" /> : <User size={40} className="text-slate-400"/>}
+                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">Alterar<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label>
              </div>
              <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
          </div>
@@ -942,6 +1019,17 @@ const UserProfile = () => {
          </div>
 
          <Button type="submit" className="w-full mt-4" disabled={loading}>{loading ? 'Salvando...' : 'Salvar Alterações'}</Button>
+         
+         {/* BOTÃO EXCLUIR CONTA (NOVO - LGPD) */}
+         <div className="pt-8 border-t border-slate-100">
+             <button 
+                type="button"
+                onClick={() => setDeleteStep(1)}
+                className="text-xs text-red-400 hover:text-red-600 hover:underline flex items-center gap-1 mx-auto"
+             >
+                <Trash2 size={12}/> Quero excluir minha conta
+             </button>
+         </div>
       </form>
     </div>
   );
@@ -1134,9 +1222,7 @@ const DetailsPage = () => {
   const params = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const [showWarning, setShowWarning] = useState(null);
   
-  // 1. CORREÇÃO DE ROTAS: Captura parâmetros de qualquer tipo de rota
   const slug = params.slug || params.cityOrSlug;
   const idParam = params.id; 
 
@@ -1159,6 +1245,9 @@ const DetailsPage = () => {
   const [claimLoading, setClaimLoading] = useState(false);
   const [showClaimSuccess, setShowClaimSuccess] = useState(false);
   const [claimData, setClaimData] = useState({ name: '', email: '', phone: '', job: '' });
+  
+  // State para alertas de validação (quantidade)
+  const [showWarning, setShowWarning] = useState(null);
 
   useEffect(() => {
     const fetchItem = async () => {
@@ -1166,7 +1255,6 @@ const DetailsPage = () => {
       try {
           let foundData = null;
           
-          // Prioridade: ID no state > ID na URL > Slug
           if (location.state?.id) {
              const docSnap = await getDoc(doc(db, "dayuses", location.state.id));
              if(docSnap.exists()) foundData = {id: docSnap.id, ...docSnap.data()};
@@ -1226,18 +1314,13 @@ const DetailsPage = () => {
     }
   }, [date, item]);
 
-  // 2. SEO DINÂMICO
-  const seoTitle = item 
-    ? `${item.name} | Reserve seu Day Use em ${item.city}` 
-    : "Detalhes do Day Use";
-
+  const seoTitle = item ? `${item.name} | Reserve seu Day Use em ${item.city}` : "Detalhes do Day Use";
   const seoDesc = item 
     ? `Compre seu ingresso para o day use ${item.name} em ${item.city}. Day Use com ${item.amenities?.[0] || 'Piscina'}, ${item.meals?.[0] || 'Almoço'} e muito mais!`
     : "Confira detalhes, preços e fotos deste Day Use incrível. Reserve agora!";
 
-  useSEO(seoTitle, seoDesc);
+  useSEO(seoTitle, seoDesc, item?.image);
 
-  // 3. SCHEMA MARKUP
   useSchema(item ? {
     "@context": "https://schema.org",
     "@graph": [
@@ -1285,7 +1368,6 @@ const DetailsPage = () => {
     ]
   } : null);
 
-  // --- SKELETON LOADING ---
   if (loading) return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
         <div className="flex items-center gap-2 mb-8"><div className="w-20 h-10 bg-slate-200 rounded-full animate-pulse"></div></div>
@@ -1308,7 +1390,6 @@ const DetailsPage = () => {
       </div>
   );
   
-  // Cálculos
   let childPrice = Number(item.priceChild || 0);
   let petFee = Number(item.petFee || 0);
   if (date && item.weeklyPrices) {
@@ -1336,70 +1417,150 @@ const DetailsPage = () => {
   };
 
   const handleBook = () => {
-      navigate('/checkout', { state: { bookingData: { item, date, adults, children, pets, total, freeChildren, selectedSpecial, priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } } } });
+      navigate('/checkout', { 
+          state: { 
+              bookingData: { 
+                  item, date, adults, children, pets, total, 
+                  freeChildren, 
+                  selectedSpecial,
+                  priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
+              } 
+          } 
+      });
   };
 
-  // ... (handleClaimSubmit e PausedMessage iguais)
-  const handleClaimSubmit = async(e) => { e.preventDefault(); setClaimLoading(true); const emailHtml = `...`; try { await fetch('/api/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: 'Solicitação de Claim' }) }); setShowClaimModal(false); setShowClaimSuccess(true); setClaimData({ name: '', email: '', phone: '', job: '' }); } catch(error){console.error(error); alert("Erro ao enviar.");} finally{setClaimLoading(false);} };
-  const PausedMessage = () => (<div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6"><div className="pb-4 border-b border-slate-100 text-center"><p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p><button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button></div><div className="text-center"><div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400"><Ticket size={24}/></div><h3 className="text-lg font-bold text-slate-800 mb-2">Reservas Indisponíveis</h3><p className="text-slate-500 leading-relaxed text-xs">No momento, este local não está recebendo novas reservas.<br/><strong className="text-slate-700">Confira outras opções em {item.city}:</strong></p></div><div className="space-y-3">{relatedItems.length > 0 ? relatedItems.map(related => (<div key={related.id} onClick={() => navigate(`/${getStateSlug(related.state)}/${generateSlug(related.name)}`, {state: {id: related.id}})} className="flex items-center gap-3 p-2 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:shadow-md transition-all cursor-pointer bg-slate-50 hover:bg-white group"><img src={related.image} className="w-16 h-16 rounded-lg object-cover bg-gray-200 shrink-0"/><div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div><div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div></div>)) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}</div></div>);
+  const handleClaimSubmit = async (e) => {
+      e.preventDefault();
+      setClaimLoading(true);
+      const emailHtml = `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+            <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
+            <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
+            <p><strong>Solicitante:</strong> ${claimData.name}</p>
+            <p><strong>E-mail:</strong> ${claimData.email}</p>
+            <p><strong>Telefone:</strong> ${claimData.phone}</p>
+            <p><strong>Cargo:</strong> ${claimData.job}</p>
+        </div>
+      `;
+      try {
+          await fetch('/api/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: emailHtml })
+          });
+          setShowClaimModal(false);
+          setShowClaimSuccess(true);
+          setClaimData({ name: '', email: '', phone: '', job: '' });
+      } catch (error) { console.error(error); alert("Erro ao enviar solicitação."); } 
+      finally { setClaimLoading(false); }
+  };
+
+  const PausedMessage = () => (
+    <div className="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 text-center space-y-6">
+        <div className="pb-4 border-b border-slate-100 text-center">
+            <p className="text-xs text-slate-400 mb-2">Você é o dono ou gerente deste local?</p>
+            <button onClick={() => setShowClaimModal(true)} className="text-sm font-bold text-[#0097A8] hover:underline flex items-center justify-center gap-1 mx-auto"><Briefcase size={14}/> Solicitar administração</button>
+        </div>
+        <div className="text-center">
+            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400"><Ticket size={24}/></div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">Reservas Indisponíveis</h3>
+            <p className="text-slate-500 leading-relaxed text-xs">No momento, este local não está recebendo novas reservas.<br/><strong className="text-slate-700">Confira outras opções em {item.city}:</strong></p>
+        </div>
+        <div className="space-y-3">
+            {relatedItems.length > 0 ? relatedItems.map(related => (
+                <div key={related.id} onClick={() => navigate(`/${getStateSlug(related.state)}/${generateSlug(related.name)}`, {state: {id: related.id}})} className="flex items-center gap-3 p-2 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:shadow-md transition-all cursor-pointer bg-slate-50 hover:bg-white group">
+                    <img src={related.image} className="w-16 h-16 rounded-lg object-cover bg-gray-200 shrink-0"/>
+                    <div className="flex-1 min-w-0"><h4 className="font-bold text-slate-800 text-sm truncate">{related.name}</h4><p className="text-xs text-[#0097A8] font-bold mt-1">A partir de {formatBRL(related.priceAdult)}</p></div>
+                    <div className="text-[#0097A8] opacity-0 group-hover:opacity-100 transition-opacity pr-2"><ArrowRight size={16}/></div>
+                </div>
+            )) : <Button onClick={() => navigate('/')} className="w-full py-3 text-sm shadow-lg shadow-teal-100/50">Ver todos os Day Uses</Button>}
+        </div>
+    </div>
+  );
 
   return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
       <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
       
-      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados..." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
+      {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
+
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Marketing</option><option>Comercial</option></select></div></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
+
+      {/* MODAL DE ALERTA (Trava de Adultos) */}
+      {showWarning && createPortal(
+          <ModalOverlay onClose={() => setShowWarning(null)}>
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                  <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertCircle size={32}/>
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">{showWarning.title}</h2>
+                  <p className="text-slate-600 mb-6 text-sm">{showWarning.msg}</p>
+                  <Button onClick={() => setShowWarning(null)} className="w-full justify-center">Entendi</Button>
+              </div>
+          </ModalOverlay>,
+          document.body
+      )}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
+            
+            {/* 1. TÍTULO E LOCALIZAÇÃO */}
             <div><h1 className="text-4xl font-bold text-slate-900 mb-2">{item.name}</h1><p className="flex items-center gap-2 text-slate-500 text-lg"><MapPin size={20} className="text-[#0097A8]"/> {item.city}, {item.state}</p></div>
 
+            {/* 2. GALERIA */}
             <div className="grid grid-cols-4 gap-3 h-[400px] rounded-[2rem] overflow-hidden shadow-lg cursor-pointer group" onClick={()=>setGalleryOpen(true)}><div className="col-span-3 relative h-full"><img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/><div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"></div></div><div className="col-span-1 grid grid-rows-2 gap-3 h-full"><div className="relative overflow-hidden h-full"><img src={item.image2} className="w-full h-full object-cover"/></div><div className="relative overflow-hidden h-full"><img src={item.image3} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white font-bold text-sm hover:bg-black/50 transition-colors">Ver fotos</div></div></div></div>
             
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-8">
+               
+               {/* 3. SOBRE (H2 com nome) */}
                <div>
-                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2">
-                       <FileText className="text-[#0097A8]"/> Sobre
-                   </h3>
-                   <p className="text-slate-600 leading-relaxed whitespace-pre-line text-sm">
-                       {item.description}
-                   </p>
+                   <h2 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><FileText className="text-[#0097A8]"/> Sobre {item.name}</h2>
+                   <p className="text-slate-600 leading-relaxed whitespace-pre-line text-sm">{item.description}</p>
                </div>
-
+               
+               {/* 4. VÍDEO */}
+               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
+               
+               {/* 5. O QUE ESTÁ INCLUSO (H2 com nome) */}
                <div>
-                   <h3 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso</h3>
+                   <h2 className="font-bold text-xl mb-4 text-slate-900 flex items-center gap-2"><CheckCircle className="text-[#0097A8]"/> O que está incluso no day use do {item.name}?</h2>
                    
-                   {/* 4. CORREÇÃO DE COMODIDADES (Split string se necessário) */}
+                   {/* Comodidades */}
                    {item.amenities && item.amenities.length > 0 && (
                        <div className="mb-6">
                            <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
                            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
-                               {item.amenities
-                                   .flatMap(a => a.includes(',') ? a.split(',') : a) // Quebra strings longas
-                                   .map(a => a.trim())
-                                   .filter(a => a !== "")
-                                   .map((a, idx) => (
-                                       <div key={`${a}-${idx}`} className="flex items-center gap-2 text-sm text-slate-600">
-                                           <div className="w-1.5 h-1.5 rounded-full bg-[#0097A8] shrink-0"></div> 
-                                           <span className="capitalize">{a}</span>
-                                       </div>
-                                   ))
-                               }
+                               {item.amenities.flatMap(a => a.includes(',') ? a.split(',') : a).map(a => a.trim()).filter(a => a !== "").map((a, idx) => (
+                                   <div key={`${a}-${idx}`} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8] shrink-0"></div> <span className="capitalize">{a}</span></div>
+                               ))}
                            </div>
                        </div>
                    )}
-                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4"><div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>{item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}</div>
+
+                   {/* Pensão */}
+                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4">
+                       <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>
+                       {item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
+                   </div>
+
+                   {/* Outros Inclusos */}
                    {item.includedItems && (<div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>)}
                </div>
 
-               {item.videoUrl && (<div className="rounded-2xl overflow-hidden shadow-md aspect-video"><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${getYoutubeId(item.videoUrl)}`} title="Video" frameBorder="0" allowFullScreen></iframe></div>)}
+               {/* 6. NÃO INCLUSO (H2) */}
+               <div className="pt-4 border-t border-slate-100">
+                   <h2 className="font-bold text-red-500 mb-2 flex items-center gap-2 text-lg"><Ban size={18}/> O que NÃO está incluso no day use do {item.name}</h2>
+                   <p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p>
+               </div>
                
-               <div className="pt-4 border-t border-slate-100"><h4 className="font-bold text-red-500 mb-2 flex items-center gap-2"><Ban size={18}/> Não incluso</h4><p className="text-slate-600 text-sm whitespace-pre-line">{item.notIncludedItems || "Nenhum item específico."}</p></div>
-               
+               {/* 7. REGRAS (ACCORDION) */}
                <Accordion title="Regras de Utilização" icon={Info}>
                    <p className="text-slate-600 text-sm whitespace-pre-line">{item.usageRules || "Sem regras específicas."}</p>
                </Accordion>
-               <Accordion title="Cancelamento e Reembolso" icon={AlertCircle}>
+               
+               {/* 8. CANCELAMENTO (ACCORDION) */}
+               <Accordion title="Cancelamento e Remarcações" icon={AlertCircle}>
                    <p className="text-slate-600 text-sm whitespace-pre-line">{item.cancellationPolicy || "Consulte o estabelecimento."}</p>
                </Accordion>
             </div>
@@ -1409,9 +1570,12 @@ const DetailsPage = () => {
             {item.paused ? <PausedMessage /> : (
                 <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8">
                    <div className="flex justify-between items-end border-b border-slate-100 pb-6"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{date ? "Preço para a data" : "A partir de"}</p><span className="text-3xl font-bold text-[#0097A8]">{formatBRL(currentPrice)}</span><span className="text-slate-400 text-sm"> / adulto</span></div></div>
-                   <div><label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label><SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}</div>
                    
-                   {/* SEÇÃO DE QUANTIDADES COM TRAVA (NOVO COMPORTAMENTO) */}
+                   <div>
+                       <label className="text-sm font-bold text-slate-700 mb-3 block flex items-center gap-2"><CalendarIcon size={16} className="text-[#0097A8]"/> Escolha uma data</label>
+                       <SimpleCalendar availableDays={item.availableDays} blockedDates={item.blockedDates || []} prices={item.weeklyPrices || {}} basePrice={Number(item.priceAdult)} onDateSelect={setDate} selectedDate={date} />{date && <p className="text-xs font-bold text-[#0097A8] mt-2 text-center bg-cyan-50 py-2 rounded-lg">Data selecionada: {date.split('-').reverse().join('/')}</p>}
+                   </div>
+
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                      <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{const newVal = Math.max(0, adults-1); setAdults(newVal); if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }}}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
                      
@@ -1440,9 +1604,7 @@ const DetailsPage = () => {
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
                              <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm">
                                  <button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button>
-                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span>
-                                 <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button>
-                             </div>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button></div>
                          </div>
                      )}
                    </div>
@@ -1468,20 +1630,6 @@ const DetailsPage = () => {
             )}
          </div>
       </div>
-      
-      {/* Modal de Aviso de Dependência (Exibido se showWarning tiver dados) */}
-      {showWarning && createPortal(
-          <ModalOverlay onClose={() => setShowWarning(null)}>
-              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                  <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle size={32}/></div>
-                  <h2 className="text-xl font-bold text-slate-900 mb-2">{showWarning.title}</h2>
-                  <p className="text-slate-600 mb-6 text-sm">{showWarning.msg}</p>
-                  <Button onClick={() => setShowWarning(null)} className="w-full justify-center">Entendi</Button>
-              </div>
-          </ModalOverlay>,
-          document.body
-      )}
-
     </div>
   );
 };
@@ -2430,8 +2578,11 @@ const PartnerDashboard = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   
+  // Modais de Controle
   const [feedback, setFeedback] = useState(null); 
   const [confirmAction, setConfirmAction] = useState(null);
+  const [editStaffModal, setEditStaffModal] = useState(null); 
+  const [newStaffEmailInput, setNewStaffEmailInput] = useState('');
 
   // States Cadastro Equipe
   const [staffEmail, setStaffEmail] = useState('');
@@ -2440,6 +2591,9 @@ const PartnerDashboard = () => {
 
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
+
+  // Import necessário (adicione BookOpen aos imports do lucide-react no topo se não tiver)
+  // import { ..., BookOpen } from 'lucide-react';
 
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, async u => {
@@ -2474,18 +2628,35 @@ const PartnerDashboard = () => {
      window.location.href = `https://auth.mercadopago.com.br/authorization?client_id=${clientId}&response_type=code&platform_id=mp&state=${user.uid}&redirect_uri=${encodedRedirect}`;
   };
 
-  // --- AÇÕES ---
-  const confirmTogglePause = (item) => { setConfirmAction({ type: item.paused ? 'resume_ad' : 'pause_ad', payload: item }); };
-  const confirmDeleteStaff = (staffId) => { setConfirmAction({ type: 'delete_staff', payload: staffId }); };
-  const confirmResetStaffPass = (email, requestId = null) => { setConfirmAction({ type: 'reset_staff_pass', payload: { email, requestId } }); };
+  // --- CONFIRMAÇÕES (Abrem o Modal) ---
+  const confirmTogglePause = (item) => {
+      setConfirmAction({ 
+          type: item.paused ? 'resume_ad' : 'pause_ad', 
+          payload: item 
+      });
+  };
 
+  const confirmDeleteStaff = (staffId) => {
+      setConfirmAction({ type: 'delete_staff', payload: staffId });
+  };
+
+  const confirmResetStaffPass = (email, requestId = null) => {
+      setConfirmAction({ type: 'reset_staff_pass', payload: { email, requestId } });
+  };
+
+  // --- EXECUÇÃO DAS AÇÕES (No Modal) ---
   const executeAction = async () => {
       if (!confirmAction) return;
       const { type, payload } = confirmAction;
+
       try {
-          if (type === 'pause_ad' || type === 'resume_ad') {
-               await updateDoc(doc(db, "dayuses", payload.id), { paused: type === 'pause_ad' });
-               setFeedback({ type: 'success', title: 'Sucesso', msg: `Anúncio ${type === 'pause_ad' ? 'pausado' : 'reativado'}.` });
+          if (type === 'pause_ad') {
+               await updateDoc(doc(db, "dayuses", payload.id), { paused: true });
+               setFeedback({ type: 'success', title: 'Pausado', msg: 'Seu anúncio não aparece mais nas buscas.' });
+          }
+          else if (type === 'resume_ad') {
+               await updateDoc(doc(db, "dayuses", payload.id), { paused: false });
+               setFeedback({ type: 'success', title: 'Ativo', msg: 'Seu anúncio voltou a aparecer nas buscas.' });
           }
           else if (type === 'delete_staff') {
                await deleteDoc(doc(db, "users", payload));
@@ -2503,59 +2674,12 @@ const PartnerDashboard = () => {
       }
   };
 
-  const handleValidate = async (resId, codeInput) => {
-     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
-        try {
-            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
-            const res = reservations.find(r => r.id === resId);
-            setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: `Acesso liberado para ${res?.guestName}.` });
-            setValidationCode("");
-        } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); }
-     } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); }
-  };
-  
-  const onScanSuccess = (decodedText) => {
-      setShowScanner(false);
-      const res = reservations.find(r => r.id === decodedText);
-      if (res) {
-          if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' });
-          else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' });
-          else handleValidate(res.id, res.id);
-      } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' });
-  };
-
-  // --- GESTÃO DE EQUIPE ---
-
-  // Lógica Simplificada: Apenas instrui o dono a recriar o usuário
-  const handleViewEmailInstruction = async (req) => {
-      // Marca como revisado para sair da lista de pendentes
-      if (req.id) await updateDoc(doc(db, "requests", req.id), { status: 'reviewed' });
-      
-      setFeedback({
-          type: 'info',
-          title: 'Alteração de E-mail',
-          msg: `O funcionário solicitou a troca para: ${req.newEmailValue}.\n\nPor segurança, o sistema não permite alteração direta.\n\nPROCEDIMENTO:\n1. Remova o usuário antigo (${req.staffEmail}).\n2. Cadastre um novo usuário com o novo e-mail.`
-      });
-  };
-  
-  const handleAddStaff = async (e) => {
-      e.preventDefault();
-      setStaffLoading(true);
-      try {
-          const secondaryApp = initializeApp(getApp().options, "Secondary");
-          const secondaryAuth = getAuth(secondaryApp);
-          const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass);
-          await sendEmailVerification(createdUser.user);
-          await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" });
-          await signOut(secondaryAuth);
-          setFeedback({ type: 'success', title: 'Criado!', msg: 'Usuário criado. Link de confirmação enviado.' });
-          setStaffEmail(''); setStaffPass('');
-      } catch (err) {
-          setFeedback({ type: 'error', title: 'Erro ao cadastrar', msg: err.code === 'auth/email-already-in-use' ? 'E-mail já existe.' : 'Verifique os dados.' });
-      } finally {
-          setStaffLoading(false);
-      }
-  };
+  // ... (handleValidate, onScanSuccess, handleUpdateStaffEmail, handleAddStaff, cálculos - MANTIDOS IGUAIS) ...
+  // COPIE AS FUNÇÕES ABAIXO DO CÓDIGO ANTERIOR:
+  const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); const res = reservations.find(r => r.id === resId); setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: `Acesso liberado para ${res?.guestName}.` }); setValidationCode(""); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); } } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); } };
+  const onScanSuccess = (decodedText) => { setShowScanner(false); const res = reservations.find(r => r.id === decodedText); if (res) { if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' }); else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' }); else handleValidate(res.id, res.id); } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' }); };
+  const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); const data = await response.json(); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: `E-mail alterado para ${newEmail}. Link de confirmação enviado.` }); setEditStaffModal(null); setNewStaffEmailInput(''); } else { throw new Error(data.error || 'Erro desconhecido'); } } catch (err) { console.error(err); setFeedback({ type: 'error', title: 'Erro ao Atualizar', msg: err.message }); } finally { setStaffLoading(false); } };
+  const handleAddStaff = async (e) => { e.preventDefault(); setStaffLoading(true); try { const secondaryApp = initializeApp(getApp().options, "Secondary"); const secondaryAuth = getAuth(secondaryApp); const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass); await sendEmailVerification(createdUser.user); await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" }); await signOut(secondaryAuth); setFeedback({ type: 'success', title: 'Equipe Cadastrada!', msg: `Usuário ${staffEmail} criado. Link de confirmação enviado.` }); setStaffEmail(''); setStaffPass(''); } catch (err) { setFeedback({ type: 'error', title: 'Erro ao cadastrar', msg: err.code === 'auth/email-already-in-use' ? 'E-mail já existe.' : 'Verifique os dados.' }); } finally { setStaffLoading(false); } };
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
 
@@ -2568,24 +2692,77 @@ const PartnerDashboard = () => {
   const cardTotal = totalBalance - pixTotal; 
   const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
   const couponBreakdown = reservations.reduce((acc, r) => { if (r.discount > 0) { const code = r.couponCode || "OUTROS"; acc[code] = (acc[code] || 0) + 1; } return acc; }, {});
+  
   const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
-  const dailyStats = dailyGuests.reduce((acc, curr) => {
-      const adt = Number(curr.adults || 0);
-      const chd = Number(curr.children || 0);
-      const free = Number(curr.freeChildren || 0);
-      const pet = Number(curr.pets || 0);
-      let specials = 0;
-      if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q));
-      return { adults: acc.adults + adt, children: acc.children + chd, freeChildren: acc.freeChildren + free, pets: acc.pets + pet, specials: acc.specials + specials, total: acc.total + adt + chd + free };
-  }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
+  const dailyStats = dailyGuests.reduce((acc, curr) => { const adt = Number(curr.adults || 0); const chd = Number(curr.children || 0); const free = Number(curr.freeChildren || 0); const pet = Number(curr.pets || 0); let specials = 0; if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q)); return { adults: acc.adults + adt, children: acc.children + chd, freeChildren: acc.freeChildren + free, pets: acc.pets + pet, specials: acc.specials + specials, total: acc.total + adt + chd + free }; }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
 
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12 relative">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
         <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
         
-        {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
-        {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"><h2 className="text-xl font-bold mb-4">{confirmAction.type === 'pause' ? 'Pausar?' : 'Reativar?'}</h2><div className="flex gap-2"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className="flex-1 justify-center">{confirmAction.type === 'pause' ? 'Pausar' : 'Reativar'}</Button></div></div></ModalOverlay>, document.body)}
+        {/* MODAL DE FEEDBACK (Global) */}
+        {feedback && createPortal(
+            <FeedbackModal 
+                isOpen={!!feedback} 
+                onClose={() => setFeedback(null)} 
+                type={feedback.type} 
+                title={feedback.title} 
+                msg={feedback.msg} 
+            />, 
+            document.body
+        )}
+        
+        {/* MODAL DE CONFIRMAÇÃO (CORRIGIDO: TEXTOS DINÂMICOS POR TIPO DE AÇÃO) */}
+        {confirmAction && createPortal(
+            <ModalOverlay onClose={() => setConfirmAction(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                        confirmAction.type === 'resume_ad' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                    }`}>
+                        <AlertCircle size={32}/>
+                    </div>
+                    
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">
+                        {confirmAction.type === 'pause_ad' && 'Pausar Anúncio?'}
+                        {confirmAction.type === 'resume_ad' && 'Reativar Anúncio?'}
+                        {confirmAction.type === 'delete_staff' && 'Excluir Usuário?'}
+                        {confirmAction.type === 'reset_staff_pass' && 'Redefinir Senha?'}
+                    </h2>
+                    
+                    <p className="text-slate-600 mb-6 text-sm">
+                        {confirmAction.type === 'pause_ad' && 'Seu anúncio ficará oculto para novos clientes, mas reservas já feitas não serão afetadas.'}
+                        {confirmAction.type === 'resume_ad' && 'Seu anúncio voltará a aparecer nas buscas e aceitar reservas imediatamente.'}
+                        {confirmAction.type === 'delete_staff' && 'Este membro da equipe perderá o acesso ao sistema imediatamente. Essa ação é irreversível.'}
+                        {confirmAction.type === 'reset_staff_pass' && 'Um e-mail será enviado para o funcionário criar uma nova senha.'}
+                    </p>
+                    
+                    <div className="flex gap-3">
+                        <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
+                        <Button 
+                            onClick={executeAction} 
+                            className={`flex-1 justify-center ${confirmAction.type === 'resume_ad' ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
+                        >
+                            {confirmAction.type === 'resume_ad' ? 'Reativar' : 'Confirmar'}
+                        </Button>
+                    </div>
+                </div>
+            </ModalOverlay>, 
+            document.body
+        )}
+
+        {/* MODAL DE EDIÇÃO DE EMAIL */}
+        {editStaffModal && createPortal(
+            <ModalOverlay onClose={() => setEditStaffModal(null)}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
+                    <h3 className="font-bold text-lg mb-4 text-slate-800">Alterar E-mail</h3>
+                    <p className="text-sm text-slate-500 mb-4">Atual: <strong>{editStaffModal.currentEmail}</strong></p>
+                    <input className="w-full border p-3 rounded-xl mb-4" placeholder="Novo e-mail" value={newStaffEmailInput} onChange={e=>setNewStaffEmailInput(e.target.value)} />
+                    <Button onClick={() => handleUpdateStaffEmail(editStaffModal.id, newStaffEmailInput)} disabled={staffLoading} className="w-full justify-center">{staffLoading ? 'Atualizando...' : 'Confirmar Alteração'}</Button>
+                </div>
+            </ModalOverlay>,
+            document.body
+        )}
 
         {/* MODAL NOTIFICAÇÕES */}
         {showNotifications && createPortal(
@@ -2603,14 +2780,15 @@ const PartnerDashboard = () => {
                                     <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">{req.type === 'email' ? 'Troca E-mail' : 'Nova Senha'}</span>
                                 </div>
                                 <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                                    {req.type === 'email' ? <span>Deseja alterar para: <strong className="text-slate-700">{req.newEmailValue}</strong></span> : 'Solicitou redefinição de senha.'}
+                                    {req.type === 'email' 
+                                        ? <span>Deseja alterar para: <strong className="text-slate-700">{req.newEmailValue}</strong></span> 
+                                        : 'Solicitou redefinição de senha.'}
                                 </p>
                                 <div className="flex gap-2">
                                     {req.type === 'password' ? (
-                                        <Button onClick={() => confirmResetStaffPass(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Enviar Link</Button>
+                                        <Button onClick={() => handleResetStaffPassword(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Enviar Link</Button>
                                     ) : (
-                                        // Chama o modal de instruções
-                                        <Button onClick={() => handleViewEmailInstruction(req)} className="w-full h-8 text-xs justify-center bg-slate-200 text-slate-700 hover:bg-slate-300 shadow-none">Como Resolver</Button>
+                                        <Button onClick={() => handleUpdateStaffEmail(req.staffId, req.newEmailValue, req.staffId, req.id)} className="w-full h-8 text-xs justify-center bg-green-600 hover:bg-green-700 text-white shadow-none">Aprovar Troca</Button>
                                     )}
                                 </div>
                             </div>
@@ -2621,7 +2799,7 @@ const PartnerDashboard = () => {
         )}
         
         {/* CABEÇALHO */}
-        <div className="flex flex-col md:flex-row justify-between items-end mb-8 border-b border-slate-200 pb-4 gap-4">
+        <div className="flex flex-col md:flex-row justify-between items-center md:items-end mb-8 border-b border-slate-200 pb-4 gap-4">
            <div className="text-center md:text-left"><h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1><p className="text-slate-500">Acompanhe seu negócio.</p></div>
            <div className="flex gap-3 items-center flex-wrap justify-center">
               <button className="relative p-2.5 rounded-full bg-white border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm" onClick={() => setShowNotifications(true)}>
@@ -2633,52 +2811,44 @@ const PartnerDashboard = () => {
            </div>
         </div>
 
-        {/* ... (Seções de Financeiro, Lista de Presença e Meus Anúncios mantidas) ... */}
-        {/* ... Para economizar espaço, copie essas seções do código anterior ... */}
-        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div><div className="grid md:grid-cols-3 gap-6"><div className="p-6 bg-slate-50 rounded-2xl border border-slate-200"><p className="text-xs text-slate-500 font-bold uppercase">Total Vendido</p><p className="text-3xl font-bold text-slate-900">{formatBRL(totalBalance)}</p></div><div className="p-6 bg-green-50 rounded-2xl border border-green-200"><p className="text-xs text-green-700 font-bold uppercase">Líquido</p><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div><div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase">Pix vs Cartão</p><div className="flex justify-between mt-2 text-sm"><span>Pix: {formatBRL(pixTotal)}</span><span>Cartão: {formatBRL(cardTotal)}</span></div></div></div></div>
-        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm"><div className="flex flex-col md:flex-row justify-between mb-8 gap-4"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2><div className="flex gap-4"><input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button></div></div><div className="space-y-4">{dailyGuests.map(r => (<div key={r.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-200"><div><p className="font-bold text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p></div><div className="flex items-center gap-2">{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : <Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`)?.value || r.id)} className="h-full py-2 shadow-none">Validar</Button>}</div></div>))}</div></div>
-        <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>
+        {/* FINANCEIRO */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div><div className="grid md:grid-cols-3 gap-6"><div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between"><div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas:</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxa Plataforma (20%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est.*):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div><div className="pt-3 border-t border-slate-200"><p className="text-xs text-green-700 font-bold uppercase mb-1">Líquido Estimado</p><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div></div><div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p><div className="space-y-4"><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div></div><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div></div></div></div><div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col"><div className="flex justify-between items-start mb-4"><div><p className="text-xs text-yellow-800 font-bold uppercase">Cupons Usados</p><p className="text-3xl font-bold text-slate-900">{allCouponsUsed}</p></div><Tag className="text-yellow-600" size={32}/></div><div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar">{Object.keys(couponBreakdown).length === 0 && <p className="text-xs text-slate-400 italic">Nenhum cupom usado.</p>}{Object.entries(couponBreakdown).map(([code, count]) => (<div key={code} className="flex justify-between text-xs text-slate-600 mb-1 border-b border-yellow-100 pb-1 last:border-0"><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-yellow-200 text-yellow-900">{code}</span><span>{count}x</span></div>))}</div></div></div></div>
 
-        {/* GESTÃO DE EQUIPE (Atualizada: Sem botão de editar email na lista) */}
-        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-            <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2>
-            <div className="grid md:grid-cols-2 gap-8">
-                <div className="space-y-4">
-                    <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>
-                    {staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário.</p> : (
-                        <ul className="space-y-3">
-                            {staffList.map(staff => (
-                                <li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div>
-                                        <div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div>
-                                    </div>
-                                    <div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
-                                        {/* Removido o botão de editar e-mail daqui */}
-                                        <button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button>
-                                        <button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200">
-                    <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3>
-                    <form onSubmit={handleAddStaff} className="space-y-4">
-                        <input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required />
-                        <input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required />
-                        <Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button>
-                    </form>
-                </div>
-            </div>
-        </div>
+        {/* LISTA DE PRESENÇA (ROBUSTA) */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm"><div className="flex flex-col md:flex-row justify-between mb-8 gap-4"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2><div className="flex gap-4"><input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button></div></div><div className="mb-6 bg-indigo-50 rounded-xl p-4 border border-indigo-100 cursor-pointer hover:bg-indigo-100 transition-colors" onClick={()=>setExpandedStats(!expandedStats)}><div className="flex justify-between items-center"><span className="font-bold text-indigo-900 flex items-center gap-2"><Users size={18}/> Total Esperado Hoje: {dailyStats.total} pessoas</span><ChevronDown size={16} className={`text-indigo-900 transition-transform ${expandedStats ? 'rotate-180' : ''}`}/></div>{expandedStats && (<div className="mt-4 pt-4 border-t border-indigo-200 grid grid-cols-2 md:grid-cols-5 gap-4 text-center text-sm animate-fade-in"><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.adults}</p><span className="text-indigo-400 text-[10px] font-bold uppercase">Adultos</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.children}</p><span className="text-indigo-400 text-[10px] font-bold uppercase">Crianças</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-green-600">{dailyStats.freeChildren}</p><span className="text-green-500 text-[10px] font-bold uppercase">Grátis</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-indigo-700">{dailyStats.pets}</p><span className="text-indigo-400 text-[10px] font-bold uppercase">Pets</span></div><div className="bg-white p-2 rounded-lg border border-indigo-100"><p className="font-bold text-xl text-blue-600">{dailyStats.specials}</p><span className="text-blue-500 text-[10px] font-bold uppercase">Extras</span></div></div>)}</div><div className="space-y-4"><div className="relative"><Search size={18} className="absolute left-3 top-3.5 text-slate-400"/><input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8] transition-all" placeholder="Buscar viajante por nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/></div>{dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado para esta data.</p> : dailyGuests.map(r => (<div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4"><div className="flex-1"><p className="font-bold text-lg text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p><div className="flex gap-2 mt-2 text-xs text-slate-600 flex-wrap">{r.adults > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>}{r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}{r.freeChildren > 0 && <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-100 font-bold">{r.freeChildren} Grátis</span>}{r.pets > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium flex items-center gap-1"><PawPrint size={10}/> {r.pets} Pet</span>}{r.selectedSpecial && Object.values(r.selectedSpecial).some(q => q > 0) && <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100 font-bold">+ Extras</span>}</div></div><div className="flex items-center gap-2">{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : <div className="flex gap-2"><input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/><Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button></div>}<Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button></div></div>))}</div></div>
         
-        {/* SUPORTE */}
+        {/* MEUS ANÚNCIOS */}
+        <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>
+
+        {/* GESTÃO DE EQUIPE */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditStaffModal({ id: staff.id, currentEmail: staff.email }); setNewStaffEmailInput(''); }} className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg" title="Editar Email"><Edit size={16}/></button><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className="bg-slate-50 p-6 rounded-2xl border border-slate-200"><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form></div></div></div></div>
+
+        {/* ÁREA DE SUPORTE ATUALIZADA (COM NOTION) */}
         <div className="bg-slate-900 rounded-3xl p-8 text-center text-white mt-12 mb-8 shadow-2xl">
-            <h3 className="text-2xl font-bold mb-2">Precisa de ajuda?</h3>
-            <p className="text-slate-400 mb-6 max-w-md mx-auto">Fale diretamente com nosso suporte técnico exclusivo para parceiros.</p>
-            <a href="https://wa.me/5531920058081" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-[#25D366] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#20bd5a] transition-all transform hover:scale-105 shadow-lg"><MessageCircle size={22} /> Falar no WhatsApp</a>
+            <h3 className="text-2xl font-bold mb-4">Precisa de ajuda?</h3>
+            <div className="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+                <a 
+                    href="https://mapadodayuse.notion.site/Central-de-Ajuda-Mapa-do-Day-Use-2dc9dd27aaf88071b399cdb623b66b77?pvs=74" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex flex-col items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white p-6 rounded-2xl border border-white/10 transition-all group"
+                >
+                    <div className="bg-white/20 p-3 rounded-full mb-1 group-hover:scale-110 transition-transform"><BookOpen size={24}/></div>
+                    <span className="font-bold">Central de Ajuda</span>
+                    <span className="text-xs text-slate-300">Manuais e Tutoriais</span>
+                </a>
+
+                <a 
+                    href="https://wa.me/5531920058081" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex flex-col items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white p-6 rounded-2xl shadow-lg transition-all group"
+                >
+                    <div className="bg-white/20 p-3 rounded-full mb-1 group-hover:scale-110 transition-transform"><MessageCircle size={24}/></div>
+                    <span className="font-bold">Suporte Técnico</span>
+                    <span className="text-xs text-green-100">Falar no WhatsApp</span>
+                </a>
+            </div>
         </div>
      </div>
   );
@@ -4608,6 +4778,9 @@ const PartnerLandingPage = () => {
     </div>
   );
 };
+
+const facebookProvider = new FacebookAuthProvider();
+const appleProvider = new OAuthProvider('apple.com');
 
 const App = () => {
   return (

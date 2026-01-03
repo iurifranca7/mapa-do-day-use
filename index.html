@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="pt-BR">
   <head>
+    <meta charset="UTF-8" />
+    
+    <!-- FAVICON: Pino de Mapa na cor #0097A8 -->
+    <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230097A8"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>' />
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
   <!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -9,31 +16,45 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 })(window,document,'script','dataLayer','GTM-M4ZHP7S6');</script>
 <!-- End Google Tag Manager -->
 
-    <meta charset="UTF-8" />
+    <!-- SDK Mercado Pago -->
+    <script src="https://sdk.mercadopago.com/js/v2"></script>
+
+    <!-- --- TAGS OPEN GRAPH (PARA REDES SOCIAIS) --- -->
+    <title>Mapa do Day Use | Hotéis e Resorts para passar o dia</title>
+    <meta name="description" content="Descubra e reserve os melhores day uses em hotéis, pousadas e resorts de Belo Horizonte e região. Piscinas, lazer e diversão perto de você sem precisar de hospedagem." />
     
-    <!-- FAVICON: Pino de Mapa na cor #0097A8 -->
-    <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230097A8"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>' />
+    <!-- Facebook / WhatsApp / LinkedIn -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://mapadodayuse.com/" />
+    <meta property="og:title" content="Mapa do Day Use | Sua mini-férias começa aqui" />
+    <meta property="og:description" content="Encontre piscinas, cachoeiras e lazer completo em hotéis incríveis perto de você. Reserve seu Day Use online de forma rápida e segura." />
     
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- IMAGEM DE CAPA (Certifique-se de ter o arquivo og-cover.jpg na pasta public) -->
+    <meta property="og:image" content="https://mapadodayuse.com/og-cover.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content="Mapa do Day Use" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Mapa do Day Use" />
+    <meta name="twitter:description" content="Os melhores hotéis e resorts para passar o dia." />
+    <meta name="twitter:image" content="https://mapadodayuse.com/og-cover.jpg" />
     
-    <!-- Meta Tags Padrão -->
-    <title>Day Use em BH e Região | Mapa do Day Use</title>
-    <meta name="description" content="Encontre e reserve os melhores day uses em hotéis, pousadas e resorts de Belo Horizonte e região. Piscinas, lazer e diversão perto de você. Confira!" />
-    
-    <!-- Fonte Inter -->
+    <!-- Fonte -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-
-    <!-- SDK Mercado Pago -->
-    <script src="https://sdk.mercadopago.com/js/v2"></script>
     
   </head>
   <body>
-    <!-- Google Tag Manager (noscript) -->
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-M4ZHP7S6"
-height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
-<!-- End Google Tag Manager (noscript) -->
+    <!-- Meta Pixel NoScript (Movido para o Body para corrigir erro de validação) -->
+    <noscript>
+      <img height="1" width="1" style="display:none"
+      src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
+      />
+    </noscript>
 
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
