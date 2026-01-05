@@ -3670,18 +3670,28 @@ const Layout = ({ children }) => {
       </header>
       <main className="flex-1 w-full max-w-full overflow-x-hidden">{children}</main>
       
-      {/* FOOTER RESTAURADO E ATUALIZADO */}
+      {/* FOOTER ROBUSTO */}
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
-            <div className="grid md:grid-cols-4 gap-8 mb-8">
+            <div className="grid md:grid-cols-4 gap-8 mb-12">
                
                {/* Coluna 1: Marca e Contato */}
-               <div className="col-span-1 md:col-span-2">
-                  <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {!logoError ? (<img src="/logo.png?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
+               <div className="col-span-1">
+                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
+                     {!logoError ? (
+                        <img 
+                           src="/logo.svg?v=2" 
+                           alt="Mapa do Day Use" 
+                           className="h-8 w-auto object-contain" 
+                           onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
+                        />
+                     ) : (
+                        <MapIcon className="h-6 w-6 text-[#0097A8]" />
+                     )}
+                     <span className="hidden sm:inline">Mapa do Day Use</span>
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
-                     A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.
+                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+                     A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
                   </p>
                   <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
                      <Mail size={16} /> contato@mapadodayuse.com
@@ -3692,30 +3702,35 @@ const Layout = ({ children }) => {
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
+                     {/* "Início" removido conforme solicitado */}
                      <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
                      <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
                      <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
-                     <li><button onClick={() => navigate('')} className="hover:text-[#0097A8] transition-colors"></button></li>
                   </ul>
-                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
-                       Seja um Parceiro
-                  </button>
                </div>
 
-               {/* Coluna 3: Explore e Redes Sociais */}
+               {/* Coluna 3: Explore */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
                   <ul className="space-y-3 text-sm text-slate-500 mb-6">
-                      <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                     <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                     <li><button onClick={() => navigate('/quiz')} className="hover:text-[#0097A8] transition-colors">Quiz Ideal 🤖</button></li>
+                     <li><button onClick={() => navigate('/comparativo')} className="hover:text-[#0097A8] transition-colors">Comparador</button></li>
                   </ul>
-                  
+               </div>
+
+               {/* Coluna 4: Parceiro e Redes Sociais */}
+               <div>
+                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105 mb-6 w-full md:w-auto">
+                      Seja um Parceiro
+                  </button>
+
                   <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
-                  <div className="flex gap-3 mb-6">
+                  <div className="flex gap-3">
                      <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
                         <Instagram size={20} />
                      </a>
                      <a href="https://tiktok.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-gray-100 text-slate-400 hover:text-black transition-all border border-slate-100 hover:border-gray-300">
-                        {/* Ícone TikTok SVG */}
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
                      </a>
                      <a href="https://www.youtube.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all border border-slate-100 hover:border-red-200">
@@ -3725,6 +3740,7 @@ const Layout = ({ children }) => {
                </div>
             </div>
             
+            {/* Rodapé Inferior */}
             <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
                <div className="flex flex-col md:flex-row gap-2 md:gap-6 items-center text-center md:text-left">
                    <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
@@ -4782,6 +4798,745 @@ const PartnerLandingPage = () => {
 const facebookProvider = new FacebookAuthProvider();
 const appleProvider = new OAuthProvider('apple.com');
 
+// -----------------------------------------------------------------------------
+// COMPONENTE: LANDING PAGE DO COMPARADOR (HOME)
+// -----------------------------------------------------------------------------
+const ComparisonLandingPage = () => {
+  const navigate = useNavigate();
+  const [allItems, setAllItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // States dos Seletores
+  const [selected1, setSelected1] = useState(null);
+  const [selected2, setSelected2] = useState(null);
+  const [term1, setTerm1] = useState("");
+  const [term2, setTerm2] = useState("");
+  const [showList1, setShowList1] = useState(false);
+  const [showList2, setShowList2] = useState(false);
+
+  // Gera pares de comparação automáticos para a vitrine
+  const popularComparisons = [];
+  if (!loading && allItems.length > 1) {
+      for (let i = 0; i < allItems.length - 1; i += 2) {
+          if (popularComparisons.length >= 12) break; // Limite de 12 cards
+          popularComparisons.push({
+              itemA: allItems[i],
+              itemB: allItems[i+1],
+              url: `/comparativo/${allItems[i].slug}-vs-${allItems[i+1].slug}`
+          });
+      }
+  }
+
+  useSEO(
+    "Comparador de Day Use | Batalha de Hotéis e Resorts", 
+    "Está na dúvida? Compare preços, piscinas, comodidades e regras dos melhores hotéis e resorts de Day Use lado a lado."
+  );
+
+  // Schema CollectionPage (Melhor para listas de links internos)
+  useSchema({
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "Comparador de Day Use",
+    "description": "Ferramenta para comparar preços e comodidades de Day Uses.",
+    "url": "https://mapadodayuse.com/comparativo",
+    "mainEntity": {
+        "@type": "ItemList",
+        "itemListElement": popularComparisons.map((comp, index) => ({
+            "@type": "ListItem",
+            "position": index + 1,
+            "url": `https://mapadodayuse.com${comp.url}`,
+            "name": `${comp.itemA.name} vs ${comp.itemB.name}`
+        }))
+    }
+  });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+         // Busca itens (ativos e pausados para ter volume na vitrine)
+         const q = query(collection(db, "dayuses")); 
+         const snap = await getDocs(q);
+         // Pega apenas dados essenciais para ficar leve
+         const data = snap.docs.map(d => ({ 
+             name: d.data().name, 
+             slug: d.data().slug, 
+             city: d.data().city, 
+             image: d.data().image 
+         }));
+         setAllItems(data);
+      } catch(e) { console.error(e); }
+      finally { setLoading(false); }
+    };
+    fetchData();
+  }, []);
+
+  const handleCompare = () => {
+      if (selected1 && selected2) {
+          navigate(`/comparativo/${selected1.slug}-vs-${selected2.slug}`);
+      }
+  };
+
+  const filtered1 = allItems.filter(i => i.name.toLowerCase().includes(term1.toLowerCase())).slice(0, 5);
+  const filtered2 = allItems.filter(i => i.name.toLowerCase().includes(term2.toLowerCase())).slice(0, 5);
+
+  return (
+    <div className="max-w-6xl mx-auto py-16 px-4 animate-fade-in text-center min-h-[70vh] flex flex-col">
+        
+        {/* HERO HEADER */}
+        <div className="mb-12 max-w-3xl mx-auto">
+            <span className="text-xs font-bold text-[#0097A8] uppercase tracking-wider bg-cyan-50 px-3 py-1 rounded-full">Ferramenta Gratuita</span>
+            <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mt-4 mb-4">Batalha de Day Uses ⚔️</h1>
+            <p className="text-slate-500 text-lg">
+                Não sabe qual escolher? Coloque dois locais lado a lado e veja qual oferece o melhor custo-benefício para o seu dia de folga.
+            </p>
+        </div>
+
+        {/* ÁREA DE SELEÇÃO (FERRAMENTA) */}
+        <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 relative mb-24 max-w-4xl mx-auto w-full">
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 bg-[#0097A8] text-white rounded-full shadow-lg flex items-center justify-center font-black text-xl border-4 border-white">VS</div>
+
+            <div className="grid md:grid-cols-2 gap-8 md:gap-16">
+                {/* LADO A */}
+                <div className="relative z-20">
+                    <p className="text-xs font-bold text-slate-400 uppercase mb-2 text-left">Opção 01</p>
+                    <div className="relative">
+                        <input 
+                            className="w-full border-2 border-slate-200 p-4 rounded-2xl font-bold text-slate-700 outline-none focus:border-[#0097A8] transition-colors"
+                            placeholder="Buscar local..."
+                            value={term1}
+                            onChange={e => { setTerm1(e.target.value); setShowList1(true); setSelected1(null); }}
+                            onFocus={() => setShowList1(true)}
+                        />
+                        {selected1 && (<div className="absolute right-3 top-3 w-10 h-10 rounded-lg overflow-hidden border border-slate-200"><img src={selected1.image} className="w-full h-full object-cover" /></div>)}
+                        {showList1 && term1 && (<div className="absolute top-full left-0 w-full bg-white shadow-xl rounded-xl mt-2 border border-slate-100 overflow-hidden text-left z-30">{filtered1.map(item => (<div key={item.slug} onClick={() => { setSelected1(item); setTerm1(item.name); setShowList1(false); }} className="p-3 hover:bg-cyan-50 cursor-pointer border-b border-slate-50 last:border-0"><p className="font-bold text-sm text-slate-700">{item.name}</p><p className="text-xs text-slate-400">{item.city}</p></div>))}</div>)}
+                    </div>
+                </div>
+
+                {/* LADO B */}
+                <div className="relative z-20">
+                    <p className="text-xs font-bold text-slate-400 uppercase mb-2 text-left">Opção 02</p>
+                    <div className="relative">
+                        <input 
+                            className="w-full border-2 border-slate-200 p-4 rounded-2xl font-bold text-slate-700 outline-none focus:border-[#0097A8] transition-colors"
+                            placeholder="Buscar local..."
+                            value={term2}
+                            onChange={e => { setTerm2(e.target.value); setShowList2(true); setSelected2(null); }}
+                            onFocus={() => setShowList2(true)}
+                        />
+                         {selected2 && (<div className="absolute right-3 top-3 w-10 h-10 rounded-lg overflow-hidden border border-slate-200"><img src={selected2.image} className="w-full h-full object-cover" /></div>)}
+                        {showList2 && term2 && (<div className="absolute top-full left-0 w-full bg-white shadow-xl rounded-xl mt-2 border border-slate-100 overflow-hidden text-left z-30">{filtered2.map(item => (<div key={item.slug} onClick={() => { setSelected2(item); setTerm2(item.name); setShowList2(false); }} className="p-3 hover:bg-cyan-50 cursor-pointer border-b border-slate-50 last:border-0"><p className="font-bold text-sm text-slate-700">{item.name}</p><p className="text-xs text-slate-400">{item.city}</p></div>))}</div>)}
+                    </div>
+                </div>
+            </div>
+
+            {/* BOTÃO CENTRALIZADO */}
+            <div className="mt-10 flex justify-center">
+                <Button 
+                    onClick={handleCompare} 
+                    disabled={!selected1 || !selected2}
+                    className="w-full md:w-auto px-12 py-4 text-lg shadow-xl shadow-teal-200/50"
+                >
+                    Comparar Agora
+                </Button>
+            </div>
+        </div>
+
+        {/* VITRINE DE COMPARAÇÕES POPULARES (GRID DE CARDS) */}
+        {!loading && popularComparisons.length > 0 && (
+            <div className="w-full text-left">
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="h-px bg-slate-200 flex-1"></div>
+                    <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest">Comparações Populares</h2>
+                    <div className="h-px bg-slate-200 flex-1"></div>
+                </div>
+                
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {popularComparisons.map((comp, idx) => (
+                        <div 
+                            key={idx}
+                            onClick={() => navigate(comp.url)}
+                            className="bg-white rounded-3xl overflow-hidden border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col"
+                        >
+                            {/* IMAGEM SPLIT (DIVIDIDA) */}
+                            <div className="h-48 relative flex">
+                                <div className="w-1/2 h-full relative">
+                                    <img src={comp.itemA.image} className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-transparent"></div>
+                                </div>
+                                <div className="w-1/2 h-full relative">
+                                    <img src={comp.itemB.image} className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 bg-gradient-to-l from-black/40 to-transparent"></div>
+                                </div>
+                                
+                                {/* VS BADGE NO MEIO DA FOTO */}
+                                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-white rounded-full flex items-center justify-center font-black text-xs text-[#0097A8] shadow-lg border-2 border-slate-50 z-10">VS</div>
+                            </div>
+
+                            <div className="p-5 flex-1 flex flex-col justify-between">
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-lg leading-tight mb-2 group-hover:text-[#0097A8] transition-colors">
+                                        {comp.itemA.name} <span className="text-slate-300 font-light mx-1">vs</span> {comp.itemB.name}
+                                    </h3>
+                                    {/* Cidade removida para não poluir o card com o nome completo */}
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between">
+                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ver análise</span>
+                                    <ArrowRight size={16} className="text-[#0097A8] group-hover:translate-x-1 transition-transform"/>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// COMPONENTE: PÁGINA DE COMPARAÇÃO (REFINADA)
+// -----------------------------------------------------------------------------
+const ComparisonPage = () => {
+  const { slugs } = useParams(); 
+  const navigate = useNavigate();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Busca e Seleção
+  const [allSearchItems, setAllSearchItems] = useState([]);
+  const [searchSlot, setSearchSlot] = useState(null); 
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+
+  // Sugestão e Feedback
+  const [showSuggestion, setShowSuggestion] = useState(false);
+  const [suggestionData, setSuggestionData] = useState({ name: '', city: '' });
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [feedback, setFeedback] = useState(null); 
+
+  const [slug1, slug2] = slugs ? slugs.split('-vs-') : [null, null];
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!slug1 || !slug2) return;
+      setLoading(true);
+      try {
+         const q = query(collection(db, "dayuses"), where("slug", "in", [slug1, slug2]));
+         const snap = await getDocs(q);
+         const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+         setItems(data);
+
+         // Carrega todos (inclusive pausados) para a busca de troca
+         const qAll = query(collection(db, "dayuses")); 
+         const snapAll = await getDocs(qAll);
+         setAllSearchItems(snapAll.docs.map(d => ({ name: d.data().name, slug: d.data().slug, city: d.data().city, state: d.data().state })));
+      } catch(e) { console.error(e); }
+      finally { setLoading(false); }
+    };
+    fetchData();
+  }, [slug1, slug2]);
+
+  // Filtro de Busca
+  useEffect(() => {
+      if (searchTerm.trim() === "") {
+          setSearchResults([]);
+      } else {
+          const lowerTerm = searchTerm.toLowerCase();
+          const results = allSearchItems
+              .filter(i => i.name.toLowerCase().includes(lowerTerm) || i.city?.toLowerCase().includes(lowerTerm))
+              .slice(0, 5); 
+          setSearchResults(results);
+      }
+  }, [searchTerm, allSearchItems]);
+
+  const item1 = items.find(i => i.slug === slug1) || items[0];
+  const item2 = items.find(i => i.slug === slug2) || items[1];
+
+  // SEO & Schema
+  let seoTitle = "Comparativo de Day Use";
+  let seoDesc = "Compare as melhores opções.";
+  
+  if (item1 && item2) {
+      if (item1.city === item2.city) {
+          seoTitle = `${item1.name} ou ${item2.name}: Qual o Melhor Day Use de ${item1.city}?`;
+          seoDesc = `Comparativo completo em ${item1.city}.`;
+      } else if (item1.state === item2.state) {
+          const stateFullName = STATE_NAMES[item1.state] || item1.state;
+          seoTitle = `${item1.name} ou ${item2.name}: Qual o Melhor Day Use de ${stateFullName}?`;
+      } else {
+          seoTitle = `${item1.name} ou ${item2.name}: Qual o Melhor Day Use Pra Você?`;
+      }
+  }
+  useSEO(seoTitle, seoDesc);
+
+  useSchema(item1 && item2 ? {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      "name": `Comparativo: ${item1.name} vs ${item2.name}`,
+      "itemListElement": [
+          { "@type": "ListItem", "position": 1, "item": { "@type": "LodgingBusiness", "name": item1.name } },
+          { "@type": "ListItem", "position": 2, "item": { "@type": "LodgingBusiness", "name": item2.name } }
+      ]
+  } : null);
+
+  const handleSelectCompetitor = (newSlug) => { if (searchSlot === 'slot1') navigate(`/comparativo/${newSlug}-vs-${slug2}`); else navigate(`/comparativo/${slug1}-vs-${newSlug}`); setSearchSlot(null); setSearchTerm(""); };
+  const handleSuggestionSubmit = async (e) => { e.preventDefault(); setSuggestionLoading(true); try { await fetch('/api/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `💡 Sugestão: ${suggestionData.name}`, html: 'Sugestão enviada' }) }); setFeedback({type:'success', title:'Enviado!', msg:'Obrigado pela sugestão.'}); setShowSuggestion(false); setSuggestionData({ name: '', city: '' }); setSearchSlot(null); } catch (error) { setFeedback({ type: 'error', title: 'Erro', msg: 'Erro ao enviar.' }); } finally { setSuggestionLoading(false); } };
+  
+  const renderCheck = (val) => val ? <CheckCircle size={18} className="text-green-500 mx-auto"/> : <X size={18} className="text-red-300 mx-auto"/>;
+  const formatDays = (days) => (!days || days.length === 0) ? "-" : (days.length === 7 ? "Todos os dias" : days.map(d => WEEK_DAYS[d].slice(0,3)).join(', '));
+  const formatHours = (prices) => { if (!prices) return "-"; const hours = new Set(Object.values(prices).map(p => p.hours).filter(Boolean)); return hours.size > 0 ? Array.from(hours).join(' / ') : "Horário padrão"; };
+  
+  if (loading) return <div className="text-center py-20 animate-pulse text-slate-400">Carregando comparativo...</div>;
+  if (items.length < 2) return <div className="text-center py-20 text-slate-500">Local não encontrado. Verifique o link.</div>;
+
+  // Filtra 9 itens aleatórios para sugestão
+  const relatedComparisons = allSearchItems
+      .filter(i => i.slug !== item1.slug && i.slug !== item2.slug)
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 9)
+      .map((other, index) => {
+          const baseItem = index % 2 === 0 ? item1 : item2;
+          return { key: other.slug, label: `${baseItem.name.split(' ')[0]} vs ${other.name}`, url: `/comparativo/${baseItem.slug}-vs-${other.slug}` };
+      });
+
+  return (
+    <div className="max-w-6xl mx-auto py-12 px-4 animate-fade-in">
+       {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
+       {showSuggestion && createPortal(<ModalOverlay onClose={() => setShowSuggestion(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"><h2 className="text-xl font-bold text-slate-900 mb-2">Sugerir Local</h2><form onSubmit={handleSuggestionSubmit} className="space-y-3"><input className="w-full border p-3 rounded-xl" placeholder="Nome" required value={suggestionData.name} onChange={e=>setSuggestionData({...suggestionData, name: e.target.value})}/><input className="w-full border p-3 rounded-xl" placeholder="Cidade" required value={suggestionData.city} onChange={e=>setSuggestionData({...suggestionData, city: e.target.value})}/><Button type="submit" disabled={suggestionLoading} className="w-full">{suggestionLoading ? 'Enviando...' : 'Enviar'}</Button></form></div></ModalOverlay>, document.body)}
+
+       <div className="text-center mb-10"><span className="text-xs font-bold text-[#0097A8] uppercase tracking-wider bg-cyan-50 px-3 py-1 rounded-full">Batalha de Day Uses</span><h1 className="text-3xl md:text-5xl font-bold text-slate-900 mt-4 mb-8 leading-tight">{item1.name} <span className="text-slate-300 mx-2 text-2xl align-middle">vs</span> {item2.name}</h1><div className="flex flex-col md:flex-row justify-center gap-4 max-w-2xl mx-auto relative z-20">{['slot1', 'slot2'].map((slot, idx) => (<div key={slot} className="flex-1 relative">{searchSlot === slot ? (<div className="absolute top-0 left-0 w-full z-30"><div className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden"><div className="p-2 border-b border-slate-100 flex items-center gap-2"><Search size={16} className="text-slate-400 ml-2"/><input autoFocus className="w-full p-2 outline-none text-sm font-bold text-slate-700" placeholder="Digite para buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} onBlur={() => setTimeout(() => setSearchMode(null), 200)}/><button onClick={()=>{setSearchSlot(null); setSearchTerm("");}}><X size={16} className="text-slate-400"/></button></div><div className="max-h-60 overflow-y-auto">{searchResults.map(res => (<div key={res.slug} onClick={() => handleSelectCompetitor(res.slug)} className="p-3 hover:bg-cyan-50 cursor-pointer border-b border-slate-50 last:border-0 text-left"><span className="font-bold text-slate-700 text-sm block">{res.name}</span><span className="text-xs text-slate-400">{res.city}</span></div>))}{searchTerm && searchResults.length === 0 && (<div onClick={() => { setSuggestionData({ name: searchTerm, city: '' }); setShowSuggestion(true); setSearchSlot(null); }} className="p-4 text-center cursor-pointer hover:bg-slate-50"><p className="text-xs text-slate-500">Não encontrou?</p><p className="text-xs font-bold text-[#0097A8] mt-1">Sugerir adição</p></div>)}</div></div></div>) : (<button onClick={() => { setSearchSlot(slot); setSearchTerm(""); }} className="w-full bg-slate-50 hover:bg-white border border-slate-200 hover:border-[#0097A8] rounded-xl p-3 text-sm font-bold text-slate-600 flex items-center justify-between group transition-all"><span className="truncate">{idx === 0 ? item1.name : item2.name}</span><Edit size={14} className="text-slate-400 group-hover:text-[#0097A8]"/></button>)}</div>))}</div><p className="text-slate-400 mt-4 text-sm flex items-center justify-center gap-1"><Edit size={12}/> Clique nos nomes para alterar</p></div>
+
+       <div className="grid grid-cols-2 gap-4 md:gap-12 relative mb-12">
+           <div className="space-y-4"><div className="aspect-video rounded-2xl overflow-hidden shadow-lg border border-slate-100 group"><img src={item1.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/></div><Button onClick={() => navigate(`/${getStateSlug(item1.state)}/${item1.slug}`)} className="w-full bg-[#0097A8] hover:bg-[#007f8f] text-xs md:text-sm">Reservar {item1.name.split(' ')[0]}</Button></div>
+           <div className="absolute left-1/2 top-1/3 -translate-x-1/2 z-10 w-10 h-10 bg-white rounded-full shadow-xl flex items-center justify-center font-black text-slate-300 border-4 border-slate-50 text-xs">VS</div>
+           <div className="space-y-4"><div className="aspect-video rounded-2xl overflow-hidden shadow-lg border border-slate-100 group"><img src={item2.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/></div><Button onClick={() => navigate(`/${getStateSlug(item2.state)}/${item2.slug}`)} className="w-full bg-[#0097A8] hover:bg-[#007f8f] text-xs md:text-sm">Reservar {item2.name.split(' ')[0]}</Button></div>
+       </div>
+
+       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-16">
+           <table className="w-full text-sm text-center">
+               <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs tracking-wider"><tr><th className="py-4 px-2 w-1/3 text-left pl-6">Critério</th><th className="py-4 px-2 w-1/3 text-slate-800">{item1.name}</th><th className="py-4 px-2 w-1/3 text-slate-800">{item2.name}</th></tr></thead>
+               <tbody className="divide-y divide-slate-100">
+                   <tr><td className="py-4 text-left pl-6 font-bold text-slate-700">Preço Adulto</td><td className="text-[#0097A8] font-bold text-lg">{formatBRL(item1.priceAdult)}</td><td className="text-[#0097A8] font-bold text-lg">{formatBRL(item2.priceAdult)}</td></tr>
+                   <tr><td className="py-4 text-left pl-6 font-bold text-slate-700">Preço Criança</td><td>{formatBRL(item1.priceChild)}</td><td>{formatBRL(item2.priceChild)}</td></tr>
+                   <tr><td className="py-4 text-left pl-6 font-bold text-slate-700">Cidade</td><td>{item1.city}</td><td>{item2.city}</td></tr>
+                   <tr><td className="py-4 text-left pl-6 font-bold text-slate-700">Pet Friendly</td><td>{renderCheck(item1.petAllowed)}</td><td>{renderCheck(item2.petAllowed)}</td></tr>
+                   <tr><td className="py-4 text-left pl-6 font-bold text-slate-700">Pensão</td><td>{item1.meals?.join(', ') || '-'}</td><td>{item2.meals?.join(', ') || '-'}</td></tr>
+                   <tr><td colSpan="3" className="bg-slate-50 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Comodidades e Lazer</td></tr>
+                   {/* LÓGICA DE COMODIDADES (UNIÃO) */}
+                   {AMENITIES_LIST.filter(a => (item1.amenities?.includes(a) || item2.amenities?.includes(a))).map(am => (
+                       <tr key={am}>
+                           <td className="py-3 text-left pl-6 text-slate-600">{am}</td>
+                           <td>{renderCheck(item1.amenities?.includes(am))}</td>
+                           <td>{renderCheck(item2.amenities?.includes(am))}</td>
+                       </tr>
+                   ))}
+               </tbody>
+           </table>
+           <div className="p-4 bg-slate-50 text-center text-xs text-slate-400 border-t border-slate-100">
+               * Exibindo todas as comodidades disponíveis em pelo menos um dos locais.
+               <br/>
+               {/* LINK REINTEGRADO PARA O ESTADO */}
+               <span 
+                   className="text-[#0097A8] font-bold cursor-pointer hover:underline mt-1 inline-block"
+                   onClick={() => navigate(`/${getStateSlug(item1.state)}`)}
+               >
+                   Ver todos os Day Uses em {STATE_NAMES[item1.state] || item1.state} &rarr;
+               </span>
+           </div>
+       </div>
+
+       {/* Banner Quiz IA (RESTAURADO) */}
+       <div className="bg-gradient-to-r from-violet-600 to-indigo-600 rounded-3xl p-8 md:p-12 text-center text-white shadow-2xl mb-16 relative overflow-hidden group cursor-pointer" onClick={() => navigate('/quiz')}>
+           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-700"></div>
+           <div className="relative z-10">
+               <span className="inline-block bg-white/20 px-3 py-1 rounded-full text-xs font-bold mb-4 border border-white/20 backdrop-blur-sm">Descubra com Inteligência</span>
+               <h2 className="text-3xl md:text-4xl font-extrabold mb-4">Ainda na dúvida? Deixe a IA escolher!</h2>
+               <p className="text-indigo-100 mb-8 max-w-xl mx-auto">Responda 3 perguntas rápidas e nossa inteligência artificial encontra a experiência ideal para o seu perfil. Sem custo, sem cadastro.</p>
+               <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
+           </div>
+       </div>
+
+       {relatedComparisons.length > 0 && (
+            <div className="pt-8 border-t border-slate-100 mt-8">
+                <h2 className="text-lg font-bold text-slate-900 mb-6">Comparar com outras opções</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {relatedComparisons.map(link => (
+                        <button key={link.key} onClick={() => navigate(link.url)} className="text-sm text-left p-3 rounded-xl border border-slate-100 hover:border-[#0097A8] hover:bg-cyan-50 transition-all flex items-center justify-between group">
+                            <span className="text-slate-600 group-hover:text-[#0097A8] font-medium truncate pr-2">{link.label}</span>
+                            <ArrowRight size={14} className="text-slate-300 group-hover:text-[#0097A8] shrink-0"/>
+                        </button>
+                    ))}
+                </div>
+            </div>
+       )}
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// COMPONENTE: QUIZ DE RECOMENDAÇÃO (IA SIMULADA)
+// -----------------------------------------------------------------------------
+const QuizPage = () => {
+  const navigate = useNavigate();
+  
+  // Estados
+  const [started, setStarted] = useState(false); // Controla a tela de introdução
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState({ newsletter: true }); 
+  const [result, setResult] = useState(null);
+  
+  // Loadings
+  const [loading, setLoading] = useState(false);
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  useSEO(
+    "Qual Day Use é Melhor Pra Você? Descubra No Quiz Gratuito!", 
+    "Responda perguntas rápidas e nossa inteligência encontra a experiência perfeita: Casais, Família, Pets e muito mais."
+  );
+
+  useSchema({
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Quiz Descobridor de Day Use",
+    "url": "https://mapadodayuse.com/quiz",
+    "applicationCategory": "TravelApplication"
+  });
+
+  // CONFIGURAÇÃO DAS PERGUNTAS
+  const questions = [
+      { 
+          id: 'name', 
+          type: 'text', 
+          question: "Para começar, como devemos te chamar?", 
+          placeholder: "Digite seu nome",
+          buttonLabel: "Continuar"
+      },
+      { 
+        id: 'company', 
+        type: 'choice',
+        question: `Oi ${answers.name || 'viajante'}! Com quem você vai curtir o dia?`, 
+        options: [
+            {icon: '💑', label: 'Casal (Romance)', val: 'couple'}, 
+            {icon: '👨‍👩‍👧‍👦', label: 'Família com Crianças', val: 'family'}, 
+            {icon: '🎉', label: 'Grupo de Amigos', val: 'friends'},
+            {icon: '🧘', label: 'Sozinho (Relax)', val: 'solo'}
+        ] 
+      },
+      { 
+        id: 'pet', 
+        type: 'choice',
+        question: "O pet vai junto?", 
+        options: [
+            {icon: '🐶', label: 'Sim, ele é da família!', val: true}, 
+            {icon: '🚫', label: 'Não, dessa vez não.', val: false}
+        ] 
+      },
+      { 
+        id: 'food', 
+        type: 'choice',
+        question: "Qual sua preferência de alimentação?", 
+        options: [
+            {icon: '🍽️', label: 'Pensão Inclusa (Café/Almoço)', val: 'included'}, 
+            {icon: '🍖', label: 'Quero Churrasqueira', val: 'bbq'},
+            {icon: '🍔', label: 'Restaurante/Bar no local', val: 'restaurant'},
+            {icon: '🥪', label: 'Tanto faz / Levo lanche', val: 'any'}
+        ] 
+      },
+      { 
+        id: 'must_have', 
+        type: 'choice',
+        question: "Tem algo que NÃO pode faltar?", 
+        options: [
+            {icon: '🔥', label: 'Piscina Aquecida/Climatizada', val: 'heated_pool'}, 
+            {icon: '🎣', label: 'Pesque e Solte', val: 'fishing'},
+            {icon: '🚗', label: 'Estacionamento Incluso', val: 'parking'},
+            {icon: '✨', label: 'Só quero curtir (Sem exigência)', val: 'none'}
+        ] 
+      },
+      {
+          id: 'city',
+          type: 'location',
+          question: "Onde você quer passear?",
+          placeholder: "Ex: Belo Horizonte",
+          buttonLabel: "Próximo"
+      },
+      {
+          id: 'email',
+          type: 'email',
+          question: "Última etapa! Onde enviamos o resultado?",
+          sub: "Prometemos enviar apenas ofertas que combinam com seu perfil.",
+          placeholder: "seu@email.com",
+          buttonLabel: "Ver Meu Resultado Perfeito",
+          skipLabel: "Pular e ver resultado"
+      }
+  ];
+
+  const currentQ = questions[step];
+
+  // Geolocalização Automática
+  useEffect(() => {
+      // Se a pergunta atual for de localização e ainda não tivermos cidade, tenta pegar automaticamente
+      if (currentQ && currentQ.type === 'location' && !answers.city && !geoLoading && started) {
+          handleGeoLocation();
+      }
+  }, [step, started]);
+
+  const handleGeoLocation = () => {
+      if (!navigator.geolocation) return;
+      setGeoLoading(true);
+      navigator.geolocation.getCurrentPosition(async (position) => {
+          try {
+              const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.coords.latitude}&lon=${position.coords.longitude}`);
+              const data = await res.json();
+              const city = data.address?.city || data.address?.town || data.address?.village || "";
+              if (city) {
+                  // Atualiza o input visualmente e o estado
+                  setAnswers(prev => ({ ...prev, city }));
+              }
+          } catch (error) { console.error("Erro geo:", error); } 
+          finally { setGeoLoading(false); }
+      }, () => setGeoLoading(false));
+  };
+
+  // Avançar
+  const handleNext = (val) => {
+      if (val && val.preventDefault) val.preventDefault();
+      const valueToSave = val !== undefined && !val.preventDefault ? val : answers[currentQ.id];
+      const nextAnswers = { ...answers, [currentQ.id]: valueToSave };
+      setAnswers(nextAnswers);
+
+      if (step < questions.length - 1) {
+          setStep(step + 1);
+      } else {
+          finishQuiz(nextAnswers);
+      }
+  };
+
+  // Finalizar
+  const finishQuiz = async (finalAnswers) => {
+      setLoading(true);
+      
+      // Salva Lead no Firebase
+      if (finalAnswers.email && finalAnswers.email.includes('@')) {
+          try {
+              await addDoc(collection(db, "leads"), {
+                  name: finalAnswers.name || 'Visitante',
+                  email: finalAnswers.email,
+                  city: finalAnswers.city || '',
+                  newsletter: finalAnswers.newsletter,
+                  preferences: { 
+                      company: finalAnswers.company, 
+                      pet: finalAnswers.pet, 
+                      food: finalAnswers.food,
+                      must_have: finalAnswers.must_have
+                  },
+                  source: 'quiz_v2',
+                  createdAt: new Date()
+              });
+          } catch (err) { console.error("Erro lead:", err); }
+      }
+
+      // Algoritmo
+      setTimeout(async () => {
+          const q = query(collection(db, "dayuses"));
+          const snap = await getDocs(q);
+          const all = snap.docs.map(d => ({id: d.id, ...d.data()}));
+          const userCitySlug = finalAnswers.city ? generateSlug(finalAnswers.city) : "";
+
+          let filtered = all.filter(i => {
+              const amenities = (i.amenities || []).map(a => a.toLowerCase());
+              if (finalAnswers.pet && !i.petAllowed) return false;
+              if (finalAnswers.food === 'included' && (!i.meals || i.meals.length === 0)) return false;
+              if (finalAnswers.food === 'bbq' && !amenities.some(a => a.includes('churrasqueira'))) return false;
+              if (finalAnswers.food === 'restaurant' && !amenities.some(a => a.includes('restaurante') || a.includes('bar') || a.includes('quiosque'))) return false;
+              if (finalAnswers.must_have === 'heated_pool' && !amenities.some(a => a.includes('aquecida') || a.includes('climatizada'))) return false;
+              if (finalAnswers.must_have === 'fishing' && !amenities.some(a => a.includes('pesque'))) return false;
+              if (finalAnswers.must_have === 'parking' && !amenities.some(a => a.includes('estacionamento'))) return false;
+              return true;
+          });
+          
+          const scored = filtered.map(item => {
+              let score = 0;
+              const amenities = (item.amenities || []).map(a => a.toLowerCase());
+              const itemCitySlug = item.city ? generateSlug(item.city) : "";
+
+              if (userCitySlug && itemCitySlug === userCitySlug) score += 50; 
+              else if (userCitySlug && item.state === "MG") score += 10; 
+              
+              if (finalAnswers.company === 'family') {
+                  if (amenities.some(a => a.includes('kids') || a.includes('infantil') || a.includes('playground'))) score += 15;
+                  if (item.childAgeEnd && Number(item.childAgeEnd) > 10) score += 5;
+              }
+              if (finalAnswers.company === 'couple') {
+                  if (amenities.some(a => a.includes('hidro') || a.includes('ofurô') || a.includes('massagem') || a.includes('sauna'))) score += 15;
+                  if (!amenities.some(a => a.includes('kids') || a.includes('playground'))) score += 5; 
+              }
+              if (finalAnswers.company === 'friends') {
+                  if (amenities.some(a => a.includes('futebol') || a.includes('vôlei') || a.includes('churrasqueira') || a.includes('jogos'))) score += 15;
+              }
+              return { ...item, score };
+          });
+
+          scored.sort((a, b) => b.score - a.score || Number(a.priceAdult) - Number(b.priceAdult));
+          setResult(scored.slice(0, 3)); 
+          setLoading(false);
+      }, 1500);
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto py-16 px-4 animate-fade-in min-h-[70vh] flex flex-col justify-center items-center">
+        
+        {/* TELA 1: INTRODUÇÃO (CAPA) */}
+        {!started && !result && !loading && (
+             <div className="text-center space-y-8 animate-fade-in max-w-3xl">
+                 <span className="text-sm font-bold text-[#0097A8] uppercase tracking-wider bg-cyan-50 px-6 py-2 rounded-full border border-cyan-100">
+                    Experiência Personalizada
+                 </span>
+                 
+                 <h1 className="text-5xl md:text-8xl font-extrabold text-slate-900 leading-tight">
+                     Vamos encontrar o seu <br/>
+                     <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0097A8] to-cyan-400">Day Use Ideal?</span>
+                 </h1>
+                 
+                 <p className="text-xl md:text-2xl text-slate-500 max-w-2xl mx-auto leading-relaxed font-light">
+                     Nossa inteligência artificial analisa seu perfil para recomendar os melhores lugares em segundos. Sem custo, sem complicação.
+                 </p>
+
+                 <button 
+                    onClick={() => setStarted(true)}
+                    className="group bg-[#0097A8] text-white px-12 py-6 rounded-2xl text-xl font-bold hover:bg-[#007F8F] hover:scale-105 transition-all shadow-xl shadow-teal-200/50 flex items-center gap-3 mx-auto mt-8"
+                 >
+                    Começar Agora <ArrowRight className="group-hover:translate-x-1 transition-transform"/>
+                 </button>
+             </div>
+        )}
+
+        {/* TELA 2: PERGUNTAS (DESIGN CLEAN) */}
+        {started && !result && !loading && (
+            <div className="w-full max-w-2xl text-center">
+                {/* Barra de Progresso Sutil */}
+                <div className="w-full h-1.5 bg-slate-100 rounded-full mb-12 overflow-hidden">
+                    <div 
+                        className="h-full bg-[#0097A8] transition-all duration-500 ease-out" 
+                        style={{ width: `${((step + 1) / questions.length) * 100}%` }}
+                    ></div>
+                </div>
+
+                <div className="mb-12">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Etapa {step + 1} de {questions.length}</span>
+                    <h2 className="text-4xl md:text-6xl font-bold text-slate-900 mt-4 leading-tight">{currentQ.question}</h2>
+                    {currentQ.sub && <p className="text-slate-500 text-xl mt-4">{currentQ.sub}</p>}
+                </div>
+
+                {/* TIPOS DE INPUT */}
+                {['text', 'email', 'location'].includes(currentQ.type) && (
+                    <form onSubmit={(e) => handleNext(e)} className="space-y-8">
+                        <div className="relative max-w-lg mx-auto">
+                            {currentQ.type === 'location' && (
+                                <button type="button" onClick={handleGeoLocation} className="absolute right-4 top-4 text-[#0097A8] hover:bg-cyan-50 p-2 rounded-full transition-colors" title="Usar minha localização">
+                                    {geoLoading ? <div className="animate-spin w-6 h-6 border-2 border-[#0097A8] border-t-transparent rounded-full"/> : <MapPin size={28}/>}
+                                </button>
+                            )}
+                            <input 
+                                className="w-full bg-transparent border-b-2 border-slate-200 p-4 text-3xl md:text-5xl text-center font-bold text-slate-800 outline-none focus:border-[#0097A8] placeholder:text-slate-300 transition-colors"
+                                placeholder={currentQ.placeholder}
+                                type={currentQ.type === 'email' ? 'email' : 'text'}
+                                value={answers[currentQ.id] || ''}
+                                onChange={e => setAnswers({ ...answers, [currentQ.id]: e.target.value })}
+                                autoFocus
+                                required={currentQ.type === 'name'}
+                            />
+                        </div>
+
+                        {currentQ.type === 'email' && (
+                            <label className="flex items-center justify-center gap-3 text-base text-slate-500 cursor-pointer hover:text-slate-700">
+                                <input type="checkbox" checked={answers.newsletter} onChange={e => setAnswers({ ...answers, newsletter: e.target.checked })} className="accent-[#0097A8] w-5 h-5"/>
+                                Quero receber ofertas exclusivas.
+                            </label>
+                        )}
+
+                        <div className="pt-8 flex flex-col items-center gap-6">
+                            <Button type="submit" className="px-16 py-5 text-xl rounded-2xl shadow-xl shadow-teal-100">
+                                {currentQ.buttonLabel}
+                            </Button>
+                            {currentQ.skipLabel && (
+                                <button type="button" onClick={() => { setAnswers({ ...answers, [currentQ.id]: '' }); handleNext(''); }} className="text-base text-slate-400 hover:text-slate-600 underline decoration-slate-300 underline-offset-4">
+                                    {currentQ.skipLabel}
+                                </button>
+                            )}
+                        </div>
+                    </form>
+                )}
+
+                {/* MULTIPLA ESCOLHA (CARDS GRANDES) */}
+                {currentQ.type === 'choice' && (
+                    <div className="grid gap-6 md:grid-cols-2">
+                        {currentQ.options.map((opt, i) => (
+                            <button 
+                                key={i} 
+                                onClick={() => handleNext(opt.val)}
+                                className="bg-white p-8 rounded-[2rem] border-2 border-slate-50 hover:border-[#0097A8] hover:bg-teal-50 transition-all text-left flex flex-col items-center md:items-start gap-4 group hover:shadow-xl hover:-translate-y-1"
+                            >
+                                <span className="text-5xl md:text-6xl group-hover:scale-110 transition-transform duration-300 filter grayscale group-hover:grayscale-0">{opt.icon}</span>
+                                <span className="font-bold text-slate-700 text-xl group-hover:text-[#0097A8] mt-2">{opt.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        )}
+
+        {/* LOADING */}
+        {loading && (
+            <div className="py-20 flex flex-col items-center animate-fade-in">
+                <div className="animate-spin w-24 h-24 border-4 border-[#0097A8] border-t-transparent rounded-full mb-10"></div>
+                <h2 className="text-3xl md:text-4xl font-bold text-slate-900 animate-pulse text-center">
+                    {answers.name ? `${answers.name}, s` : 'S'}ua experiência perfeita está sendo localizada...
+                </h2>
+                <p className="text-slate-500 mt-6 text-xl">Analisando comodidades, preços e avaliações.</p>
+            </div>
+        )}
+
+        {/* RESULTADO */}
+        {result && !loading && (
+            <div className="animate-fade-in w-full text-center">
+                <div className="mb-16">
+                    <span className="text-7xl mb-6 block animate-bounce">🎉</span>
+                    <h2 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4">Aqui estão seus matches!</h2>
+                    <p className="text-xl text-slate-500 max-w-2xl mx-auto">
+                        {answers.city ? `Encontramos estas opções incríveis perto de ${answers.city}:` : 'Baseado no seu perfil, você vai amar estes lugares:'}
+                    </p>
+                </div>
+                
+                {result.length > 0 ? (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 text-left">
+                        {result.map(item => (
+                            <DayUseCard 
+                                key={item.id} 
+                                item={item} 
+                                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <div className="bg-slate-50 p-12 rounded-[3rem] border border-dashed border-slate-300 max-w-lg mx-auto">
+                        <p className="text-slate-500 text-lg mb-6">Poxa, não encontramos nada exato para essa combinação específica na sua região.</p>
+                        <Button onClick={() => navigate('/')}>Ver todas as opções</Button>
+                    </div>
+                )}
+                
+                <button 
+                    onClick={() => { setStep(0); setResult(null); setAnswers({ newsletter: true }); setStarted(false); }} 
+                    className="mt-20 text-[#0097A8] font-bold hover:underline flex items-center justify-center gap-2 mx-auto text-sm uppercase tracking-widest"
+                >
+                    <ArrowRight className="rotate-180" size={16}/> Refazer Quiz
+                </button>
+            </div>
+        )}
+    </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -4814,6 +5569,9 @@ const App = () => {
         <Route path="/mapa-do-site" element={<Layout><SiteMapPage /></Layout>} />
         <Route path="/seja-parceiro" element={<Layout><PartnerLandingPage /></Layout>} />
         <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
+        <Route path="/comparativo" element={<Layout><ComparisonLandingPage /></Layout>} />
+        <Route path="/comparativo/:slugs" element={<Layout><ComparisonPage /></Layout>} />
+        <Route path="/quiz" element={<Layout><QuizPage /></Layout>} />
 
       </Routes>
   );
