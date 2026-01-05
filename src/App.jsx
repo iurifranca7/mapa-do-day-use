@@ -3813,7 +3813,7 @@ const Layout = ({ children }) => {
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.svg?v=2" 
+                    src="/logo.png?v=2" 
                     alt="Mapa do Day Use" 
                     className="h-10 w-auto object-contain" 
                     onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
