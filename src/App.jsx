@@ -131,7 +131,7 @@ const useSEO = (title, description, image = null, noIndex = false) => {
   }
 
   // URL da imagem padrão
-  const defaultImage = `${window.location.origin}/logo.svg`; 
+  const defaultImage = `${window.location.origin}/logo.png`; 
   const finalImage = image || defaultImage;
   const currentUrl = window.location.href;
   const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
@@ -3681,7 +3681,7 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.svg?v=2" 
+                           src="/logo.png?v=2" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
                            onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
@@ -3689,7 +3689,6 @@ const Layout = ({ children }) => {
                      ) : (
                         <MapIcon className="h-6 w-6 text-[#0097A8]" />
                      )}
-                     <span className="hidden sm:inline">Mapa do Day Use</span>
                   </div>
                   <p className="text-slate-500 text-sm mb-6 leading-relaxed">
                      A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
