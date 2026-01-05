@@ -3483,72 +3483,200 @@ const CookieConsent = () => {
   );
 };
 
-const PrivacyPage = () => (
-  <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in text-slate-700">
-    <h1 className="text-3xl font-bold mb-6 text-slate-900">Política de Privacidade</h1>
-    <div className="space-y-4 text-sm leading-relaxed bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-      <p><strong>Última atualização: Dezembro de 2025</strong></p>
-      <p>A sua privacidade é importante para o <strong>Mapa do Day Use</strong>. Esta política descreve como coletamos, usamos e protegemos suas informações pessoais ao utilizar nossa plataforma de marketplace para reservas de Day Use.</p>
-      
-      <h2 className="text-xl font-bold text-slate-900 mt-6">1. Coleta de Dados</h2>
-      <p>Coletamos informações que você nos fornece diretamente, como:</p>
-      <ul className="list-disc pl-5 space-y-1">
-        <li>Dados de Identificação: Nome completo, CPF, e-mail e telefone/WhatsApp.</li>
-        <li>Dados de Pagamento: Informações transacionais processadas de forma segura via Mercado Pago (não armazenamos dados completos de cartão de crédito em nossos servidores).</li>
-      </ul>
+// -----------------------------------------------------------------------------
+// PÁGINA: POLÍTICA DE PRIVACIDADE (ADEQUADA À LGPD)
+// -----------------------------------------------------------------------------
+const PrivacyPage = () => {
+  useSEO("Política de Privacidade | Mapa do Day Use", "Saiba como coletamos, usamos e protegemos seus dados pessoais em conformidade com a LGPD.");
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">2. Uso das Informações</h2>
-      <p>Utilizamos seus dados para:</p>
-      <ul className="list-disc pl-5 space-y-1">
-        <li>Processar e confirmar suas reservas de Day Use.</li>
-        <li>Enviar vouchers e notificações sobre o status do seu pedido.</li>
-        <li>Facilitar a comunicação entre você e o estabelecimento parceiro.</li>
-        <li>Melhorar nossos serviços, suporte ao cliente e prevenir fraudes.</li>
-      </ul>
+  return (
+    <div className="max-w-4xl mx-auto py-16 px-6 animate-fade-in text-slate-800 leading-relaxed">
+        <h1 className="text-3xl md:text-4xl font-bold text-slate-900 mb-2">Política de Privacidade</h1>
+        <p className="text-sm text-slate-500 mb-10">Última atualização: 05 de Janeiro de 2026</p>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">3. Compartilhamento de Dados</h2>
-      <p>Seus dados pessoais (Nome, CPF e detalhes da reserva) são compartilhados com o <strong>Estabelecimento Parceiro</strong> onde você efetuou a reserva, exclusivamente para fins de identificação e liberação de acesso na portaria.</p>
+        <div className="space-y-8 text-sm md:text-base">
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">1. Introdução e Controlador</h2>
+                <p>
+                    O <strong>Mapa do Day Use</strong> ("Nós", "Plataforma") está comprometido com a proteção dos seus dados pessoais. 
+                    Esta política descreve como coletamos, utilizamos e protegemos suas informações, em estrita conformidade com a 
+                    <strong> Lei Geral de Proteção de Dados (Lei nº 13.709/2018 - LGPD)</strong>.
+                </p>
+                <p className="mt-2">
+                    Para fins da legislação aplicável, o Mapa do Day Use atua como <strong>Controlador</strong> dos dados pessoais inseridos na plataforma.
+                </p>
+            </section>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">4. Segurança</h2>
-      <p>Adotamos medidas de segurança técnicas e administrativas para proteger seus dados. Os pagamentos são processados em ambiente criptografado pelo Mercado Pago.</p>
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">2. Dados que Coletamos</h2>
+                <ul className="list-disc pl-5 space-y-2 text-slate-600">
+                    <li><strong>Dados de Identificação:</strong> Nome completo, e-mail, telefone/WhatsApp, foto de perfil e CPF (para emissão de pagamentos/notas).</li>
+                    <li><strong>Dados de Navegação e Dispositivo:</strong> Endereço IP, tipo de navegador, geolocalização aproximada (quando autorizada para o Quiz) e comportamento de navegação.</li>
+                    <li><strong>Dados de Parceiros (B2B):</strong> Além dos dados pessoais do representante legal, coletamos documentos empresariais como Contrato Social, CCMEI e Cartão CNPJ para validação de segurança (KYC).</li>
+                    <li><strong>Dados Financeiros:</strong> Informações parciais de pagamento. <em>Nota: Nós não armazenamos números completos de cartão de crédito. Todo o processamento é criptografado e gerido pelo Mercado Pago.</em></li>
+                    <li><strong>Dados de Preferência:</strong> Respostas fornecidas voluntariamente em nosso "Quiz Ideal" para personalização de ofertas.</li>
+                </ul>
+            </section>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">5. Contato</h2>
-      <p>Para dúvidas sobre seus dados ou para exercer seus direitos de privacidade, entre em contato pelo e-mail: <strong>contato@mapadodayuse.com</strong>.</p>
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">3. Uso de Cookies e Tecnologias de Rastreamento (Pixels)</h2>
+                <p>
+                    Utilizamos cookies e pixels de terceiros para melhorar sua experiência e personalizar publicidade:
+                </p>
+                <ul className="list-disc pl-5 space-y-2 mt-2 text-slate-600">
+                    <li><strong>Meta Pixel (Facebook/Instagram):</strong> Utilizado para medir a eficácia dos nossos anúncios e entender as ações que as pessoas realizam no site.</li>
+                    <li><strong>Google Analytics/Tag Manager:</strong> Utilizado para análise estatística de tráfego anônimo e comportamento do usuário.</li>
+                </ul>
+                <p className="mt-2 text-xs text-slate-500 bg-slate-100 p-3 rounded-lg">
+                    Você pode gerenciar ou bloquear esses cookies a qualquer momento através das configurações do seu navegador. O uso continuado da plataforma implica no consentimento desta coleta.
+                </p>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">4. Finalidade do Tratamento</h2>
+                <p>Seus dados são utilizados para:</p>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                    <li>Processar reservas, pagamentos e emitir vouchers de acesso.</li>
+                    <li>Validar a identidade de usuários e a existência legal de empresas parceiras (Prevenção à Fraude).</li>
+                    <li>Enviar comunicações transacionais (confirmação de compra, recuperação de senha).</li>
+                    <li>Enviar newsletters e ofertas personalizadas (apenas mediante seu consentimento explícito no Quiz ou Cadastro).</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">5. Compartilhamento de Dados</h2>
+                <p>Não vendemos seus dados. O compartilhamento ocorre estritamente para a execução do serviço:</p>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                    <li><strong>Com os Estabelecimentos (Parceiros):</strong> Nome e detalhes da reserva para controle de portaria e check-in.</li>
+                    <li><strong>Com Processadores de Pagamento (Mercado Pago):</strong> Para efetivação da transação financeira e split de pagamento.</li>
+                    <li><strong>Com Autoridades Judiciais:</strong> Apenas quando requisitado legalmente.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">6. Seus Direitos (Titular dos Dados)</h2>
+                <p>Conforme o Art. 18 da LGPD, você tem direito a:</p>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                    <li>Confirmar a existência de tratamento e acessar seus dados.</li>
+                    <li>Corrigir dados incompletos ou desatualizados (disponível na área "Meu Perfil").</li>
+                    <li>Revogar o consentimento de marketing.</li>
+                    <li><strong>Solicitar a exclusão dos seus dados:</strong> Disponibilizamos um botão de "Excluir Conta" diretamente no painel do usuário para automação deste direito.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">7. Segurança</h2>
+                <p>
+                    Adotamos medidas técnicas robustas, incluindo criptografia SSL em todas as comunicações, hash de senhas e controle de acesso restrito aos bancos de dados (Firestore Security Rules).
+                </p>
+            </section>
+
+            <div className="pt-8 border-t border-slate-200 mt-8">
+                <p className="font-bold text-slate-900">Encarregado de Dados (DPO)</p>
+                <p>Para exercer seus direitos ou tirar dúvidas, entre em contato:</p>
+                <a href="mailto:dpo@mapadodayuse.com" className="text-[#0097A8] hover:underline font-bold">dpo@mapadodayuse.com</a>
+            </div>
+        </div>
     </div>
-  </div>
-);
+  );
+};
 
-const TermsPage = () => (
-  <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in text-slate-700">
-    <h1 className="text-3xl font-bold mb-6 text-slate-900">Termos de Uso</h1>
-    <div className="space-y-4 text-sm leading-relaxed bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-      <p><strong>Bem-vindo ao Mapa do Day Use!</strong> Ao utilizar nossa plataforma, você concorda com os seguintes termos e condições.</p>
-      
-      <h2 className="text-xl font-bold text-slate-900 mt-6">1. Natureza do Serviço</h2>
-      <p>O Mapa do Day Use é uma plataforma de <strong>intermediação</strong> que conecta viajantes a hotéis, pousadas e resorts que oferecem serviços de Day Use. Nós não somos proprietários, nem administramos os estabelecimentos listados.</p>
+// -----------------------------------------------------------------------------
+// PÁGINA: TERMOS DE USO (CONTRATO DE ADESÃO)
+// -----------------------------------------------------------------------------
+const TermsPage = () => {
+  useSEO("Termos de Uso | Mapa do Day Use", "Regras, direitos e deveres para utilização da plataforma Mapa do Day Use.");
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">2. Responsabilidades</h2>
-      <ul className="list-disc pl-5 space-y-1">
-        <li><strong>Da Plataforma:</strong> Garantir o funcionamento do sistema de reservas, processamento seguro de pagamentos e emissão de vouchers.</li>
-        <li><strong>Do Parceiro (Estabelecimento):</strong> Prestar o serviço de Day Use conforme descrito no anúncio, garantir a disponibilidade, segurança e a qualidade das instalações.</li>
-        <li><strong>Do Usuário:</strong> Fornecer dados verdadeiros, respeitar as regras internas de cada estabelecimento e comparecer na data agendada.</li>
-      </ul>
+  return (
+    <div className="max-w-4xl mx-auto py-16 px-6 animate-fade-in text-slate-800 leading-relaxed">
+        <h1 className="text-3xl md:text-4xl font-bold text-slate-900 mb-2">Termos e Condições de Uso</h1>
+        <p className="text-sm text-slate-500 mb-10">Última atualização: 05 de Janeiro de 2026</p>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">3. Pagamentos e Tarifas</h2>
-      <p>Os pagamentos são realizados via Mercado Pago (Pix ou Cartão). O valor total pago inclui o serviço do parceiro e a taxa de serviço da plataforma. A confirmação da reserva está sujeita à aprovação do pagamento.</p>
+        <div className="space-y-8 text-sm md:text-base">
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">1. Aceitação dos Termos</h2>
+                <p>
+                    Ao acessar, cadastrar-se ou realizar uma reserva no <strong>Mapa do Day Use</strong>, você concorda expressamente com estes Termos de Uso. 
+                    Se não concordar, por favor, não utilize a plataforma.
+                </p>
+            </section>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">4. Cancelamento e Reembolso</h2>
-      <p>Cada estabelecimento possui sua própria política de cancelamento, descrita na página do anúncio. Em geral:</p>
-      <ul className="list-disc pl-5 space-y-1">
-        <li>Solicitações dentro do prazo legal de 7 dias (CDC) e com antecedência mínima da data de utilização podem ser reembolsadas.</li>
-        <li>Cancelamentos fora do prazo ou não comparecimento (No-Show) estão sujeitos às regras definidas pelo Parceiro, podendo não haver reembolso.</li>
-      </ul>
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">2. Natureza do Serviço (Intermediação)</h2>
+                <p>
+                    O Mapa do Day Use é uma plataforma digital que atua como <strong>intermediadora</strong> entre:
+                </p>
+                <ul className="list-disc pl-5 mt-2 mb-2 text-slate-600">
+                    <li><strong>O Usuário/Viajante:</strong> Que busca serviços de lazer (day use).</li>
+                    <li><strong>O Parceiro (Estabelecimento):</strong> Hotéis, pousadas e resorts que ofertam o serviço.</li>
+                </ul>
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-sm text-yellow-800 my-4">
+                    <strong>Importante:</strong> O Mapa do Day Use não é proprietário, não gerencia e não é responsável pela operação interna, segurança física, alimentação ou manutenção das instalações dos Parceiros. Nossa responsabilidade limita-se à emissão do voucher e processamento seguro do pagamento.
+                </div>
+            </section>
 
-      <h2 className="text-xl font-bold text-slate-900 mt-6">5. Alterações nos Termos</h2>
-      <p>Reservamo-nos o direito de alterar estes termos a qualquer momento para refletir mudanças na legislação ou em nossos serviços. O uso contínuo da plataforma implica na aceitação das novas condições.</p>
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">3. Cadastro e Segurança</h2>
+                <p>
+                    O usuário é responsável pela veracidade dos dados cadastrados. A criação de contas falsas ou o uso de dados de terceiros constitui crime de falsidade ideológica.
+                </p>
+                <ul className="list-disc pl-5 mt-2 text-slate-600">
+                    <li>O usuário deve manter seu e-mail verificado para garantir o recebimento dos vouchers.</li>
+                    <li>A senha é pessoal e intransferível. O Mapa do Day Use não se responsabiliza por acessos indevidos resultantes de descuido com a senha.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">4. Pagamentos e Split</h2>
+                <p>
+                    Os pagamentos são processados via <strong>Mercado Pago</strong>. Ao realizar uma compra, o valor é automaticamente dividido (Split de Pagamento):
+                </p>
+                <ul className="list-disc pl-5 mt-2 text-slate-600">
+                    <li>A parte correspondente ao serviço vai diretamente para a conta do Parceiro.</li>
+                    <li>A taxa de serviço/comissão fica com a Plataforma.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">5. Cancelamento e Arrependimento</h2>
+                <p>
+                    Conforme o Art. 49 do Código de Defesa do Consumidor (CDC), o usuário tem o direito de arrependimento em até <strong>7 (sete) dias corridos</strong> após a compra, desde que a solicitação seja feita com antecedência mínima de 24h da data agendada para o uso.
+                </p>
+                <p className="mt-2 font-bold">Regras Específicas:</p>
+                <ul className="list-disc pl-5 text-slate-600">
+                    <li>Solicitações feitas no dia do uso ou após a data agendada (No-Show) não são reembolsáveis.</li>
+                    <li>O reembolso é processado pelo mesmo meio de pagamento utilizado na compra.</li>
+                    <li>Cada estabelecimento pode ter regras adicionais de reagendamento descritas na página do anúncio.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">6. Obrigações e Proibições</h2>
+                <p>É estritamente proibido:</p>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                    <li>Utilizar a plataforma para fraudes ou lavagem de dinheiro.</li>
+                    <li>Realizar engenharia reversa, "scraping" ou copiar o conteúdo do site sem autorização.</li>
+                    <li>Desrespeitar as normas internas (horários, regras de convivência, trajes) dos Parceiros durante a utilização do Day Use. O Parceiro tem o direito de recusar a permanência de usuários que violem suas normas.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">7. Propriedade Intelectual</h2>
+                <p>
+                    A marca "Mapa do Day Use", o layout, o código-fonte e o banco de dados são propriedade exclusiva da empresa. O uso indevido está sujeito às penas da Lei de Propriedade Industrial e Lei de Direitos Autorais.
+                </p>
+            </section>
+
+            <section>
+                <h2 className="text-xl font-bold text-[#0097A8] mb-3">8. Foro</h2>
+                <p>
+                    Fica eleito o foro da comarca de Belo Horizonte/MG para dirimir quaisquer dúvidas oriundas destes termos, com renúncia a qualquer outro, por mais privilegiado que seja.
+                </p>
+            </section>
+        </div>
     </div>
-  </div>
-);
+  );
+};
 
 // --- ESTRUTURA PRINCIPAL ---// ...
 const ResetPasswordModal = ({ isOpen, onClose, actionCode, email }) => {
