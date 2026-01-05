@@ -5539,7 +5539,8 @@ const QuizPage = () => {
 
 const App = () => {
   return (
-      <Routes>
+      <>
+        <Routes>
         <Route path="/" element={<Layout><HomePage /></Layout>} />
         
         {/* ROTAS DINÂMICAS INTELIGENTES */}
@@ -5574,6 +5575,8 @@ const App = () => {
         <Route path="/quiz" element={<Layout><QuizPage /></Layout>} />
 
       </Routes>
+        <SpeedInsights />
+      </>
   );
 };
 
