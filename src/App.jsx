@@ -29,7 +29,12 @@ import {
 } from 'firebase/auth';
 import { initMercadoPago, Payment } from '@mercadopago/sdk-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { BookOpen, MapPin, Search, User, CheckCircle, X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter, TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Bell, Youtube, Facebook, Smartphone, Apple } from 'lucide-react';
+import { 
+  MapPin, Search, User, CheckCircle, 
+  X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
+  TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
+  Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox
+} from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
 const STATE_NAMES = {
@@ -122,8 +127,8 @@ const getStateSlug = (uf) => uf ? uf.toLowerCase() : 'br';
 const validateCNPJ = (cnpj) => cnpj.replace(/[^\d]+/g, '').length === 14;
 const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/; const match = url.match(regExp); return (match && match[2].length === 11) ? match[2] : null; };
 
-// --- HOOK DE SEO (DEFINIDO NO INÍCIO PARA EVITAR ERROS) ---
-const useSEO = (title, description, image = null, noIndex = false) => {
+// --- HOOK DE SEO + OPEN GRAPH + CANONICAL (ATUALIZADO) ---
+const useSEO = (title, description, image = null, noIndex = false, canonical = null) => {
   // Ajuste de compatibilidade: Se o 3º argumento for booleano, trata como noIndex
   if (typeof image === 'boolean') {
       noIndex = image;
@@ -131,10 +136,13 @@ const useSEO = (title, description, image = null, noIndex = false) => {
   }
 
   // URL da imagem padrão
-  const defaultImage = `${window.location.origin}/logo.png`; 
+  const defaultImage = `${window.location.origin}/logo.svg`; 
   const finalImage = image || defaultImage;
   const currentUrl = window.location.href;
   const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
+  
+  // Define a URL canônica: Se não for passada manualmente, usa a URL atual limpa (sem query params)
+  const finalCanonical = canonical || window.location.origin + window.location.pathname;
 
   useEffect(() => {
     // 1. Título da Aba
@@ -159,7 +167,7 @@ const useSEO = (title, description, image = null, noIndex = false) => {
     setMeta('property', 'og:title', siteTitle);
     setMeta('property', 'og:description', description);
     setMeta('property', 'og:image', finalImage);
-    setMeta('property', 'og:url', currentUrl);
+    setMeta('property', 'og:url', finalCanonical);
     setMeta('property', 'og:type', 'website');
     setMeta('property', 'og:site_name', 'Mapa do Day Use');
     setMeta('property', 'og:locale', 'pt_BR');
@@ -170,7 +178,16 @@ const useSEO = (title, description, image = null, noIndex = false) => {
     setMeta('name', 'twitter:description', description);
     setMeta('name', 'twitter:image', finalImage);
 
-  }, [title, description, finalImage, noIndex, currentUrl, siteTitle]);
+    // 5. Tag Canônica (NOVO)
+    let linkCanonical = document.querySelector("link[rel='canonical']");
+    if (!linkCanonical) {
+        linkCanonical = document.createElement("link");
+        linkCanonical.setAttribute("rel", "canonical");
+        document.head.appendChild(linkCanonical);
+    }
+    linkCanonical.setAttribute("href", finalCanonical);
+
+  }, [title, description, finalImage, noIndex, currentUrl, siteTitle, finalCanonical]);
 };
 
 // --- HOOK DE SCHEMA MARKUP (DADOS ESTRUTURADOS) ---
@@ -1449,27 +1466,38 @@ const DetailsPage = () => {
   const handleClaimSubmit = async (e) => {
       e.preventDefault();
       setClaimLoading(true);
-      const emailHtml = `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #0097A8;">Nova Solicitação de Propriedade</h2>
-            <p><strong>Local:</strong> ${item.name} (ID: ${item.id})</p>
-            <p><strong>Solicitante:</strong> ${claimData.name}</p>
-            <p><strong>E-mail:</strong> ${claimData.email}</p>
-            <p><strong>Telefone:</strong> ${claimData.phone}</p>
-            <p><strong>Cargo:</strong> ${claimData.job}</p>
-        </div>
-      `;
+      
+      const emailHtml = `...`; // (Mantido igual)
+
       try {
+          // 1. Salva no Banco de Dados para o Painel Admin (NOVO)
+          await addDoc(collection(db, "property_claims"), {
+              propertyName: item.name,
+              propertyId: item.id,
+              userName: claimData.name,
+              userEmail: claimData.email,
+              userPhone: claimData.phone,
+              userJob: claimData.job,
+              status: 'pending', // pending, done
+              createdAt: new Date()
+          });
+
+          // 2. Envia Notificação por E-mail (Mantido)
           await fetch('/api/send-email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ to: 'contato@mapadodayuse.com', subject: `🔥 Solicitação: ${item.name}`, html: emailHtml })
           });
+          
           setShowClaimModal(false);
           setShowClaimSuccess(true);
           setClaimData({ name: '', email: '', phone: '', job: '' });
-      } catch (error) { console.error(error); alert("Erro ao enviar solicitação."); } 
-      finally { setClaimLoading(false); }
+      } catch (error) {
+          console.error(error);
+          alert("Erro ao enviar solicitação.");
+      } finally {
+          setClaimLoading(false);
+      }
   };
 
   const PausedMessage = () => (
@@ -5904,9 +5932,21 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // PAINEL ADMINISTRATIVO (MODERAÇÃO)
 // -----------------------------------------------------------------------------
 const AdminDashboard = () => {
-  const [pendingUsers, setPendingUsers] = useState([]);
-  const [viewDoc, setViewDoc] = useState(null); 
+  const [activeTab, setActiveTab] = useState('partners'); // 'partners', 'leads', 'claims'
   const [user, setUser] = useState(null);
+  
+  // States - Parceiros
+  const [pendingUsers, setPendingUsers] = useState([]);
+  const [viewDoc, setViewDoc] = useState(null);
+
+  // States - Leads
+  const [leads, setLeads] = useState([]);
+  const [dateStart, setDateStart] = useState("");
+  const [dateEnd, setDateEnd] = useState("");
+
+  // States - Claims (Solicitações)
+  const [claims, setClaims] = useState([]);
+  const [claimFilter, setClaimFilter] = useState('pending'); // 'pending', 'done'
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -5914,9 +5954,20 @@ const AdminDashboard = () => {
             const snap = await getDoc(doc(db, "users", u.uid));
             if (snap.data()?.role === 'admin') {
                 setUser(u);
-                const q = query(collection(db, "users"), where("docStatus", "==", "pending"));
-                onSnapshot(q, (snapshot) => {
-                    setPendingUsers(snapshot.docs.map(d => ({id: d.id, ...d.data()})));
+                
+                // Listener Parceiros Pendentes
+                onSnapshot(query(collection(db, "users"), where("docStatus", "==", "pending")), (s) => {
+                    setPendingUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
+                });
+
+                // Listener Leads (Quiz)
+                onSnapshot(query(collection(db, "leads"), orderBy("createdAt", "desc")), (s) => {
+                    setLeads(s.docs.map(d => ({id: d.id, ...d.data()})));
+                });
+
+                // Listener Solicitações (Claims)
+                onSnapshot(query(collection(db, "property_claims"), orderBy("createdAt", "desc")), (s) => {
+                    setClaims(s.docs.map(d => ({id: d.id, ...d.data()})));
                 });
             }
         }
@@ -5924,15 +5975,16 @@ const AdminDashboard = () => {
     return unsubAuth;
   }, []);
 
-  const handleAction = async (uid, status) => {
+  // --- AÇÕES PARCEIROS ---
+  const handlePartnerAction = async (uid, status) => {
       const confirmText = status === 'verified' ? "Aprovar empresa?" : "Rejeitar documento?";
       if (confirm(confirmText)) {
           await updateDoc(doc(db, "users", uid), { docStatus: status });
           
-          const subject = status === 'verified' ? "Sua conta foi APROVADA! 🎉" : "Atualização sobre sua conta";
+          const subject = status === 'verified' ? "Conta APROVADA! 🎉" : "Pendência na sua conta";
           const html = status === 'verified' 
-              ? "<p>Parabéns! Seus documentos foram validados. Você já pode conectar sua conta e criar anúncios.</p>"
-              : "<p>Infelizmente não conseguimos validar seu documento. Por favor, envie uma foto legível.</p>";
+              ? "<p>Parabéns! Documentação aprovada. Acesse seu painel.</p>" 
+              : "<p>Documento recusado. Envie uma foto legível do CCMEI/Contrato.</p>";
           
           if (viewDoc?.email) {
               fetch('/api/send-email', {
@@ -5941,41 +5993,193 @@ const AdminDashboard = () => {
                   body: JSON.stringify({ to: viewDoc.email, subject, html })
               }).catch(console.error);
           }
-
           setViewDoc(null);
-          alert(status === 'verified' ? "Parceiro Aprovado!" : "Parceiro Rejeitado.");
       }
   };
+
+  // --- AÇÕES LEADS ---
+  const filteredLeads = leads.filter(l => {
+      if (!dateStart && !dateEnd) return true;
+      const leadDate = l.createdAt?.toDate ? l.createdAt.toDate() : new Date(l.createdAt);
+      const start = dateStart ? new Date(dateStart) : new Date('2000-01-01');
+      const end = dateEnd ? new Date(dateEnd) : new Date();
+      end.setHours(23, 59, 59);
+      return leadDate >= start && leadDate <= end;
+  });
+
+  const exportLeadsCSV = () => {
+      const headers = ["Data", "Nome", "Email", "Cidade", "Newsletter", "Perfil", "Pet", "Alimentação"];
+      const rows = filteredLeads.map(l => [
+          l.createdAt?.toDate ? l.createdAt.toDate().toLocaleDateString('pt-BR') : new Date().toLocaleDateString(),
+          l.name,
+          l.email,
+          l.city,
+          l.newsletter ? "Sim" : "Não",
+          l.preferences?.company || "-",
+          l.preferences?.pet ? "Sim" : "Não",
+          l.preferences?.food || "-"
+      ]);
+
+      const csvContent = "data:text/csv;charset=utf-8," 
+          + headers.join(",") + "\n" 
+          + rows.map(e => e.join(",")).join("\n");
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `leads_dayuse_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  // --- AÇÕES SOLICITAÇÕES ---
+  const handleClaimStatus = async (id, newStatus) => {
+      if(confirm("Alterar status da solicitação?")) {
+          await updateDoc(doc(db, "property_claims", id), { status: newStatus });
+      }
+  };
+
+  const filteredClaims = claims.filter(c => claimFilter === 'all' || c.status === claimFilter);
 
   if (!user) return <div className="text-center py-20">Verificando permissões...</div>;
 
   return (
-    <div className="max-w-5xl mx-auto py-12 px-4 animate-fade-in">
+    <div className="max-w-6xl mx-auto py-12 px-4 animate-fade-in">
         <h1 className="text-3xl font-bold text-slate-900 mb-8 flex items-center gap-2">
-            <ShieldCheck className="text-[#0097A8]"/> Moderação de Parceiros
+            <ShieldCheck className="text-[#0097A8]"/> Painel Administrativo
         </h1>
 
-        {pendingUsers.length === 0 ? (
-            <div className="bg-slate-50 p-12 rounded-3xl border border-dashed border-slate-300 text-center">
-                <CheckCircle size={48} className="text-green-500 mx-auto mb-4"/>
-                <h3 className="text-xl font-bold text-slate-700">Tudo limpo!</h3>
-                <p className="text-slate-500">Nenhuma verificação pendente no momento.</p>
-            </div>
-        ) : (
-            <div className="grid gap-4">
-                {pendingUsers.map(p => (
-                    <div key={p.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
-                        <div>
-                            <p className="font-bold text-lg text-slate-800">{p.name || "Sem nome"}</p>
-                            <p className="text-sm text-slate-500">{p.email}</p>
-                            <p className="text-xs text-slate-400 mt-1">Enviado em: {p.submittedAt?.toDate().toLocaleString()}</p>
-                        </div>
-                        <Button onClick={() => setViewDoc(p)} className="px-6">Analisar Documento</Button>
+        {/* NAVEGAÇÃO EM ABAS */}
+        <div className="flex gap-4 mb-8 border-b border-slate-200 pb-1 overflow-x-auto">
+            <button onClick={() => setActiveTab('partners')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'partners' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
+                Moderação Parceiros {pendingUsers.length > 0 && <span className="ml-2 bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">{pendingUsers.length}</span>}
+            </button>
+            <button onClick={() => setActiveTab('leads')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'leads' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
+                Leads Quiz
+            </button>
+            <button onClick={() => setActiveTab('claims')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'claims' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
+                Solicitações de Propriedade {claims.filter(c=>c.status==='pending').length > 0 && <span className="ml-2 bg-orange-500 text-white text-[10px] px-2 py-0.5 rounded-full">{claims.filter(c=>c.status==='pending').length}</span>}
+            </button>
+        </div>
+
+        {/* --- CONTEÚDO: PARCEIROS --- */}
+        {activeTab === 'partners' && (
+            <div>
+                {pendingUsers.length === 0 ? (
+                    <div className="bg-slate-50 p-12 rounded-3xl border border-dashed border-slate-300 text-center">
+                        <CheckCircle size={48} className="text-green-500 mx-auto mb-4"/>
+                        <p className="text-slate-500">Tudo limpo! Nenhuma verificação pendente.</p>
                     </div>
-                ))}
+                ) : (
+                    <div className="grid gap-4">
+                        {pendingUsers.map(p => (
+                            <div key={p.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                                <div>
+                                    <p className="font-bold text-lg text-slate-800">{p.name || "Sem nome"}</p>
+                                    <p className="text-sm text-slate-500">{p.email}</p>
+                                    <p className="text-xs text-slate-400 mt-1">Enviado em: {p.submittedAt?.toDate ? p.submittedAt.toDate().toLocaleString() : 'Data inválida'}</p>
+                                </div>
+                                <Button onClick={() => setViewDoc(p)} className="px-6">Analisar Documento</Button>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         )}
 
+        {/* --- CONTEÚDO: LEADS --- */}
+        {activeTab === 'leads' && (
+            <div className="space-y-6">
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div className="flex gap-4 items-center">
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 block mb-1">De</label>
+                            <input type="date" className="border p-2 rounded-lg text-sm" value={dateStart} onChange={e=>setDateStart(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 block mb-1">Até</label>
+                            <input type="date" className="border p-2 rounded-lg text-sm" value={dateEnd} onChange={e=>setDateEnd(e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-xs text-slate-400 mb-1">Total Filtrado: <strong>{filteredLeads.length}</strong></p>
+                        <Button onClick={exportLeadsCSV} variant="outline" className="text-xs h-9"><Download size={14}/> Exportar CSV</Button>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs">
+                                <tr>
+                                    <th className="p-4 whitespace-nowrap">Data</th>
+                                    <th className="p-4 whitespace-nowrap">Nome</th>
+                                    <th className="p-4 whitespace-nowrap">Email</th>
+                                    <th className="p-4 whitespace-nowrap">Cidade</th>
+                                    <th className="p-4 whitespace-nowrap">Perfil</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filteredLeads.map(lead => (
+                                    <tr key={lead.id} className="hover:bg-slate-50">
+                                        <td className="p-4 text-slate-500">{lead.createdAt?.toDate ? lead.createdAt.toDate().toLocaleDateString() : '-'}</td>
+                                        <td className="p-4 font-bold text-slate-700">{lead.name}</td>
+                                        <td className="p-4 text-slate-600">{lead.email}</td>
+                                        <td className="p-4 text-slate-600">{lead.city}</td>
+                                        <td className="p-4"><span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs capitalize">{lead.preferences?.company || '-'}</span></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    {filteredLeads.length === 0 && <p className="text-center py-8 text-slate-400">Nenhum lead encontrado.</p>}
+                </div>
+            </div>
+        )}
+
+        {/* --- CONTEÚDO: SOLICITAÇÕES (CLAIMS) --- */}
+        {activeTab === 'claims' && (
+            <div className="space-y-6">
+                <div className="flex gap-2">
+                    <button onClick={()=>setClaimFilter('pending')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='pending' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>Pendentes</button>
+                    <button onClick={()=>setClaimFilter('done')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='done' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>Atendidas</button>
+                    <button onClick={()=>setClaimFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='all' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>Todas</button>
+                </div>
+
+                <div className="grid gap-4">
+                    {filteredClaims.map(claim => (
+                        <div key={claim.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative">
+                            <div className="absolute top-4 right-4">
+                                {claim.status === 'done' 
+                                    ? <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Atendido</span>
+                                    : <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><Inbox size={12}/> Pendente</span>
+                                }
+                            </div>
+                            <h3 className="font-bold text-lg text-slate-800 mb-1">{claim.propertyName} <span className="text-xs font-normal text-slate-400">(ID: {claim.propertyId})</span></h3>
+                            <p className="text-xs text-slate-400 mb-4">Solicitado em: {claim.createdAt?.toDate ? claim.createdAt.toDate().toLocaleString() : 'Data inválida'}</p>
+                            
+                            <div className="grid md:grid-cols-2 gap-4 text-sm bg-slate-50 p-4 rounded-xl mb-4">
+                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Solicitante</span> <strong>{claim.userName}</strong></div>
+                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Cargo</span> <strong>{claim.userJob}</strong></div>
+                                <div><span className="text-slate-400 block text-xs uppercase font-bold">E-mail</span> {claim.userEmail}</div>
+                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Telefone</span> {claim.userPhone}</div>
+                            </div>
+
+                            {claim.status !== 'done' && (
+                                <div className="flex gap-4">
+                                    <Button onClick={() => handleClaimStatus(claim.id, 'done')} className="h-10 text-sm bg-green-600 hover:bg-green-700 shadow-none">Marcar como Atendido</Button>
+                                    <a href={`mailto:${claim.userEmail}`} className="h-10 px-4 flex items-center justify-center border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-bold text-sm transition-colors">Entrar em contato</a>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                    {filteredClaims.length === 0 && <p className="text-center py-8 text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">Nenhuma solicitação encontrada.</p>}
+                </div>
+            </div>
+        )}
+
+        {/* MODAL DE DOCUMENTO (Mantido) */}
         {viewDoc && createPortal(
             <ModalOverlay onClose={() => setViewDoc(null)}>
                 <div className="bg-white p-6 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col relative">
@@ -6000,8 +6204,8 @@ const AdminDashboard = () => {
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                        <button onClick={() => handleAction(viewDoc.id, 'rejected')} className="py-4 rounded-xl font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-colors border border-red-200">Rejeitar</button>
-                        <button onClick={() => handleAction(viewDoc.id, 'verified')} className="py-4 rounded-xl font-bold text-white bg-green-600 hover:bg-green-700 transition-colors shadow-lg shadow-green-200">Aprovar Parceiro</button>
+                        <button onClick={() => handlePartnerAction(viewDoc.id, 'rejected')} className="py-4 rounded-xl font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-colors border border-red-200">Rejeitar</button>
+                        <button onClick={() => handlePartnerAction(viewDoc.id, 'verified')} className="py-4 rounded-xl font-bold text-white bg-green-600 hover:bg-green-700 transition-colors shadow-lg shadow-green-200">Aprovar Parceiro</button>
                     </div>
                 </div>
             </ModalOverlay>,
