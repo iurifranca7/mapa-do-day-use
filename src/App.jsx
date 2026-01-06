@@ -1796,7 +1796,7 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  const handleConfirm = async () => {
+const handleConfirm = async () => {
     try {
         await addDoc(collection(db, "reservations"), {
           ...bookingData, 
@@ -1804,6 +1804,12 @@ const CheckoutPage = () => {
           discount: discount,
           couponCode: couponCode ? couponCode.toUpperCase() : null,
           paymentMethod: paymentMethod,
+          
+          // --- CORREÇÃO CRÍTICA: Salvar ID do Pagamento ---
+          // Sem isso, o estorno automático não funciona
+          paymentId: createdPaymentId || "MANUAL_OR_LEGACY", 
+          // ------------------------------------------------
+
           userId: user.uid, 
           ownerId: bookingData.item.ownerId,
           createdAt: new Date(), 
@@ -2604,6 +2610,90 @@ const StaffDashboard = () => {
   );
 };
 
+// ... (outros componentes)
+
+// -----------------------------------------------------------------------------
+// COMPONENTE: CALENDÁRIO DE OCUPAÇÃO (PARCEIRO)
+// -----------------------------------------------------------------------------
+const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
+  const [curr, setCurr] = useState(new Date());
+  const daysInMonth = new Date(curr.getFullYear(), curr.getMonth() + 1, 0).getDate();
+  const firstDay = new Date(curr.getFullYear(), curr.getMonth(), 1).getDay();
+  const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
+
+  // Cache de ocupação por dia
+  const getDailyStats = (day) => {
+      const dateStr = new Date(curr.getFullYear(), curr.getMonth(), day).toISOString().split('T')[0];
+      const dayRes = reservations.filter(r => r.date === dateStr && r.status === 'confirmed');
+      
+      const stats = dayRes.reduce((acc, r) => ({
+          a: acc.a + Number(r.adults || 0),
+          c: acc.c + Number(r.children || 0),
+          p: acc.p + Number(r.pets || 0)
+      }), { a: 0, c: 0, p: 0 });
+
+      return { ...stats, hasData: dayRes.length > 0 };
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-8">
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-4">
+            <button type="button" onClick={() => setCurr(new Date(curr.setMonth(curr.getMonth()-1)))} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><ChevronLeft size={20}/></button>
+            <span className="font-bold text-slate-800 text-lg capitalize">{curr.toLocaleString('pt-BR',{month:'long', year:'numeric'})}</span>
+            <button type="button" onClick={() => setCurr(new Date(curr.setMonth(curr.getMonth()+1)))} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><ChevronRight size={20}/></button>
+        </div>
+        <div className="flex gap-4 text-xs text-slate-500">
+            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-indigo-500"></div> Adultos</span>
+            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-pink-500"></div> Crianças</span>
+            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Pets</span>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-7 gap-2 mb-2">
+          {weekDays.map((d,i)=><span key={i} className="text-center text-xs font-bold text-slate-400 uppercase tracking-wider">{d}</span>)}
+      </div>
+      
+      <div className="grid grid-cols-7 gap-2">
+        {Array.from({length: firstDay}).map((_,i)=><div key={`e-${i}`}/>)}
+        {Array.from({length: daysInMonth}).map((_,i)=>{
+          const d = i+1;
+          const dateStr = new Date(curr.getFullYear(), curr.getMonth(), d).toISOString().split('T')[0];
+          const stats = getDailyStats(d);
+          const isSelected = dateStr === selectedDate;
+
+          return (
+            <button 
+                key={d} 
+                onClick={() => onDateSelect(dateStr)}
+                className={`h-20 w-full rounded-xl border flex flex-col items-center justify-start pt-2 transition-all relative overflow-hidden group ${
+                    isSelected 
+                        ? 'border-[#0097A8] bg-cyan-50 ring-2 ring-[#0097A8] ring-offset-2' 
+                        : 'border-slate-100 hover:border-slate-300 hover:shadow-md bg-white'
+                }`}
+            >
+              <span className={`text-sm font-bold mb-1 ${isSelected ? 'text-[#0097A8]' : 'text-slate-700'}`}>{d}</span>
+              
+              {stats.hasData ? (
+                  <div className="flex flex-col gap-0.5 w-full px-1">
+                      {stats.a > 0 && <div className="flex items-center justify-center gap-1 text-[10px] text-indigo-700 bg-indigo-50 rounded-full py-0.5 px-1 font-bold"><User size={8} fill="currentColor"/> {stats.a}</div>}
+                      {stats.c > 0 && <div className="flex items-center justify-center gap-1 text-[10px] text-pink-700 bg-pink-50 rounded-full py-0.5 px-1 font-bold"><User size={8}/> {stats.c}</div>}
+                      {stats.p > 0 && <div className="flex items-center justify-center gap-1 text-[10px] text-orange-700 bg-orange-50 rounded-full py-0.5 px-1 font-bold"><PawPrint size={8}/> {stats.p}</div>}
+                  </div>
+              ) : (
+                  <span className="text-[10px] text-slate-300 mt-2">-</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// PAINEL DO PARCEIRO (COMPLETO E BLINDADO)
+// -----------------------------------------------------------------------------
 const PartnerDashboard = () => {
   // --- STATES DE DADOS ---
   const [items, setItems] = useState([]);
@@ -2618,6 +2708,7 @@ const PartnerDashboard = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [validationCode, setValidationCode] = useState("");
   
+  // States de Segurança e Integração
   const [mpConnected, setMpConnected] = useState(false);
   const [tokenType, setTokenType] = useState(null); 
   const [docStatus, setDocStatus] = useState('none'); // none, pending, verified, rejected
@@ -2636,10 +2727,17 @@ const PartnerDashboard = () => {
   const [staffPass, setStaffPass] = useState('');
   const [staffLoading, setStaffLoading] = useState(false);
 
+  // --- STATES GESTÃO DE RESERVAS ---
+  const [manageRes, setManageRes] = useState(null);
+  const [manageAction, setManageAction] = useState('reschedule'); 
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [refundPercent, setRefundPercent] = useState(100);
+  const [manageLoading, setManageLoading] = useState(false);
+
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
 
-  // 1. CARREGAMENTO INICIAL E LISTENERS
+  // 1. CARREGAMENTO INICIAL
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
@@ -2655,7 +2753,6 @@ const PartnerDashboard = () => {
                }
            }
            
-           // Listeners em Tempo Real
            const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
            const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
            const qStaff = query(collection(db, "users"), where("ownerId", "==", u.uid));
@@ -2681,7 +2778,7 @@ const PartnerDashboard = () => {
 
   // --- TRAVAS DE SEGURANÇA E BOTÕES ---
   
-  // Helper para reenviar e-mail na dashboard
+  // Ação: Reenviar E-mail (Para desbloquear Etapa 1)
   const handleResendVerify = async () => {
       if(!user) return;
       try {
@@ -2693,34 +2790,38 @@ const PartnerDashboard = () => {
       }
   };
 
-  // Ação: Enviar Documentos (Só pode se tiver e-mail verificado)
+  // Ação: Enviar Documentos (Etapa 2 - Bloqueada se E-mail não verificado)
   const handleVerifyDocsClick = () => {
       if (!user?.emailVerified) {
           setFeedback({
               type: 'warning',
-              title: 'E-mail Pendente',
-              msg: 'Para garantir a segurança, você precisa confirmar seu e-mail antes de enviar a documentação da empresa. Verifique sua caixa de entrada.'
+              title: 'Verifique seu E-mail',
+              msg: 'Para prosseguir com a validação da empresa, primeiro confirme seu endereço de e-mail.'
           });
           return;
       }
       navigate('/partner/verificacao');
   };
 
-  // Ação: Conectar MP (Só pode se empresa verificada)
+  // Ação: Conectar MP (Etapa 3 - Bloqueada se Empresa não verificada)
   const handleConnectClick = () => {
-      if (docStatus !== 'verified') {
-          setFeedback({ type: 'warning', title: 'Empresa em Análise', msg: 'Para receber pagamentos, precisamos primeiro aprovar a documentação da sua empresa.' });
-          // Redireciona para verificação caso ainda não tenha enviado
+      if (!user?.emailVerified) {
+           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Verifique seu e-mail primeiro.' });
+      } else if (docStatus !== 'verified') {
+          setFeedback({ type: 'warning', title: 'Empresa em Análise', msg: 'Para receber pagamentos, precisamos primeiro aprovar a documentação da sua empresa. Envie seus documentos.' });
           if (docStatus === 'none' || docStatus === 'rejected') navigate('/partner/verificacao');
       } else {
           handleConnect();
       }
   };
 
-  // Ação: Criar Anúncio (Só pode se tudo estiver ok)
+  // Ação: Criar Anúncio (Etapa 4 - Bloqueada se MP não conectado)
   const handleCreateAdClick = () => {
-      if (docStatus !== 'verified') {
-          setFeedback({ type: 'warning', title: 'Empresa em Análise', msg: 'Sua conta empresarial precisa ser aprovada para criar anúncios.' });
+      if (!user?.emailVerified) {
+           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Verifique seu e-mail primeiro.' });
+      } else if (docStatus !== 'verified') {
+          setFeedback({ type: 'warning', title: 'Verificação Necessária', msg: 'Sua conta empresarial precisa ser aprovada para criar anúncios.' });
+          navigate('/partner/verificacao');
       } else if (!mpConnected) {
           setFeedback({ type: 'warning', title: 'Conexão Necessária', msg: 'Para vender ingressos, conecte sua conta do Mercado Pago.' });
       } else {
@@ -2728,7 +2829,7 @@ const PartnerDashboard = () => {
       }
   };
 
-  // Wrapper de segurança para ações de equipe
+  // Wrapper para ações sensíveis (Staff)
   const requireVerified = (action) => {
       if (docStatus !== 'verified') {
           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Valide sua empresa para gerenciar equipe.' });
@@ -2737,21 +2838,15 @@ const PartnerDashboard = () => {
       action();
   };
 
-  // --- AÇÕES DO MODAL DE CONFIRMAÇÃO ---
-  const confirmTogglePause = (item) => {
-      setConfirmAction({ type: item.paused ? 'resume_ad' : 'pause_ad', payload: item });
-  };
-  const confirmDeleteStaff = (staffId) => {
-      requireVerified(() => setConfirmAction({ type: 'delete_staff', payload: staffId }));
-  };
-  const confirmResetStaffPass = (email, requestId = null) => {
-      requireVerified(() => setConfirmAction({ type: 'reset_staff_pass', payload: { email, requestId } }));
-  };
+  // --- AÇÕES GERAIS ---
+  const togglePause = (item) => { setConfirmAction({ type: item.paused ? 'resume_ad' : 'pause_ad', payload: item }); };
+  const confirmDeleteStaff = (staffId) => { requireVerified(() => setConfirmAction({ type: 'delete_staff', payload: staffId })); };
+  const confirmResetStaffPass = (email, requestId = null) => { requireVerified(() => setConfirmAction({ type: 'reset_staff_pass', payload: { email, requestId } })); };
+  const handleEditEmailClick = () => { setFeedback({ type: 'warning', title: 'Alteração de E-mail', msg: 'Para garantir a segurança, não é possível alterar o e-mail diretamente. Remova o usuário e crie um novo.' }); };
 
   const executeAction = async () => {
       if (!confirmAction) return;
       const { type, payload } = confirmAction;
-
       try {
           if (type === 'pause_ad' || type === 'resume_ad') {
                await updateDoc(doc(db, "dayuses", payload.id), { paused: type === 'pause_ad' });
@@ -2759,100 +2854,33 @@ const PartnerDashboard = () => {
           }
           else if (type === 'delete_staff') {
                await deleteDoc(doc(db, "users", payload));
-               setFeedback({ type: 'success', title: 'Removido', msg: 'Acesso revogado com sucesso.' });
+               setFeedback({ type: 'success', title: 'Removido', msg: 'Acesso revogado.' });
           }
           else if (type === 'reset_staff_pass') {
                await sendPasswordResetEmail(auth, payload.email);
                if (payload.requestId) await updateDoc(doc(db, "requests", payload.requestId), { status: 'completed' });
-               setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Link de redefinição enviado para o funcionário.' });
+               setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Link enviado.' });
           }
-      } catch (error) {
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível completar a ação.' });
-      } finally {
-          setConfirmAction(null);
-      }
+      } catch (error) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha na ação.' }); } finally { setConfirmAction(null); }
   };
 
-  // --- VALIDAÇÃO DE INGRESSOS ---
-  const handleValidate = async (resId, codeInput) => {
-     if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) {
-        try {
-            await updateDoc(doc(db, "reservations", resId), { status: 'validated' });
-            const res = reservations.find(r => r.id === resId);
-            setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: `Acesso liberado para ${res?.guestName}.` });
-            setValidationCode("");
-        } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); }
-     } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); }
-  };
-  
-  const onScanSuccess = (decodedText) => {
-      setShowScanner(false);
-      const res = reservations.find(r => r.id === decodedText);
-      if (res) {
-          if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' });
-          else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' });
-          else handleValidate(res.id, res.id);
-      } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' });
-  };
-
-  // --- GESTÃO DE EQUIPE (API + FIREBASE) ---
-  const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => {
-      if (docStatus !== 'verified') return setFeedback({ type: 'warning', title: 'Restrito', msg: 'Valide sua empresa primeiro.' });
-      
-      setStaffLoading(true);
+  // --- GESTÃO DE RESERVAS (ESTORNO/REAGENDAMENTO) ---
+  const handleManageSubmit = async () => {
+      if (!manageRes) return;
+      setManageLoading(true);
+      const payload = { reservationId: manageRes.id, action: manageAction === 'reschedule' ? 'reschedule' : (refundPercent === 100 ? 'cancel_full' : 'cancel_partial'), percentage: refundPercent, newDate: rescheduleDate };
       try {
-          const response = await fetch('/api/admin-update-staff', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ staffId, newEmail, ownerId: user.uid })
-          });
+          const response = await fetch('/api/refund', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           const data = await response.json();
-          
-          if (response.ok) {
-              await fetch('/api/send-auth-link', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' })
-              });
-
-              if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' });
-              
-              setFeedback({ type: 'success', title: 'Atualizado!', msg: `E-mail alterado para ${newEmail}. Link de confirmação enviado.` });
-              setEditStaffModal(null);
-              setNewStaffEmailInput('');
-          } else {
-              throw new Error(data.error || 'Erro desconhecido');
-          }
-      } catch (err) {
-          console.error(err);
-          setFeedback({ type: 'error', title: 'Erro ao Atualizar', msg: err.message });
-      } finally {
-          setStaffLoading(false);
-      }
+          if (response.ok) { setFeedback({ type: 'success', title: 'Sucesso', msg: data.message }); setManageRes(null); } else throw new Error(data.error);
+      } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: err.message }); } finally { setManageLoading(false); }
   };
 
-  const handleAddStaff = async (e) => {
-      e.preventDefault();
-      if (docStatus !== 'verified') return setFeedback({ type: 'warning', title: 'Restrito', msg: 'Valide sua empresa primeiro.' });
-      
-      setStaffLoading(true);
-      try {
-          const secondaryApp = initializeApp(getApp().options, "Secondary");
-          const secondaryAuth = getAuth(secondaryApp);
-          const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass);
-          await sendEmailVerification(createdUser.user);
-          await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" });
-          await signOut(secondaryAuth);
-          setFeedback({ type: 'success', title: 'Criado!', msg: 'Usuário criado. Link de confirmação enviado.' });
-          setStaffEmail(''); setStaffPass('');
-      } catch (err) {
-          setFeedback({ type: 'error', title: 'Erro ao cadastrar', msg: err.code === 'auth/email-already-in-use' ? 'E-mail já existe.' : 'Verifique os dados.' });
-      } finally {
-          setStaffLoading(false);
-      }
-  };
-
-  if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
+  // --- OPERACIONAL ---
+  const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); setFeedback({ type: 'success', title: 'Check-in!', msg: 'Acesso liberado.' }); setValidationCode(""); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha.' }); } } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique.' }); } };
+  const onScanSuccess = (decodedText) => { setShowScanner(false); const res = reservations.find(r => r.id === decodedText); if (res) { if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' }); else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' }); else handleValidate(res.id, res.id); } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' }); };
+  const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: 'Link enviado.' }); setEditStaffModal(null); setNewStaffEmailInput(''); } else throw new Error(); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha.' }); } finally { setStaffLoading(false); } };
+  const handleAddStaff = async (e) => { e.preventDefault(); setStaffLoading(true); try { const secondaryApp = initializeApp(getApp().options, "Secondary"); const secondaryAuth = getAuth(secondaryApp); const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass); await sendEmailVerification(createdUser.user); await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" }); await signOut(secondaryAuth); setFeedback({ type: 'success', title: 'Criado!', msg: 'Link enviado.' }); setStaffEmail(''); setStaffPass(''); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Verifique dados.' }); } finally { setStaffLoading(false); } };
 
   // Cálculos Financeiros
   const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
@@ -2862,52 +2890,37 @@ const PartnerDashboard = () => {
   const netBalance = totalBalance - platformFee - estimatedMPFees;
   const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
   const cardTotal = totalBalance - pixTotal; 
-  const allCouponsUsed = reservations.filter(r => r.discount > 0).length;
-  const couponBreakdown = reservations.reduce((acc, r) => { if (r.discount > 0) { const code = r.couponCode || "OUTROS"; acc[code] = (acc[code] || 0) + 1; } return acc; }, {});
   
-  const dailyGuests = reservations.filter(r => 
-      r.date === filterDate && 
-      (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase())
-  );
-  
-  const dailyStats = dailyGuests.reduce((acc, curr) => {
-      const adt = Number(curr.adults || 0);
-      const chd = Number(curr.children || 0);
-      const free = Number(curr.freeChildren || 0);
-      const pet = Number(curr.pets || 0);
-      let specials = 0;
-      if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q));
-      return { 
-          adults: acc.adults + adt, 
-          children: acc.children + chd, 
-          freeChildren: acc.freeChildren + free, 
-          pets: acc.pets + pet, 
-          specials: acc.specials + specials, 
-          total: acc.total + adt + chd + free 
-      };
-  }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
+  // Cálculos de Cupons
+  const couponRes = financialRes.filter(r => r.couponCode);
+  const totalCouponRevenue = couponRes.reduce((acc, r) => acc + (r.total || 0), 0);
+  const couponBreakdown = couponRes.reduce((acc, r) => { if (r.discount > 0) { const code = r.couponCode || "OUTROS"; if (!acc[code]) acc[code] = { count: 0, revenue: 0 }; acc[code].count += 1; acc[code].revenue += (r.total || 0); } return acc; }, {});
 
+  // Cálculos Operacionais
+  const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
+  const dailyStats = dailyGuests.reduce((acc, curr) => { const adt = Number(curr.adults || 0); const chd = Number(curr.children || 0); const free = Number(curr.freeChildren || 0); const pet = Number(curr.pets || 0); let specials = 0; if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q)); return { adults: acc.adults + adt, children: acc.children + chd, freeChildren: acc.freeChildren + free, pets: acc.pets + pet, specials: acc.specials + specials, total: acc.total + adt + chd + free }; }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
+
+  if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
+
+  // Renderização
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12 relative">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
         <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
         {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
-        {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmAction.type.includes('delete') ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}><AlertCircle size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">{confirmAction.type === 'pause_ad' && 'Pausar Anúncio?'}{confirmAction.type === 'resume_ad' && 'Reativar Anúncio?'}{confirmAction.type === 'delete_staff' && 'Remover Acesso?'}{confirmAction.type === 'reset_staff_pass' && 'Redefinir Senha?'}</h2><p className="text-slate-600 mb-6 text-sm">{confirmAction.type === 'pause_ad' && 'Seu anúncio ficará oculto para novas reservas.'}{confirmAction.type === 'resume_ad' && 'Seu anúncio voltará a aparecer nas buscas.'}{confirmAction.type === 'delete_staff' && 'O funcionário perderá acesso imediato ao painel.'}{confirmAction.type === 'reset_staff_pass' && 'Um e-mail será enviado para o funcionário criar uma nova senha.'}</p><div className="flex gap-3"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className={`flex-1 justify-center ${confirmAction.type.includes('delete') || confirmAction.type === 'pause_ad' ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>Confirmar</Button></div></div></ModalOverlay>, document.body)}
-        {editStaffModal && createPortal(<ModalOverlay onClose={() => setEditStaffModal(null)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center"><h3 className="font-bold text-lg mb-4 text-slate-800">Alterar E-mail</h3><p className="text-sm text-slate-500 mb-4">Atual: <strong>{editStaffModal.currentEmail}</strong></p><input className="w-full border p-3 rounded-xl mb-4" placeholder="Novo e-mail" value={newStaffEmailInput} onChange={e=>setNewStaffEmailInput(e.target.value)} /><Button onClick={() => handleUpdateStaffEmail(editStaffModal.id, newStaffEmailInput)} disabled={staffLoading} className="w-full justify-center">{staffLoading ? 'Atualizando...' : 'Confirmar Alteração'}</Button></div></ModalOverlay>, document.body)}
-        {showNotifications && createPortal(<ModalOverlay onClose={() => setShowNotifications(false)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in flex flex-col max-h-[80vh]"><div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2"><h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Bell className="text-yellow-500"/> Solicitações</h3><button onClick={()=>setShowNotifications(false)} className="p-1 hover:bg-slate-100 rounded-full"><X size={20}/></button></div><div className="space-y-3 overflow-y-auto custom-scrollbar flex-1 pr-2">{requests.length === 0 ? <p className="text-slate-400 text-center py-4 text-sm">Nenhuma solicitação pendente.</p> : requests.map(req => (<div key={req.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-2"><span className="font-bold text-sm text-slate-700">{req.staffName || 'Staff'}</span><span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">{req.type === 'email' ? 'Troca E-mail' : 'Nova Senha'}</span></div><p className="text-xs text-slate-500 mb-3 leading-relaxed">{req.type === 'email' ? <span>Deseja alterar para: <strong className="text-slate-700">{req.newEmailValue}</strong></span> : 'Solicitou redefinição de senha.'}</p><div className="flex gap-2">{req.type === 'password' ? (<Button onClick={() => confirmResetStaffPass(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Enviar Link</Button>) : (<Button onClick={() => handleUpdateStaffEmail(req.staffId, req.newEmailValue, req.id)} className="w-full h-8 text-xs justify-center bg-green-600 hover:bg-green-700 text-white shadow-none">Aprovar Troca</Button>)}</div></div>))}</div></div></ModalOverlay>, document.body)}
-        
+        {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmAction.type.includes('delete') ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}><AlertCircle size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Confirmar Ação?</h2><p className="text-slate-600 mb-6 text-sm">Esta ação é importante.</p><div className="flex gap-3"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className="flex-1 justify-center">Confirmar</Button></div></div></ModalOverlay>, document.body)}
+        {editStaffModal && createPortal(<ModalOverlay onClose={() => setEditStaffModal(null)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center"><h3 className="font-bold text-lg mb-4 text-slate-800">Alterar E-mail</h3><input className="w-full border p-3 rounded-xl mb-4" placeholder="Novo e-mail" value={newStaffEmailInput} onChange={e=>setNewStaffEmailInput(e.target.value)} /><Button onClick={() => handleUpdateStaffEmail(editStaffModal.id, newStaffEmailInput)} disabled={staffLoading} className="w-full justify-center">{staffLoading ? 'Atualizando...' : 'Confirmar'}</Button></div></ModalOverlay>, document.body)}
+        {manageRes && createPortal(<ModalOverlay onClose={() => setManageRes(null)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in"><div className="flex justify-between items-center mb-6"><h3 className="font-bold text-lg text-slate-800">Gerenciar Reserva</h3><button onClick={()=>setManageRes(null)}><X size={20}/></button></div><div className="flex bg-slate-100 p-1 rounded-xl mb-6"><button onClick={()=>setManageAction('reschedule')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='reschedule'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Reagendar</button><button onClick={()=>setManageAction('cancel')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='cancel'?'bg-white text-red-600 shadow-sm':'text-slate-500'}`}>Cancelar</button></div>{manageAction === 'reschedule' ? (<div className="space-y-4"><p className="text-sm text-slate-600">Atual: <strong>{manageRes.date.split('-').reverse().join('/')}</strong></p><div><label className="text-xs font-bold text-slate-500 uppercase block mb-1">Nova Data</label><input type="date" className="w-full border p-3 rounded-xl bg-slate-50" value={rescheduleDate} onChange={e=>setRescheduleDate(e.target.value)} /></div><Button onClick={handleManageSubmit} disabled={manageLoading} className="w-full mt-2">{manageLoading ? 'Salvando...' : 'Confirmar Data'}</Button></div>) : (<div className="space-y-4"><div className="bg-red-50 p-4 rounded-xl border border-red-100 text-sm text-red-800"><p className="font-bold mb-1">Atenção:</p><p>O estorno será processado automaticamente.</p></div><div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Reembolso (%)</label><div className="flex items-center gap-4"><input type="range" min="0" max="100" step="10" value={refundPercent} onChange={e=>setRefundPercent(Number(e.target.value))} className="flex-1 accent-red-600"/><span className="font-bold text-red-600 w-12 text-right">{refundPercent}%</span></div><p className="text-xs text-right text-slate-400 mt-1">Devolver: <strong>{formatBRL(manageRes.total * (refundPercent/100))}</strong></p></div><Button onClick={handleManageSubmit} disabled={manageLoading} variant="danger" className="w-full mt-2">{manageLoading ? 'Processando...' : 'Confirmar Cancelamento'}</Button></div>)}</div></ModalOverlay>, document.body)}
+        {showNotifications && createPortal(<ModalOverlay onClose={() => setShowNotifications(false)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in flex flex-col max-h-[80vh]"><div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2"><h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Bell className="text-yellow-500"/> Solicitações</h3><button onClick={()=>setShowNotifications(false)}><X/></button></div><div className="space-y-3 overflow-y-auto custom-scrollbar flex-1 pr-2">{requests.length === 0 ? <p className="text-slate-400 text-center py-4 text-sm">Nenhuma solicitação pendente.</p> : requests.map(req => (<div key={req.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-2"><span className="font-bold text-sm text-slate-700">{req.staffName}</span><span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase">{req.type}</span></div><p className="text-xs text-slate-500 mb-3">{req.type==='email'?`Novo: ${req.newEmailValue}`:'Reset senha'}</p><div className="flex gap-2">{req.type==='password'?(<Button onClick={()=>handleResetStaffPassword(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Link</Button>):(<Button onClick={()=>handleUpdateStaffEmail(req.staffId, req.newEmailValue, req.id)} className="w-full h-8 text-xs justify-center">Aprovar</Button>)}</div></div>))}</div></div></ModalOverlay>, document.body)}
+
         {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row justify-between items-center md:items-end mb-8 border-b border-slate-200 pb-4 gap-4">
-           <div className="text-center md:text-left flex items-center gap-4">
+           <div className="text-center md:text-left flex items-center gap-3">
                <div>
                    <h1 className="text-3xl font-bold text-slate-900">Painel de Gestão</h1>
                    <p className="text-slate-500">Acompanhe seu negócio.</p>
                </div>
-               {docStatus === 'verified' && (
-                   <span className="bg-green-100 text-green-700 text-[10px] font-bold px-3 py-1 rounded-full uppercase border border-green-200 flex items-center gap-1">
-                       <Award size={12}/> Empresa Verificada
-                   </span>
-               )}
+               {docStatus === 'verified' && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase border border-green-200 flex items-center gap-1"><Award size={12}/> Verificado</span>}
            </div>
            
            <div className="flex gap-3 items-center flex-wrap justify-center">
@@ -2923,79 +2936,67 @@ const PartnerDashboard = () => {
                   >
                       Conectar MP
                   </Button>
-              ) : (<div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold border border-slate-200 flex items-center text-sm"><CheckCircle size={16} className="text-green-600 inline mr-2"/> Conectado</div>)}
+              ) : (
+                  <div className="px-4 py-2 bg-green-50 text-green-700 rounded-xl font-bold border border-green-200 flex items-center text-sm shadow-sm">
+                      <CheckCircle size={16} className="text-green-600 inline mr-2"/> Conectado
+                  </div>
+              )}
               
-              <Button 
-                onClick={handleCreateAdClick}
-                className={docStatus !== 'verified' ? 'opacity-50 cursor-not-allowed' : ''}
-              >
-                  + Anúncio
-              </Button>
+              <Button onClick={handleCreateAdClick} className={docStatus !== 'verified' || !mpConnected ? 'opacity-50 cursor-not-allowed' : ''}>+ Anúncio</Button>
            </div>
         </div>
 
-        {/* --- FLUXO DE VERIFICAÇÃO (ONBOARDING EM CAIXINHAS) --- */}
-        {docStatus !== 'verified' && (
+        {/* --- ÁREA DE AVISOS DE SEGURANÇA (ONBOARDING) --- */}
+        {(docStatus !== 'verified' || !user?.emailVerified || !mpConnected) && (
             <div className="grid md:grid-cols-2 gap-6 mb-12 animate-fade-in">
                 
-                {/* CAIXA 1: E-MAIL */}
-                <div className={`p-6 rounded-2xl border flex flex-col justify-between ${
-                    user.emailVerified ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
-                }`}>
+                {/* 1. VERIFICAÇÃO DE E-MAIL */}
+                <div className={`p-6 rounded-2xl border flex flex-col justify-between ${user.emailVerified ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             <span className="text-xs font-bold uppercase tracking-widest opacity-60">Etapa 1</span>
                             {user.emailVerified && <CheckCircle size={16} className="text-green-600"/>}
                         </div>
-                        <h3 className={`font-bold text-lg ${user.emailVerified ? 'text-green-800' : 'text-yellow-800'}`}>Verificação de E-mail</h3>
+                        <h3 className={`font-bold text-lg ${user.emailVerified ? 'text-green-800' : 'text-yellow-800'}`}>Confirmação de E-mail</h3>
                         <p className={`text-sm mt-2 ${user.emailVerified ? 'text-green-700' : 'text-yellow-700'}`}>
-                            {user.emailVerified 
-                                ? "Seu e-mail foi confirmado com sucesso. Acesso liberado para a próxima etapa." 
-                                : "Confirme o link enviado para sua caixa de entrada. Verifique também a pasta de Spam."
-                            }
+                            {user.emailVerified ? "E-mail confirmado. Acesso liberado para envio de documentos." : "Confirme o link enviado para sua caixa de entrada. Verifique o Spam."}
                         </p>
                     </div>
                     {!user.emailVerified && (
                         <div className="mt-4 pt-4 border-t border-yellow-200">
-                             <Button onClick={handleResendVerify} className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-900 border-none shadow-none text-sm">
-                                 Reenviar Link
-                             </Button>
+                             <Button onClick={handleResendVerify} className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-900 border-none shadow-none text-sm">Reenviar Link</Button>
                         </div>
                     )}
                 </div>
 
-                {/* CAIXA 2: DOCUMENTOS */}
+                {/* 2. ENVIO DE DOCUMENTOS */}
                 <div className={`p-6 rounded-2xl border flex flex-col justify-between ${
-                    !user.emailVerified ? 'bg-slate-50 border-slate-200 opacity-60' : // Bloqueado
-                    docStatus === 'pending' ? 'bg-yellow-50 border-yellow-200' : // Em análise
-                    docStatus === 'rejected' ? 'bg-red-50 border-red-200' : // Rejeitado
-                    'bg-orange-50 border-orange-200' // Pendente envio
+                    !user.emailVerified ? 'bg-slate-50 border-slate-200 opacity-60' : 
+                    docStatus === 'pending' ? 'bg-yellow-50 border-yellow-200' : 
+                    docStatus === 'rejected' ? 'bg-red-50 border-red-200' : 
+                    docStatus === 'verified' ? 'bg-green-50 border-green-200' :
+                    'bg-orange-50 border-orange-200'
                 }`}>
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             <span className="text-xs font-bold uppercase tracking-widest opacity-60">Etapa 2</span>
                             {!user.emailVerified && <Lock size={14} className="text-slate-400"/>}
+                            {docStatus === 'verified' && <CheckCircle size={16} className="text-green-600"/>}
                         </div>
-                        <h3 className={`font-bold text-lg ${
-                            docStatus === 'rejected' ? 'text-red-800' : 
-                            docStatus === 'pending' ? 'text-yellow-800' : 
-                            'text-slate-800'
-                        }`}>
-                            {docStatus === 'pending' ? 'Em Análise (24h)' : 
-                             docStatus === 'rejected' ? 'Documento Rejeitado' :
-                             'Envio de Documentos'}
+                        <h3 className={`font-bold text-lg ${docStatus === 'rejected' ? 'text-red-800' : docStatus === 'verified' ? 'text-green-800' : 'text-slate-800'}`}>
+                            {docStatus === 'verified' ? 'Empresa Verificada' : docStatus === 'pending' ? 'Em Análise (24h)' : docStatus === 'rejected' ? 'Documento Recusado' : 'Validar Empresa'}
                         </h3>
                         <p className="text-sm mt-2 text-slate-600">
-                            {!user.emailVerified ? "Complete a etapa anterior para desbloquear o envio de documentos." : 
-                             docStatus === 'pending' ? "Recebemos seus dados. Você receberá um e-mail assim que a análise for concluída." :
-                             docStatus === 'rejected' ? "Seu documento não pôde ser validado. Por favor, envie uma foto mais nítida." :
-                             "Envie seu Contrato Social ou CCMEI para validar sua empresa e começar a vender."}
+                            {!user.emailVerified ? "Complete a etapa anterior para desbloquear." : 
+                             docStatus === 'verified' ? "Sua conta empresarial está ativa e segura." :
+                             docStatus === 'pending' ? "Estamos analisando seus documentos. Você será notificado por e-mail." :
+                             "Envie seu Contrato Social ou CCMEI para liberar vendas e gestão."}
                         </p>
                     </div>
-                    {user.emailVerified && docStatus !== 'pending' && (
+                    {user.emailVerified && docStatus !== 'verified' && docStatus !== 'pending' && (
                         <div className="mt-4 pt-4 border-t border-slate-200">
-                             <Button onClick={handleVerifyDocsClick} className={`w-full text-sm ${docStatus === 'rejected' ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'} border-none shadow-none`}>
-                                 {docStatus === 'rejected' ? 'Tentar Novamente' : 'Enviar Documentos'}
+                             <Button onClick={() => navigate('/partner/verificacao')} className={`w-full text-sm ${docStatus === 'rejected' ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'} border-none shadow-none`}>
+                                 {docStatus === 'rejected' ? 'Enviar Novamente' : 'Enviar Documentos'}
                              </Button>
                         </div>
                     )}
@@ -3003,25 +3004,39 @@ const PartnerDashboard = () => {
             </div>
         )}
 
-        {/* CONTEÚDO DO PAINEL (SÓ APARECE SE VERIFICADO OU SE QUISER DEIXAR "READ ONLY") */}
-        <div className={`transition-all duration-500 ${docStatus !== 'verified' ? 'opacity-30 pointer-events-none filter blur-sm select-none h-64 overflow-hidden' : ''}`}>
-             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12"><div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div><div className="grid md:grid-cols-3 gap-6"><div className="p-6 bg-slate-50 rounded-2xl border border-slate-200"><p className="text-xs text-slate-500 font-bold uppercase">Total Vendido</p><p className="text-3xl font-bold text-slate-900">{formatBRL(totalBalance)}</p></div><div className="p-6 bg-green-50 rounded-2xl border border-green-200"><p className="text-xs text-green-700 font-bold uppercase">Líquido (Est.)</p><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div><div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase">Pix vs Cartão</p><div className="flex justify-between mt-2 text-sm"><span>Pix: {formatBRL(pixTotal)}</span><span>Cartão: {formatBRL(cardTotal)}</span></div></div></div></div>
+        {/* CONTEÚDO BLOQUEADO SE NÃO VERIFICADO */}
+        <div className={`transition-all duration-500 ${docStatus !== 'verified' ? 'opacity-30 pointer-events-none filter blur-sm select-none h-96 overflow-hidden relative' : ''}`}>
+             
+             {/* FINANCEIRO */}
+             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12">
+                 <div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div>
+                 <div className="grid md:grid-cols-3 gap-6">
+                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between"><div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas (GMV):</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Comissão Site (20%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est. 4.99%):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div><div className="pt-3 border-t border-slate-200"><div className="flex items-center gap-1 mb-1"><p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p><div className="group relative"><Info size={12} className="text-green-600 cursor-help"/><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">Valor aproximado. Consulte o extrato oficial no app do Mercado Pago.</div></div></div><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div></div>
+                    <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p><div className="space-y-4"><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div></div><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div></div></div></div>
+                    <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col h-full"><div className="flex justify-between items-start mb-4"><div><p className="text-xs text-yellow-800 font-bold uppercase">Performance de Cupons</p><p className="text-2xl font-bold text-slate-900">{formatBRL(totalCouponRevenue)}</p><p className="text-[10px] text-slate-500">Faturamento bruto via cupons</p></div><Tag className="text-yellow-600" size={32}/></div><div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar bg-white rounded-xl p-2 border border-yellow-100">{Object.keys(couponBreakdown).length === 0 ? (<p className="text-xs text-slate-400 italic text-center py-4">Nenhum cupom usado neste mês.</p>) : (Object.entries(couponBreakdown).map(([code, stats]) => (<div key={code} className="flex justify-between items-center text-xs text-slate-600 mb-2 border-b border-slate-100 pb-2 last:border-0 last:mb-0"><span className="font-bold bg-yellow-100 px-1.5 py-0.5 rounded text-yellow-900 uppercase">{code}</span><div className="text-right"><span className="block font-bold">{stats.count} usos</span><span className="block text-[10px] text-green-600">{formatBRL(stats.revenue)}</span></div></div>)))}</div></div>
+                 </div>
+             </div>
              
              <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12">
                <div className="flex flex-col md:flex-row justify-between mb-8 gap-4"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2><div className="flex gap-4"><input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button></div></div>
-               <div className="space-y-4">{dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado para esta data.</p> : dailyGuests.map(r => (<div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4"><div className="flex-1"><p className="font-bold text-lg text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p><div className="flex gap-2 mt-2 text-xs text-slate-600 flex-wrap">{r.adults > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>}{r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}{r.freeChildren > 0 && <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-100 font-bold">{r.freeChildren} Grátis</span>}{r.pets > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium flex items-center gap-1"><PawPrint size={10}/> {r.pets} Pet</span>}{r.selectedSpecial && Object.values(r.selectedSpecial).some(q => q > 0) && <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-100 font-bold">+ Extras</span>}</div></div><div className="flex items-center gap-2">{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : <div className="flex gap-2"><input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/><Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button></div>}<Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button></div></div>))}</div>
+               
+               <OccupancyCalendar reservations={reservations} selectedDate={filterDate} onDateSelect={setFilterDate} />
+
+               <div className="space-y-4">{dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado.</p> : dailyGuests.map(r => (<div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4"><div className="flex-1"><p className="font-bold text-lg text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p><div className="flex gap-2 mt-2 text-xs text-slate-600 flex-wrap">{r.adults > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>}{r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}{r.status === 'cancelled' && <span className="bg-red-100 text-red-700 px-2 py-1 rounded font-bold">CANCELADO</span>}{r.status === 'refunded_partial' && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold">ESTORNO PARCIAL</span>}</div></div><div className="flex items-center gap-2">{r.status === 'confirmed' && (<Button variant="outline" className="h-full py-2 px-3 rounded-xl border-slate-200 text-slate-600 hover:bg-slate-50" onClick={() => { setManageRes(r); setRescheduleDate(r.date); }}><Edit size={16}/></Button>)}{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : r.status === 'confirmed' && <div className="flex gap-2"><input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/><Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button></div>}<Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button></div></div>))}</div>
              </div>
              
              <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>
 
-             {/* Gestão de Equipe */}
-             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => requireVerified(() => { setEditStaffModal({ id: staff.id, currentEmail: staff.email }); setNewStaffEmailInput(''); })} className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg" title="Editar Email"><Edit size={16}/></button><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200 ${docStatus !== 'verified' ? 'opacity-50 pointer-events-none' : ''}`}><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form>{docStatus !== 'verified' && <p className="text-xs text-red-500 mt-2 font-bold text-center">Aprove sua empresa para adicionar equipe.</p>}</div></div></div></div>
+             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200`}><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form></div></div></div></div>
         </div>
         
         <div className="bg-slate-900 rounded-3xl p-8 text-center text-white mt-12 mb-8 shadow-2xl">
             <h3 className="text-2xl font-bold mb-2">Precisa de ajuda?</h3>
             <p className="text-slate-400 mb-6 max-w-md mx-auto">Fale diretamente com nosso suporte técnico exclusivo para parceiros.</p>
-            <a href="https://wa.me/5531920058081" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-[#25D366] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#20bd5a] transition-all transform hover:scale-105 shadow-lg"><MessageCircle size={22} /> Falar no WhatsApp</a>
+            <div className="flex justify-center gap-4">
+                <a href="https://wa.me/5531920058081" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-[#25D366] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#20bd5a] transition-all transform hover:scale-105 shadow-lg"><MessageCircle size={22} /> WhatsApp</a>
+                <a href="https://mapadodayuse.notion.site/Central-de-Ajuda-Mapa-do-Day-Use-2dc9dd27aaf88071b399cdb623b66b77" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-white text-slate-800 px-8 py-3 rounded-xl font-bold hover:bg-slate-100 transition-all shadow-lg"><Info size={22} /> Central de Ajuda</a>
+            </div>
         </div>
      </div>
   );
