@@ -4357,38 +4357,95 @@ const ListingPage = ({ stateParam, cityParam }) => {
   );
 };
 
+// -----------------------------------------------------------------------------
+// PÁGINA 404 (NÃO ENCONTRADO)
+// -----------------------------------------------------------------------------
+const NotFoundPage = () => {
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-4 animate-fade-in">
+        <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6 text-slate-300">
+            <MapPin size={48} className="animate-bounce"/>
+        </div>
+        <h1 className="text-4xl font-bold text-slate-900 mb-2">Página não encontrada</h1>
+        <p className="text-slate-500 mb-8 max-w-md">
+            Ops! Parece que o lugar que procura não está no nosso mapa (ou o endereço foi digitado errado).
+        </p>
+        <Button onClick={() => navigate('/')}>Voltar para o Início</Button>
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// COMPONENTE RESOLVER DE ROTAS (VALIDAÇÃO RÍGIDA)
+// -----------------------------------------------------------------------------
 const RouteResolver = () => {
     const { state, cityOrSlug } = useParams();
-    const [decision, setDecision] = useState(null); // 'listing', 'details', 'loading'
+    const [decision, setDecision] = useState(null); // 'listing', 'details', '404'
+    const [loading, setLoading] = useState(true);
     
-    // CORREÇÃO: O useEffect agora roda SEMPRE, independentemente dos parâmetros.
-    // A lógica condicional fica DENTRO dele, respeitando as regras do React.
     useEffect(() => {
+        setDecision(null);
+        setLoading(true);
+
         const checkRoute = async () => {
-            // Caso 1: Se não tem o segundo parâmetro (ex: /mg), é listagem de estado
-            if (!cityOrSlug) {
-                setDecision('listing');
+            // 1. Validação de Estado (Obrigatória)
+            if (!state || !STATE_NAMES[state.toUpperCase()]) {
+                setDecision('404');
+                setLoading(false);
                 return;
             }
 
-            // Caso 2: Tem segundo parâmetro, verifica se é um Local (Detalhes) ou Cidade (Listagem)
-            const q = query(collection(db, "dayuses"));
-            const snap = await getDocs(q);
-            const foundItem = snap.docs.find(d => generateSlug(d.data().name) === cityOrSlug);
-
-            if (foundItem) {
-                setDecision('details');
-            } else {
+            // 2. Se não tem segundo parâmetro (ex: /mg), é Listagem de Estado (Válido)
+            if (!cityOrSlug) {
                 setDecision('listing');
+                setLoading(false);
+                return;
+            }
+
+            try {
+                // 3. Verifica se é um Local (Slug exato)
+                const qSlug = query(collection(db, "dayuses"), where("slug", "==", cityOrSlug));
+                const snapSlug = await getDocs(qSlug);
+
+                if (!snapSlug.empty) {
+                    setDecision('details');
+                } else {
+                    // 4. Verifica se é uma Cidade Válida
+                    // Busca itens do estado para conferir se a cidade existe
+                    const qState = query(collection(db, "dayuses"), where("state", "==", state.toUpperCase()));
+                    const snapState = await getDocs(qState);
+                    
+                    // Verifica se algum day use pertence a uma cidade que gera esse slug
+                    const cityExists = snapState.docs.some(doc => {
+                        const data = doc.data();
+                        return data.city && generateSlug(data.city) === cityOrSlug;
+                    });
+
+                    if (cityExists) {
+                        setDecision('listing');
+                    } else {
+                        // Não é local nem cidade com day use -> 404
+                        setDecision('404');
+                    }
+                }
+            } catch (error) {
+                console.error("Erro na validação de rota:", error);
+                setDecision('404'); // Segurança: na dúvida, 404
+            } finally {
+                setLoading(false);
             }
         };
         checkRoute();
     }, [state, cityOrSlug]);
 
-    // Exibe loading enquanto decide
-    if (!decision) return <div className="text-center py-20 text-slate-400 animate-pulse">Carregando...</div>;
+    if (loading) return (
+        <div className="min-h-screen flex items-center justify-center">
+            <div className="animate-spin w-10 h-10 border-4 border-[#0097A8] border-t-transparent rounded-full"></div>
+        </div>
+    );
 
-    // Renderiza com base na decisão
+    if (decision === '404') return <NotFoundPage />;
     if (decision === 'details') return <DetailsPage />;
     
     return <ListingPage stateParam={state} cityParam={cityOrSlug} />;

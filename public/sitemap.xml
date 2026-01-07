@@ -2,61 +2,61 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://mapadodayuse.com/</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/sobre-nos</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/contato</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/day-use</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/day-use/o-que-e-day-use</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mapa-do-site</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/seja-parceiro</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/politica-de-privacidade</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/termos-de-uso</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/partner-register</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -195,6 +195,12 @@
   <url>
     <loc>https://mapadodayuse.com/mg/pousada-embaixada</loc>
     <lastmod>2025-12-31</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mapadodayuse.com/mg/francast-acqua-park</loc>
+    <lastmod>2026-01-03</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -344,7 +350,7 @@
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/hotel-serra-do-gandarela</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-03</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -380,7 +386,7 @@
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/gruta-do-bau</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-03</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -392,169 +398,169 @@
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/nova-lima</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/itabirito</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/mateus-leme</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/santa-luzia</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/sete-lagoas</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/lagoa-santa</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/inhauma</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/brumadinho</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/esmeraldas</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/igarape</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/sarzedo</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/jaboticatubas</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/contagem</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/taguaracu-de-minas</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/betim</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/belo-horizonte</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/ibirite</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/vespasiano</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/sabara</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/caete</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/mario-campos</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/itatiaiucu</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/itauna</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/rio-acima</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/confins</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/capim-branco</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://mapadodayuse.com/mg/pedro-leopoldo</loc>
-    <lastmod>2026-01-02</lastmod>
+    <lastmod>2026-01-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
