@@ -6358,6 +6358,146 @@ const AdminDashboard = () => {
   );
 };
 
+const EmbedPage = () => {
+  const [searchParams] = useSearchParams();
+  const { slug } = useParams(); // Se vier na URL /embed/:slug
+  
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Parâmetros de Filtro
+  const city = searchParams.get('city');
+  const state = searchParams.get('state');
+  const type = slug ? 'single' : 'list'; // Se tem slug é único, senão é lista
+  const title = searchParams.get('title') || (city ? `Day Uses em ${city}` : "Melhores Day Uses");
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+          let q;
+          if (type === 'single' && slug) {
+              // Busca Card Específico (Mesmo se estiver pausado, para preview)
+              q = query(collection(db, "dayuses"), where("slug", "==", slug));
+          }
+
+          const snap = await getDocs(q);
+          let data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+
+          // Filtragem em memória
+          if (type === 'list') {
+              if (city) data = data.filter(i => generateSlug(i.city) === generateSlug(city));
+              else if (state) data = data.filter(i => getStateSlug(i.state) === state.toLowerCase());
+              
+              // Limita a 10 itens para performance no iframe
+              data = data.slice(0, 10);
+          }
+
+          setItems(data);
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    };
+    fetchData();
+  }, [slug, city, state, type]);
+
+  // Handler para abrir o site principal em nova aba
+  const handleOpen = (item) => {
+      const url = `https://mapadodayuse.com/${getStateSlug(item.state)}/${generateSlug(item.name)}`;
+      window.open(url, '_blank');
+  };
+
+  const handleImageError = (e) => {
+      e.target.src = "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80"; 
+  };
+
+  // Loading Minimalista
+  if (loading) return (
+      <div className="flex justify-center items-center h-full p-4">
+          <div className="animate-spin w-8 h-8 border-4 border-[#0097A8] border-t-transparent rounded-full"></div>
+      </div>
+  );
+
+  // Estado Vazio
+  if (items.length === 0) return (
+      <div className="text-center p-4 text-slate-500 text-xs bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-center h-full font-sans">
+          Nenhum local encontrado nesta região.
+      </div>
+  );
+
+  // --- LAYOUT 1: CARD ÚNICO (WIDGET DE CTA) ---
+  if (type === 'single') {
+      const item = items[0];
+      return (
+          <div className="font-sans p-2 h-full box-border">
+             <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden w-full h-full flex flex-col group relative">
+                 <div className="relative h-48 cursor-pointer flex-shrink-0" onClick={() => handleOpen(item)}>
+                     <img 
+                        src={item.image} 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                        onError={handleImageError}
+                        alt={item.name}
+                     />
+                     <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/80 to-transparent p-4 pt-12">
+                         <h3 className="text-white font-bold text-lg leading-tight drop-shadow-md truncate">{item.name}</h3>
+                         <p className="text-white/90 text-xs flex items-center gap-1 drop-shadow-sm"><MapPin size={12}/> {item.city}, {item.state}</p>
+                     </div>
+                 </div>
+                 <div className="p-3 flex justify-between items-center bg-white flex-1">
+                     <div>
+                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">A partir de</p>
+                         <p className="text-xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p>
+                     </div>
+                     <button onClick={() => handleOpen(item)} className="bg-[#0097A8] text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-[#007f8f] transition-colors shadow-md shadow-teal-100">
+                         Reservar
+                     </button>
+                 </div>
+             </div>
+          </div>
+      );
+  }
+
+  // --- LAYOUT 2: CARROSSEL (LISTA DE OPÇÕES) ---
+  return (
+      <div className="font-sans bg-transparent h-full flex flex-col">
+          {/* Cabeçalho opcional */}
+          {title && (
+              <h2 className="text-slate-800 font-bold text-sm mb-2 px-1 flex items-center gap-2 truncate">
+                  <img src="/logo.svg" className="h-4 w-auto" alt="Logo"/> {title}
+              </h2>
+          )}
+          
+          <div className="flex gap-3 overflow-x-auto pb-2 px-1 custom-scrollbar snap-x flex-1 items-center">
+              {items.map(item => (
+                  <div key={item.id} className="min-w-[240px] max-w-[240px] h-[220px] snap-center flex-shrink-0">
+                      <div className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden h-full flex flex-col hover:-translate-y-1 transition-transform cursor-pointer group" onClick={() => handleOpen(item)}>
+                          <div className="h-32 relative flex-shrink-0">
+                              <img 
+                                src={item.image} 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                onError={handleImageError}
+                                alt={item.name}
+                              />
+                              <div className="absolute top-2 right-2 bg-white/95 px-2 py-1 rounded-lg text-xs font-bold text-[#0097A8] shadow-sm backdrop-blur-sm">
+                                  {formatBRL(item.priceAdult)}
+                              </div>
+                          </div>
+                          <div className="p-3 flex flex-col flex-1 justify-between bg-white">
+                              <div>
+                                <h3 className="font-bold text-slate-800 text-sm mb-1 truncate leading-tight" title={item.name}>{item.name}</h3>
+                                <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin size={10}/> {item.city}</p>
+                              </div>
+                              <button className="w-full border border-[#0097A8] text-[#0097A8] text-[10px] font-bold py-1.5 rounded-lg hover:bg-[#0097A8] hover:text-white transition-colors uppercase tracking-wide mt-2">
+                                  Ver Detalhes
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              ))}
+          </div>
+      </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -6397,6 +6537,10 @@ const App = () => {
         <Route path="/seja-parceiro" element={<Layout><PartnerLandingPage /></Layout>} />
         <Route path="/partner-register" element={<Layout><PartnerRegisterPage /></Layout>} />
         <Route path="/partner/callback" element={<Layout><PartnerCallbackPage /></Layout>} />
+
+        {/* páginas embed */}
+        <Route path="/embed" element={<EmbedPage />} />
+        <Route path="/embed/:slug" element={<EmbedPage />} />
 
         {/* --- ROTAS PROTEGIDAS (REGRAS RÍGIDAS) --- */}
 
