@@ -33,7 +33,7 @@ import {
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
-  Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox
+  Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -1071,9 +1071,16 @@ const UserProfile = () => {
 
 // --- PÁGINAS PRINCIPAIS ---
 
+// -----------------------------------------------------------------------------
+// HOME PAGE (NOVO DESIGN MINIMALISTA + HERO)
+// -----------------------------------------------------------------------------
 const HomePage = () => {
   useSEO("Home", "Encontre e reserve os melhores day uses em hotéis e resorts.");
-  
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
+
   // SCHEMA: Organization & WebSite
   useSchema({
     "@context": "https://schema.org",
@@ -1082,7 +1089,7 @@ const HomePage = () => {
         "@type": "Organization",
         "name": "Mapa do Day Use",
         "url": "https://mapadodayuse.com",
-        "logo": "https://mapadodayuse.com/logo.png",
+        "logo": "https://mapadodayuse.com/logo.svg",
         "contactPoint": {
           "@type": "ContactPoint",
           "email": "contato@mapadodayuse.com",
@@ -1105,55 +1112,187 @@ const HomePage = () => {
     ]
   });
 
-  const [items, setItems] = useState([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [loading, setLoading] = useState(true); // NOVO STATE
-  
-  const navigate = useNavigate();
-
   useEffect(() => { 
-      // Adicionado setLoading(false) ao final
-      getDocs(collection(db, "dayuses"))
+      // Busca TODOS os itens (ativos e pausados) para popular a vitrine
+      // A estratégia de seeding exige mostrar tudo
+      const q = query(collection(db, "dayuses"));
+      getDocs(q)
         .then(s => setItems(s.docs.map(d=>({id:d.id,...d.data()}))))
+        .catch(err => console.error("Erro ao carregar home:", err))
         .finally(() => setLoading(false)); 
   }, []);
 
-  const filtered = items.filter(i => (i.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) || (i.city?.toLowerCase() || '').includes(searchTerm.toLowerCase()));
+  // Lógica de Filtros por Categoria (Com proteção contra dados inválidos/undefined)
+  const filterByAmenity = (keywords) => items.filter(i => 
+      Array.isArray(i.amenities) && i.amenities.some(a => keywords.some(k => a.toLowerCase().includes(k)))
+  );
+  
+  const familyItems = filterByAmenity(['kids', 'infantil', 'playground', 'recreação', 'tobogã', 'monitores']).slice(0, 4);
+  const foodItems = items.filter(i => Array.isArray(i.meals) && i.meals.some(m => ['café da manhã', 'almoço', 'jantar', 'buffet'].some(k => m.toLowerCase().includes(k)))).slice(0, 4);
+  const petItems = items.filter(i => i.petAllowed).slice(0, 4);
+  const heatedPoolItems = filterByAmenity(['aquecida', 'climatizada', 'termal', 'ofurô', 'hidro']).slice(0, 4);
+
+  // Busca Geral
+  const searchResults = searchTerm 
+    ? items.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) || (i.city && i.city.toLowerCase().includes(searchTerm.toLowerCase())))
+    : [];
 
   return (
-    <div className="pb-20 animate-fade-in">
-      <div className="relative bg-[#0097A8] text-white py-24 text-center px-4 rounded-b-[3rem] mb-12 shadow-2xl overflow-hidden max-w-7xl mx-auto mt-6 rounded-t-[3rem]">
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-30 mix-blend-overlay"></div>
-        <div className="relative z-10 max-w-4xl mx-auto">
-          <h1 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">Relaxe perto de casa</h1>
-          <p className="text-teal-100 text-lg md:text-xl font-light mb-10 max-w-2xl mx-auto">Descubra hotéis, pousadas e resorts incríveis com Day Use em Belo Horizonte e região.</p>
-          <div className="bg-white p-2 pl-6 rounded-full shadow-2xl flex items-center max-w-xl mx-auto transform hover:scale-105 transition-transform duration-300">
-            <Search className="text-slate-400" />
-            <input 
-               className="flex-1 px-4 py-3 text-slate-700 outline-none placeholder:text-slate-400 font-medium" 
-               placeholder="Qual cidade ou hotel você procura?" 
-               value={searchTerm}
-               onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <button className="bg-[#0097A8] text-white p-3 rounded-full hover:bg-[#007F8F] shadow-lg"><ArrowRight size={20}/></button>
+    <div className="pb-20 animate-fade-in min-h-screen bg-white">
+      
+      {/* HERO SECTION COM TÍTULO E HEADLINE (NOVO) */}
+      <div className="relative bg-[#0097A8] text-white pt-24 pb-20 px-4 rounded-b-[3rem] shadow-xl">
+          <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-20 mix-blend-overlay"></div>
+          <div className="relative z-10 max-w-4xl mx-auto text-center space-y-4">
+              <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">
+                  Mapa do Day Use
+              </h1>
+              <p className="text-lg md:text-2xl text-cyan-50 font-light max-w-2xl mx-auto">
+                  Sua mini-férias começa agora. Hotéis e resorts incríveis para curtir o dia, perto de você.
+              </p>
           </div>
-        </div>
       </div>
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-bold text-slate-900">Lugares em destaque</h2><span className="text-sm text-slate-500">{loading ? 'Buscando...' : `${filtered.length} locais encontrados`}</span></div>
+
+      {/* HEADER DE BUSCA FLUTUANTE */}
+      <div className="sticky top-4 z-30 px-4 -mt-8">
+          <div className="max-w-3xl mx-auto">
+              <div className="relative group bg-white rounded-full p-1.5 shadow-xl border border-slate-100 flex items-center transition-all focus-within:ring-4 focus-within:ring-cyan-100">
+                  <div className="pl-4 pr-2 text-slate-400">
+                      <Search size={20} className="group-focus-within:text-[#0097A8] transition-colors"/>
+                  </div>
+                  <input 
+                      className="flex-1 bg-transparent py-3 text-slate-700 font-medium placeholder:text-slate-400 outline-none"
+                      placeholder="Para onde você quer ir? (Ex: Brumadinho, Hotel Fazenda...)"
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                  />
+                  <button className="bg-[#0097A8] text-white p-3 rounded-full hover:bg-[#007F8F] transition-colors shadow-sm">
+                      <ArrowRight size={20}/>
+                  </button>
+              </div>
+          </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 pt-12">
         
-        <div className="grid md:grid-cols-3 gap-8">
-          {/* LÓGICA DE LOADING: Mostra 6 esqueletos ou os cards reais */}
-          {loading 
-            ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-            : filtered.map(item => (
-                <DayUseCard 
-                    key={item.id} 
-                    item={item} 
-                    onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
-                />
-          ))}
-        </div>
+        {/* RESULTADOS DA BUSCA */}
+        {searchTerm ? (
+            <div className="mb-12">
+                <h2 className="text-2xl font-bold text-slate-900 mb-6">Resultados para "{searchTerm}"</h2>
+                <div className="grid md:grid-cols-3 gap-8">
+                    {searchResults.map(item => (
+                        <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />
+                    ))}
+                    {searchResults.length === 0 && (
+                        <div className="col-span-full text-center py-12">
+                            <p className="text-slate-500 mb-4">Não encontramos nenhum local com esse nome.</p>
+                            <Button onClick={() => setSearchTerm("")} variant="outline">Limpar Busca</Button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        ) : (
+            <div className="space-y-16">
+                
+                {/* 1. FAMÍLIA (Ícone Smile) */}
+                {familyItems.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center">
+                                <Smile size={20}/>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-900 leading-none">Pra ir com a família inteira</h2>
+                                <p className="text-slate-500 text-sm mt-1">Diversão garantida para as crianças e descanso para você.</p>
+                            </div>
+                        </div>
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {loading ? Array.from({length:4}).map((_,i)=><SkeletonCard key={i}/>) : familyItems.map(item => (
+                                <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* 2. ALIMENTAÇÃO INCLUSA (Ícone Utensils) */}
+                {foodItems.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+                                <Utensils size={20}/>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-900 leading-none">Day uses para comer à vontade</h2>
+                                <p className="text-slate-500 text-sm mt-1">Opções com café da manhã ou almoço deliciosos inclusos.</p>
+                            </div>
+                        </div>
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {loading ? Array.from({length:4}).map((_,i)=><SkeletonCard key={i}/>) : foodItems.map(item => (
+                                <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* 3. PET FRIENDLY (Ícone PawPrint) */}
+                {petItems.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
+                                <PawPrint size={20}/>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-900 leading-none">Aqui seu pet é bem-vindo</h2>
+                                <p className="text-slate-500 text-sm mt-1">Leve seu melhor amigo para curtir o dia com você.</p>
+                            </div>
+                        </div>
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {loading ? Array.from({length:4}).map((_,i)=><SkeletonCard key={i}/>) : petItems.map(item => (
+                                <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* 4. PISCINA AQUECIDA (Ícone ThermometerSun) */}
+                {heatedPoolItems.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 bg-red-100 text-red-600 rounded-full flex items-center justify-center">
+                                <ThermometerSun size={20}/>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-900 leading-none">Águas Quentinhas</h2>
+                                <p className="text-slate-500 text-sm mt-1">Piscinas aquecidas ou climatizadas para relaxar em qualquer clima.</p>
+                            </div>
+                        </div>
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {loading ? Array.from({length:4}).map((_,i)=><SkeletonCard key={i}/>) : heatedPoolItems.map(item => (
+                                <DayUseCard key={item.id} item={item} onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} />
+                            ))}
+                        </div>
+                    </section>
+                )}
+                
+                {/* 5. CTA PARA O QUIZ */}
+                <div className="bg-gradient-to-r from-violet-600 to-indigo-600 rounded-3xl p-8 md:p-12 text-center text-white shadow-2xl relative overflow-hidden group cursor-pointer" onClick={() => navigate('/quiz')}>
+                   <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-700"></div>
+                   <div className="relative z-10">
+                       <span className="inline-block bg-white/20 px-3 py-1 rounded-full text-xs font-bold mb-4 border border-white/20 backdrop-blur-sm">Ainda na dúvida?</span>
+                       <h2 className="text-3xl md:text-4xl font-extrabold mb-4">Descubra seu Day Use ideal com IA ✨</h2>
+                       <p className="text-indigo-100 mb-8 max-w-xl mx-auto">Responda 3 perguntas rápidas e nossa inteligência encontra a experiência perfeita para o seu perfil.</p>
+                       <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
+                   </div>
+               </div>
+                
+                {/* CTA FINAL */}
+                <div className="bg-slate-50 rounded-3xl p-8 text-center border border-slate-100 mt-12">
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Não encontrou o que procurava?</h3>
+                    <p className="text-slate-500 mb-6">Use nosso mapa do site para ver todas as cidades disponíveis.</p>
+                    <Button onClick={() => navigate('/mapa-do-site')} variant="outline">Ver Todos os Destinos</Button>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );
