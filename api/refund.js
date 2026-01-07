@@ -1,53 +1,33 @@
 import { MercadoPagoConfig, PaymentRefund } from 'mercadopago';
 import * as admin from 'firebase-admin';
 
-// Variável para capturar erro de inicialização
-let initError = null;
-
-// --- INICIALIZAÇÃO BLINDADA (Igual ao process-payment.js) ---
+// --- INICIALIZAÇÃO SIMPLIFICADA (DIRETA) ---
 if (!admin.apps.length) {
   try {
-    // 1. Tenta via Variável JSON (Legado/Backup)
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    // Tenta inicializar usando apenas as variáveis individuais
+    if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+        
         admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+            credential: admin.credential.cert({
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                // Usa a chave exatamente como veio da variável de ambiente
+                // Se você copiou com aspas ou sem tratamento de linha, o erro aparecerá no log
+                privateKey: process.env.FIREBASE_PRIVATE_KEY,
+            }),
         });
-        console.log("✅ Firebase Admin (Refund) iniciado via JSON.");
-    } 
-    // 2. Tenta via Variáveis Individuais (Seu caso atual)
-    else {
-        const projectId = process.env.FIREBASE_PROJECT_ID;
-        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-        const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
-
-        if (projectId && clientEmail && privateKeyRaw) {
-            // Tratamento robusto para a chave privada (Obrigatório na Vercel)
-            let privateKey = privateKeyRaw.replace(/\\n/g, '\n');
-            
-            // Remove aspas extras se houver
-            if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-                privateKey = privateKey.slice(1, -1);
-            }
-
-            admin.initializeApp({
-                credential: admin.credential.cert({
-                    projectId,
-                    clientEmail,
-                    privateKey,
-                }),
-            });
-            console.log("✅ Firebase Admin (Refund) iniciado via Chaves.");
-        } else {
-            initError = "Variáveis de ambiente (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY) estão faltando.";
-            console.error("❌ " + initError);
-        }
+        
+        console.log("✅ Firebase Admin (Refund) iniciado com variáveis individuais.");
+    } else {
+        console.error("❌ Variáveis de ambiente do Firebase ausentes (PROJECT_ID, CLIENT_EMAIL ou PRIVATE_KEY).");
     }
-  } catch (e) { 
-      console.error("❌ Erro fatal ao iniciar Firebase Admin (Refund):", e.message); 
-      initError = e.message;
+  } catch (e) {
+    console.error("❌ Erro fatal na inicialização do Firebase:", e.message);
   }
 }
+
+// Define db globalmente
+const db = admin.apps.length ? admin.firestore() : null; 
 
 export default async function handler(req, res) {
   // CORS
@@ -59,38 +39,39 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Verificação de Segurança
-  if (!admin.apps.length) {
+  // Verificação básica se o DB subiu
+  if (!db) {
       return res.status(500).json({ 
-          error: 'Erro Crítico de Configuração', 
-          message: 'O Firebase Admin não conseguiu inicializar.',
-          details: initError || 'Verifique os logs da Vercel.'
+          error: 'Server Configuration Error', 
+          message: 'Firebase Admin não inicializado. Verifique os logs da Vercel.' 
       });
   }
 
-  const { reservationId, action, percentage, newDate } = req.body;
-  const db = admin.firestore();
-
   try {
+    const { reservationId, action, percentage, newDate } = req.body;
+    // action: 'reschedule', 'cancel_full', 'cancel_partial'
+
+    console.log(`Processando ação: ${action} para reserva ${reservationId}`);
+
     const resRef = db.collection('reservations').doc(reservationId);
     const resDoc = await resRef.get();
     
     if (!resDoc.exists) throw new Error("Reserva não encontrada.");
     const reservation = resDoc.data();
 
-    // Ação: Reagendar (Apenas banco de dados)
+    // --- REAGENDAMENTO ---
     if (action === 'reschedule') {
         await resRef.update({ date: newDate, updatedAt: new Date() });
         return res.status(200).json({ success: true, message: "Data alterada com sucesso." });
     }
 
-    // Ação: Cancelamento (Envolve Mercado Pago)
+    // --- CANCELAMENTO E ESTORNO ---
     if (action.includes('cancel')) {
-        // Validação: Se não tiver Payment ID, cancela apenas no banco
+        // Validação: Se não tiver Payment ID
         if (!reservation.paymentId || reservation.paymentId === "MANUAL_OR_LEGACY" || reservation.paymentId.startsWith("FAKE")) {
-             console.warn("Reserva sem ID de pagamento válido. Cancelando apenas registro local.");
-             await resRef.update({ status: 'cancelled', cancelledAt: new Date(), note: 'Cancelado sem estorno automático (ID de pagamento inválido ou manual).' });
-             return res.status(200).json({ success: true, message: "Reserva cancelada no sistema (Sem estorno financeiro)." });
+             console.warn("Reserva sem ID de pagamento válido. Cancelando apenas no banco.");
+             await resRef.update({ status: 'cancelled', cancelledAt: new Date(), note: 'Cancelado sem estorno automático (ID inválido).' });
+             return res.status(200).json({ success: true, message: "Reserva cancelada (Sem estorno financeiro automático)." });
         }
 
         // Busca token do parceiro para autorizar o estorno
