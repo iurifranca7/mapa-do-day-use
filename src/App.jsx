@@ -484,24 +484,18 @@ const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
   if (!isOpen) return null;
 
-  // Estados de Fluxo
   const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
   
-  // Feedback Modal interno
   const [feedback, setFeedback] = useState(null); 
 
-  // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
-  // Estado para armazenar o usuário recém-criado para o redirecionamento
+  // NOVO: Guarda o usuário criado para usar no botão de sucesso
   const [registeredUser, setRegisteredUser] = useState(null);
 
-  // Reset de estados ao abrir
   useEffect(() => {
     if (isOpen) {
         setFeedback(null);
@@ -509,11 +503,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         setEmail(''); setPassword(''); setRegisteredUser(null);
     }
   }, [isOpen, initialMode, initialRole]);
-
-  const actionCodeSettings = {
-    url: 'https://mapadodayuse.com/minhas-viagens',
-    handleCodeInApp: true,
-  };
 
   const ensureProfile = async (u) => {
     const ref = doc(db, "users", u.uid);
@@ -553,11 +542,18 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     try {
         if (view === 'register') {
             const res = await createUserWithEmailAndPassword(auth, email, password);
-            try { await sendEmailVerification(res.user, actionCodeSettings); } catch(e){}
-            const userWithRole = await ensureProfile(res.user);
             
-            // Guarda o usuário para o botão "Ir para Painel" funcionar
-            setRegisteredUser(userWithRole);
+            // Define URL de retorno baseada na role
+            const returnUrl = role === 'partner' 
+                ? 'https://mapadodayuse.com/partner' 
+                : 'https://mapadodayuse.com/minhas-viagens';
+
+            try { 
+                await sendEmailVerification(res.user, { url: returnUrl, handleCodeInApp: true }); 
+            } catch(e){}
+            
+            const userWithRole = await ensureProfile(res.user);
+            setRegisteredUser(userWithRole); // Salva para o redirecionamento
             
             setView('email_sent');
             setLoading(false);
@@ -573,7 +569,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         let title = "Atenção";
         let msg = "Erro desconhecido.";
         if (err.code === 'auth/email-already-in-use') msg = "Este e-mail já possui cadastro. Tente fazer login.";
-        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') { title = "Dados Incorretos"; msg = "E-mail ou senha inválidos."; }
+        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') { title = "Dados Incorretos"; msg = "E-mail ou senha incorretos."; }
         else msg = "Erro: " + err.code;
         setFeedback({ type: 'error', title, msg });
     } finally { setLoading(false); }
@@ -582,7 +578,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleForgot = async (e) => {
       e.preventDefault(); setLoading(true); setFeedback(null);
       try {
-          await sendPasswordResetEmail(auth, email, actionCodeSettings);
+          await sendPasswordResetEmail(auth, email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
           setFeedback({ type: 'success', title: 'Link Enviado', msg: `Se o e-mail ${email} estiver cadastrado, você receberá um link.` });
       } catch (err) { 
           setFeedback({ type: 'error', title: 'Erro', msg: "Não foi possível enviar o e-mail." });
@@ -592,7 +588,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const getTitle = () => {
       if (view === 'forgot') return 'Recuperar Senha';
       if (view === 'email_sent') return 'Verifique seu E-mail';
-      // Título personalizado para Parceiro
       if (view === 'register' && role === 'partner') return 'Boas-vindas';
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
@@ -614,16 +609,21 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
             {/* TELA DE SUCESSO DE CADASTRO */}
             {view === 'email_sent' ? (
                 <div className="text-center py-6 space-y-4">
-                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2"><Mail size={32}/></div>
+                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2">
+                        <Mail size={32}/>
+                    </div>
                     <div>
                         <h3 className="text-lg font-bold text-slate-800">Conta Criada!</h3>
-                        <p className="text-slate-600 text-sm mt-2">Enviamos um link de confirmação para <strong>{email}</strong>.<br/>Por favor, confirme seu e-mail para ativar todos os recursos.</p>
+                        <p className="text-slate-600 text-sm mt-2">
+                            Enviamos um link de confirmação para <strong>{email}</strong>.
+                            <br/>Por favor, confirme seu e-mail para ativar todos os recursos.
+                        </p>
                     </div>
-                    {/* Botão inteligente: Vai para painel se for parceiro, ou login se for user */}
+                    {/* BOTÃO CORRIGIDO: Redireciona para o destino correto */}
                     <Button 
                         onClick={() => { 
                             if (registeredUser) {
-                                onSuccess(registeredUser); // Redireciona direto
+                                onSuccess(registeredUser); // Redireciona para o destino (Painel ou Ingressos)
                                 if (closeOnSuccess) onClose();
                             } else {
                                 setView('login'); 
@@ -631,7 +631,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         }} 
                         className="w-full mt-4"
                     >
-                        {role === 'partner' ? 'Ir para Painel' : 'Fazer Login'}
+                        {role === 'partner' ? 'Ir para o Painel' : 'Fazer Login'}
                     </Button>
                 </div>
             ) : (
@@ -645,11 +645,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
                     {['login','register'].includes(view) && (
                         <form onSubmit={handleEmailAuth} className="space-y-4">
-                            {/* Subtítulo explicativo para Parceiro */}
                             {view === 'register' && role === 'partner' && (
                                 <p className="text-sm text-slate-500 -mt-2 mb-2">Adicione seu e-mail e crie uma senha para se cadastrar</p>
                             )}
-
                             <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
                             <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
                             <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Entrar' : 'Cadastrar')}</Button>
@@ -2910,6 +2908,7 @@ const PartnerDashboard = () => {
 
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
+  const [showCelebration, setShowCelebration] = useState(true); // Controla o banner final
 
   // 1. CARREGAMENTO INICIAL E LISTENERS
   useEffect(() => {
@@ -3378,37 +3377,42 @@ const PartnerDashboard = () => {
         )}
 
         {/* CELEBRAÇÃO (FINAL) */}
-        {allDone && (
+        {allDone && showCelebration && (
             <div className="bg-gradient-to-r from-teal-500 to-emerald-500 p-8 rounded-3xl text-white text-center shadow-xl mb-12 animate-fade-in relative overflow-hidden">
+                {/* Botão Fechar */}
+                <button 
+                    onClick={() => setShowCelebration(false)} 
+                    className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors z-20"
+                    title="Fechar mensagem"
+                >
+                    <X size={20}/>
+                </button>
+
                 <div className="relative z-10">
                     <span className="text-5xl block mb-4 animate-bounce">🚀</span>
                     <h2 className="text-3xl font-extrabold mb-2">Parabéns! Você completou tudo!</h2>
                     <p className="opacity-90 mb-8 text-lg max-w-lg mx-auto">Seu Day Use está pronto para vender. Agora é hora de divulgar.</p>
                     
                     {items.length > 0 && (
-                        <div className="bg-white/20 backdrop-blur-md p-6 rounded-2xl inline-flex flex-col items-center gap-4 border border-white/30">
+                        <div className="bg-white/20 backdrop-blur-md p-6 rounded-2xl inline-flex flex-col items-center gap-4 border border-white/30 max-w-full">
                             <span className="text-xs font-bold uppercase tracking-widest text-white/80">Seu Link Exclusivo</span>
-                            <span className="text-lg font-mono font-bold select-all">mapadodayuse.com/{getStateSlug(items[0].state)}/{generateSlug(items[0].name)}</span>
-                            <button onClick={() => {navigator.clipboard.writeText(`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`); alert("Link copiado!");}} className="bg-white text-teal-600 px-6 py-3 rounded-xl font-bold hover:bg-teal-50 shadow-lg transform hover:scale-105 transition-all">
+                            
+                            {/* Link Clicável */}
+                            <a 
+                                href={`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-lg font-mono font-bold text-white hover:underline break-all"
+                            >
+                                mapadodayuse.com/{getStateSlug(items[0].state)}/{generateSlug(items[0].name)}
+                            </a>
+
+                            <button 
+                                onClick={() => {navigator.clipboard.writeText(`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`); alert("Link copiado!");}} 
+                                className="bg-white text-teal-600 px-6 py-3 rounded-xl font-bold hover:bg-teal-50 shadow-lg transform hover:scale-105 transition-all"
+                            >
                                 Copiar e Compartilhar no WhatsApp
                             </button>
-                        </div>
-                    )}
-                </div>
-            </div>
-        )}
-
-        {/* CELEBRAÇÃO (SE TUDO ESTIVER PRONTO) */}
-        {allDone && (
-            <div className="bg-gradient-to-r from-teal-500 to-emerald-500 p-8 rounded-3xl text-white text-center shadow-xl mb-12 animate-fade-in relative overflow-hidden">
-                <div className="relative z-10">
-                    <span className="text-4xl block mb-2">🎉</span>
-                    <h2 className="text-2xl font-bold mb-2">Parabéns! Seu Day Use está no ar!</h2>
-                    <p className="opacity-90 mb-6 text-sm max-w-lg mx-auto">Você completou todas as etapas. Agora compartilhe seu link nas redes sociais e comece a receber reservas.</p>
-                    {items.length > 0 && (
-                        <div className="bg-white/20 backdrop-blur-md p-4 rounded-xl inline-flex items-center gap-4 border border-white/30">
-                            <span className="text-xs font-mono select-all">mapadodayuse.com/{getStateSlug(items[0].state)}/{generateSlug(items[0].name)}</span>
-                            <button onClick={() => {navigator.clipboard.writeText(`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`); alert("Link copiado!");}} className="bg-white text-teal-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-teal-50">Copiar Link</button>
                         </div>
                     )}
                 </div>
@@ -4222,20 +4226,19 @@ const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setG
           await applyActionCode(auth, actionCode);
           
           if (auth.currentUser) {
-              await auth.currentUser.reload(); // Atualiza o status emailVerified localmente
-              onVerificationSuccess(); // Atualiza a UI (barra verde)
+              await auth.currentUser.reload();
+              onVerificationSuccess(); 
               
-              // --- LÓGICA DE REDIRECIONAMENTO INTELIGENTE ---
-              // Busca o perfil no banco para saber se é Parceiro, Staff ou Usuário
+              // Verifica a role para redirecionar corretamente
               const docSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
               const role = docSnap.exists() ? docSnap.data().role : 'user';
 
               if (role === 'partner') {
-                  navigate('/partner'); // Redireciona o dono direto para o dashboard
+                  navigate('/partner'); // Manda o parceiro direto para o dashboard
               } else if (role === 'staff') {
-                  navigate('/portaria'); // Redireciona staff para a portaria
+                  navigate('/portaria');
               } else {
-                  navigate('/minhas-viagens'); // Usuário comum vai para seus ingressos
+                  navigate('/minhas-viagens'); // Usuário comum vai para ingressos
               }
           }
         } 
