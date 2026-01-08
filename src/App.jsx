@@ -136,7 +136,7 @@ const useSEO = (title, description, image = null, noIndex = false, canonical = n
   }
 
   // URL da imagem padrão
-  const defaultImage = `${window.location.origin}/logo.svg`; 
+  const defaultImage = `${window.location.origin}/logo.png`; 
   const finalImage = image || defaultImage;
   const currentUrl = window.location.href;
   const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
@@ -485,26 +485,31 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   if (!isOpen) return null;
 
   // Estados de Fluxo
-  const [view, setView] = useState(initialMode); // 'login', 'register', 'forgot', 'email_sent'
+  const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  
+  // Feedback Modal interno
+  const [feedback, setFeedback] = useState(null); 
 
   // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  
+  // Estado para armazenar o usuário recém-criado para o redirecionamento
+  const [registeredUser, setRegisteredUser] = useState(null);
 
   // Reset de estados ao abrir
   useEffect(() => {
     if (isOpen) {
-        setError(''); setInfo('');
+        setFeedback(null);
         setView(initialMode); setRole(initialRole);
-        setEmail(''); setPassword('');
+        setEmail(''); setPassword(''); setRegisteredUser(null);
     }
   }, [isOpen, initialMode, initialRole]);
 
-  // Configuração de redirecionamento do e-mail
   const actionCodeSettings = {
     url: 'https://mapadodayuse.com/minhas-viagens',
     handleCodeInApp: true,
@@ -527,9 +532,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     return { ...u, role: userRole };
   };
 
-  // Handler Unificado para Social Login (Google e Facebook)
   const handleSocialLogin = async (provider) => {
-    setError('');
+    setFeedback(null);
     try {
        const res = await signInWithPopup(auth, provider);
        const userWithRole = await ensureProfile(res.user);
@@ -537,67 +541,59 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
        if (closeOnSuccess) onClose();
     } catch (e) { 
         console.error(e);
-        if (e.code === 'auth/account-exists-with-different-credential') {
-            setError("Já existe uma conta com este e-mail. Tente fazer login com o outro método.");
-        } else if (e.code === 'auth/popup-closed-by-user') {
-            // Ignora fechamento intencional
-        } else {
-            setError("Erro ao conectar. Tente novamente."); 
-        }
+        let msg = "Erro ao conectar.";
+        if (e.code === 'auth/account-exists-with-different-credential') msg = "Já existe uma conta com este e-mail.";
+        else if (e.code === 'auth/popup-closed-by-user') return;
+        setFeedback({ type: 'error', title: 'Erro de Login', msg });
     }
   };
 
   const handleEmailAuth = async (e) => {
-    e.preventDefault(); setLoading(true); setError('');
+    e.preventDefault(); setLoading(true); setFeedback(null);
     try {
-        let res;
         if (view === 'register') {
-            res = await createUserWithEmailAndPassword(auth, email, password);
+            const res = await createUserWithEmailAndPassword(auth, email, password);
             try { await sendEmailVerification(res.user, actionCodeSettings); } catch(e){}
-            await ensureProfile(res.user);
+            const userWithRole = await ensureProfile(res.user);
+            
+            // Guarda o usuário para o botão "Ir para Painel" funcionar
+            setRegisteredUser(userWithRole);
+            
             setView('email_sent');
             setLoading(false);
             return;
         } else {
-            res = await signInWithEmailAndPassword(auth, email, password);
+            const res = await signInWithEmailAndPassword(auth, email, password);
+            const userWithRole = await ensureProfile(res.user);
+            onSuccess(userWithRole);
+            if (closeOnSuccess) onClose();
         }
-        const userWithRole = await ensureProfile(res.user);
-        onSuccess(userWithRole);
-        if (closeOnSuccess) onClose();
     } catch (err) {
         console.error(err);
-        if (err.code === 'auth/email-already-in-use') {
-            setError("Este e-mail já possui cadastro. Tente fazer login ou redefinir a senha.");
-            // Opcional: Mudar automaticamente para a tela de login
-            // setView('login'); 
-        }
-        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
-            setError("E-mail ou senha incorretos.");
-        }
-        else setError("Erro: " + err.code);
+        let title = "Atenção";
+        let msg = "Erro desconhecido.";
+        if (err.code === 'auth/email-already-in-use') msg = "Este e-mail já possui cadastro. Tente fazer login.";
+        else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') { title = "Dados Incorretos"; msg = "E-mail ou senha inválidos."; }
+        else msg = "Erro: " + err.code;
+        setFeedback({ type: 'error', title, msg });
     } finally { setLoading(false); }
   };
 
   const handleForgot = async (e) => {
-      e.preventDefault(); setLoading(true); setError(''); setInfo('');
+      e.preventDefault(); setLoading(true); setFeedback(null);
       try {
           await sendPasswordResetEmail(auth, email, actionCodeSettings);
-          setInfo(`Se o e-mail ${email} estiver cadastrado, você receberá um link em instantes.`);
+          setFeedback({ type: 'success', title: 'Link Enviado', msg: `Se o e-mail ${email} estiver cadastrado, você receberá um link.` });
       } catch (err) { 
-          console.error(err);
-          if (err.code === 'auth/user-not-found') {
-              // Por segurança, evitamos dizer explicitamente que não existe, 
-              // mas para UX pode ser útil avisar se for um erro de digitação óbvio
-              setError("E-mail não encontrado na base de dados.");
-          } else {
-              setError("Erro ao enviar. Tente novamente."); 
-          }
+          setFeedback({ type: 'error', title: 'Erro', msg: "Não foi possível enviar o e-mail." });
       } finally { setLoading(false); }
   };
 
   const getTitle = () => {
       if (view === 'forgot') return 'Recuperar Senha';
       if (view === 'email_sent') return 'Verifique seu E-mail';
+      // Título personalizado para Parceiro
+      if (view === 'register' && role === 'partner') return 'Boas-vindas';
       return customTitle || (view === 'login' ? 'Olá, novamente' : 'Criar conta');
   };
 
@@ -613,26 +609,33 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
         <div className="p-6">
             
+            {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
+
             {/* TELA DE SUCESSO DE CADASTRO */}
             {view === 'email_sent' ? (
                 <div className="text-center py-6 space-y-4">
-                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2">
-                        <Mail size={32}/>
-                    </div>
+                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2"><Mail size={32}/></div>
                     <div>
                         <h3 className="text-lg font-bold text-slate-800">Conta Criada!</h3>
-                        <p className="text-slate-600 text-sm mt-2">
-                            Enviamos um link de confirmação para <strong>{email}</strong>.
-                            <br/>Por favor, confirme seu e-mail para acessar todos os recursos.
-                        </p>
+                        <p className="text-slate-600 text-sm mt-2">Enviamos um link de confirmação para <strong>{email}</strong>.<br/>Por favor, confirme seu e-mail para ativar todos os recursos.</p>
                     </div>
-                    <Button onClick={() => { setView('login'); }} className="w-full mt-4">
-                        Fazer Login
+                    {/* Botão inteligente: Vai para painel se for parceiro, ou login se for user */}
+                    <Button 
+                        onClick={() => { 
+                            if (registeredUser) {
+                                onSuccess(registeredUser); // Redireciona direto
+                                if (closeOnSuccess) onClose();
+                            } else {
+                                setView('login'); 
+                            }
+                        }} 
+                        className="w-full mt-4"
+                    >
+                        {role === 'partner' ? 'Ir para Painel' : 'Fazer Login'}
                     </Button>
                 </div>
             ) : (
                 <>
-                    {/* SELEÇÃO DE PERFIL (Só aparece se não estiver oculto) */}
                     {!hideRoleSelection && ['login','register'].includes(view) && (
                        <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
                            <button onClick={()=>setRole('user')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${role==='user'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Viajante</button>
@@ -640,26 +643,19 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                        </div>
                     )}
 
-                    {error && <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {error}</div>}
-                    {info && <div className="mb-4 p-3 bg-green-50 text-green-700 text-xs rounded-lg flex items-center gap-2"><CheckCircle size={16}/> {info}</div>}
-
-                    {/* FORMULÁRIO DE E-MAIL */}
                     {['login','register'].includes(view) && (
                         <form onSubmit={handleEmailAuth} className="space-y-4">
-                            <div className="border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-black focus-within:border-transparent">
-                                <input type="email" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500 border-b border-slate-200" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
-                                <input type="password" className="w-full p-4 outline-none text-slate-800 placeholder:text-slate-500" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
-                            </div>
-                            
-                            {view === 'register' && (
-                                <p className="text-[11px] text-slate-500 leading-tight">Ao continuar, concordo com os <span className="underline cursor-pointer" onClick={()=>window.open('/termos-de-uso')}>Termos</span> e <span className="underline cursor-pointer" onClick={()=>window.open('/politica-de-privacidade')}>Política de Privacidade</span>.</p>
+                            {/* Subtítulo explicativo para Parceiro */}
+                            {view === 'register' && role === 'partner' && (
+                                <p className="text-sm text-slate-500 -mt-2 mb-2">Adicione seu e-mail e crie uma senha para se cadastrar</p>
                             )}
 
-                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Continuar' : 'Concordar e continuar')}</Button>
+                            <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
+                            <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
+                            <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Entrar' : 'Cadastrar')}</Button>
                         </form>
                     )}
 
-                    {/* FORMULÁRIO DE RECUPERAÇÃO */}
                     {view === 'forgot' && (
                         <form onSubmit={handleForgot} className="space-y-4">
                             <p className="text-sm text-slate-600">Insira seu e-mail para receber o link de redefinição.</p>
@@ -669,7 +665,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         </form>
                     )}
 
-                    {/* BOTÕES SOCIAIS (GOOGLE E FACEBOOK) */}
                     {['login','register'].includes(view) && (
                         <>
                             <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou entre com</span><div className="flex-grow border-t border-slate-200"></div></div>
@@ -1071,6 +1066,53 @@ const UserProfile = () => {
 
 // --- PÁGINAS PRINCIPAIS ---
 
+const DayUseCard = ({ item, onClick }) => {
+  const hasDiscount = item.coupons && item.coupons.length > 0;
+  const maxDiscount = hasDiscount ? Math.max(...item.coupons.map(c => c.percentage)) : 0;
+
+  // Função para substituir imagem quebrada por um placeholder bonito
+  const handleImageError = (e) => {
+      e.target.src = "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80"; 
+  };
+
+  return (
+     <div 
+        onClick={onClick} 
+        className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full relative"
+     >
+        <div className="h-64 relative overflow-hidden">
+            <img 
+                src={item.image} 
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                onError={handleImageError} 
+                alt={item.name}
+            />
+            
+            {hasDiscount && (
+              <div className="absolute top-4 right-4 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
+                 <Tag size={12} className="fill-current"/> {maxDiscount}% OFF
+              </div>
+            )}
+        </div>
+        <div className="p-6 flex flex-col flex-1">
+           <div className="mb-4">
+               <h2 className="font-bold text-xl text-slate-900 leading-tight mb-1">{item.name}</h2>
+               <p className="text-sm text-slate-500 flex items-center gap-1"><MapPin size={14} className="text-[#0097A8]"/> {item.city || 'Localização'}, {item.state}</p>
+           </div>
+           <div className="mt-auto pt-4 border-t border-slate-50 flex justify-between items-center">
+               <div>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">A partir de</p>
+                   <p className="text-2xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p>
+               </div>
+               <span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">
+                   Reservar
+               </span>
+           </div>
+        </div>
+     </div>
+  );
+};
+
 // -----------------------------------------------------------------------------
 // HOME PAGE (NOVO DESIGN MINIMALISTA + HERO)
 // -----------------------------------------------------------------------------
@@ -1089,7 +1131,7 @@ const HomePage = () => {
         "@type": "Organization",
         "name": "Mapa do Day Use",
         "url": "https://mapadodayuse.com",
-        "logo": "https://mapadodayuse.com/logo.svg",
+        "logo": "https://mapadodayuse.com/logo.png",
         "contactPoint": {
           "@type": "ContactPoint",
           "email": "contato@mapadodayuse.com",
@@ -1284,13 +1326,6 @@ const HomePage = () => {
                        <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
                    </div>
                </div>
-                
-                {/* CTA FINAL */}
-                <div className="bg-slate-50 rounded-3xl p-8 text-center border border-slate-100 mt-12">
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">Não encontrou o que procurava?</h3>
-                    <p className="text-slate-500 mb-6">Use nosso mapa do site para ver todas as cidades disponíveis.</p>
-                    <Button onClick={() => navigate('/mapa-do-site')} variant="outline">Ver Todos os Destinos</Button>
-                </div>
             </div>
         )}
       </div>
@@ -2831,7 +2866,7 @@ const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
 };
 
 // -----------------------------------------------------------------------------
-// PAINEL DO PARCEIRO (COMPLETO E BLINDADO)
+// PAINEL DO PARCEIRO (COMPLETO E BLINDADO + ONBOARDING)
 // -----------------------------------------------------------------------------
 const PartnerDashboard = () => {
   // --- STATES DE DADOS ---
@@ -2876,7 +2911,7 @@ const PartnerDashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
 
-  // 1. CARREGAMENTO INICIAL
+  // 1. CARREGAMENTO INICIAL E LISTENERS
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
@@ -2892,6 +2927,7 @@ const PartnerDashboard = () => {
                }
            }
            
+           // Listeners em Tempo Real
            const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
            const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
            const qStaff = query(collection(db, "users"), where("ownerId", "==", u.uid));
@@ -2934,8 +2970,8 @@ const PartnerDashboard = () => {
       if (!user?.emailVerified) {
           setFeedback({
               type: 'warning',
-              title: 'Verifique seu E-mail',
-              msg: 'Para prosseguir com a validação da empresa, primeiro confirme seu endereço de e-mail.'
+              title: 'E-mail Pendente',
+              msg: 'Para garantir a segurança, você precisa confirmar seu e-mail antes de enviar a documentação da empresa. Verifique sua caixa de entrada.'
           });
           return;
       }
@@ -2944,10 +2980,9 @@ const PartnerDashboard = () => {
 
   // Ação: Conectar MP (Etapa 3 - Bloqueada se Empresa não verificada)
   const handleConnectClick = () => {
-      if (!user?.emailVerified) {
-           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Verifique seu e-mail primeiro.' });
-      } else if (docStatus !== 'verified') {
-          setFeedback({ type: 'warning', title: 'Empresa em Análise', msg: 'Para receber pagamentos, precisamos primeiro aprovar a documentação da sua empresa. Envie seus documentos.' });
+      if (docStatus !== 'verified') {
+          setFeedback({ type: 'warning', title: 'Empresa em Análise', msg: 'Para receber pagamentos, precisamos primeiro aprovar a documentação da sua empresa.' });
+          // Redireciona para verificação caso ainda não tenha enviado
           if (docStatus === 'none' || docStatus === 'rejected') navigate('/partner/verificacao');
       } else {
           handleConnect();
@@ -2956,9 +2991,7 @@ const PartnerDashboard = () => {
 
   // Ação: Criar Anúncio (Etapa 4 - Bloqueada se MP não conectado)
   const handleCreateAdClick = () => {
-      if (!user?.emailVerified) {
-           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Verifique seu e-mail primeiro.' });
-      } else if (docStatus !== 'verified') {
+      if (docStatus !== 'verified') {
           setFeedback({ type: 'warning', title: 'Verificação Necessária', msg: 'Sua conta empresarial precisa ser aprovada para criar anúncios.' });
           navigate('/partner/verificacao');
       } else if (!mpConnected) {
@@ -2968,7 +3001,7 @@ const PartnerDashboard = () => {
       }
   };
 
-  // Wrapper para ações sensíveis (Staff)
+  // Wrapper de segurança para ações de equipe
   const requireVerified = (action) => {
       if (docStatus !== 'verified') {
           setFeedback({ type: 'warning', title: 'Acesso Restrito', msg: 'Valide sua empresa para gerenciar equipe.' });
@@ -2977,7 +3010,7 @@ const PartnerDashboard = () => {
       action();
   };
 
-  // --- AÇÕES GERAIS ---
+  // --- AÇÕES DO MODAL DE CONFIRMAÇÃO ---
   const togglePause = (item) => { setConfirmAction({ type: item.paused ? 'resume_ad' : 'pause_ad', payload: item }); };
   const confirmDeleteStaff = (staffId) => { requireVerified(() => setConfirmAction({ type: 'delete_staff', payload: staffId })); };
   const confirmResetStaffPass = (email, requestId = null) => { requireVerified(() => setConfirmAction({ type: 'reset_staff_pass', payload: { email, requestId } })); };
@@ -2986,6 +3019,7 @@ const PartnerDashboard = () => {
   const executeAction = async () => {
       if (!confirmAction) return;
       const { type, payload } = confirmAction;
+
       try {
           if (type === 'pause_ad' || type === 'resume_ad') {
                await updateDoc(doc(db, "dayuses", payload.id), { paused: type === 'pause_ad' });
@@ -3000,57 +3034,219 @@ const PartnerDashboard = () => {
                if (payload.requestId) await updateDoc(doc(db, "requests", payload.requestId), { status: 'completed' });
                setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Link enviado.' });
           }
-      } catch (error) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha na ação.' }); } finally { setConfirmAction(null); }
+      } catch (error) {
+          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível completar a ação.' });
+      } finally {
+          setConfirmAction(null);
+      }
   };
 
   // --- GESTÃO DE RESERVAS (ESTORNO/REAGENDAMENTO) ---
   const handleManageSubmit = async () => {
       if (!manageRes) return;
       setManageLoading(true);
-      const payload = { reservationId: manageRes.id, action: manageAction === 'reschedule' ? 'reschedule' : (refundPercent === 100 ? 'cancel_full' : 'cancel_partial'), percentage: refundPercent, newDate: rescheduleDate };
+
+      const payload = {
+          reservationId: manageRes.id,
+          action: manageAction === 'reschedule' ? 'reschedule' : (refundPercent === 100 ? 'cancel_full' : 'cancel_partial'),
+          percentage: refundPercent,
+          newDate: rescheduleDate
+      };
+
       try {
-          const response = await fetch('/api/refund', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const response = await fetch('/api/refund', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
           const data = await response.json();
-          if (response.ok) { setFeedback({ type: 'success', title: 'Sucesso', msg: data.message }); setManageRes(null); } else throw new Error(data.error);
-      } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: err.message }); } finally { setManageLoading(false); }
+
+          if (response.ok) {
+              setFeedback({ type: 'success', title: 'Sucesso', msg: data.message });
+              setManageRes(null);
+          } else {
+              throw new Error(data.error || "Erro desconhecido");
+          }
+      } catch (err) {
+          console.error(err);
+          setFeedback({ type: 'error', title: 'Erro', msg: err.message });
+      } finally {
+          setManageLoading(false);
+      }
   };
 
   // --- OPERACIONAL ---
-  const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); setFeedback({ type: 'success', title: 'Check-in!', msg: 'Acesso liberado.' }); setValidationCode(""); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha.' }); } } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique.' }); } };
+  const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: 'Acesso liberado.' }); setValidationCode(""); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); } } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); } };
   const onScanSuccess = (decodedText) => { setShowScanner(false); const res = reservations.find(r => r.id === decodedText); if (res) { if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' }); else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' }); else handleValidate(res.id, res.id); } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' }); };
-  const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: 'Link enviado.' }); setEditStaffModal(null); setNewStaffEmailInput(''); } else throw new Error(); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha.' }); } finally { setStaffLoading(false); } };
-  const handleAddStaff = async (e) => { e.preventDefault(); setStaffLoading(true); try { const secondaryApp = initializeApp(getApp().options, "Secondary"); const secondaryAuth = getAuth(secondaryApp); const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass); await sendEmailVerification(createdUser.user); await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" }); await signOut(secondaryAuth); setFeedback({ type: 'success', title: 'Criado!', msg: 'Link enviado.' }); setStaffEmail(''); setStaffPass(''); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Verifique dados.' }); } finally { setStaffLoading(false); } };
+
+  // --- GESTÃO DE EQUIPE (API + FIREBASE) ---
+  const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: `E-mail alterado para ${newEmail}. Link de confirmação enviado.` }); setEditStaffModal(null); setNewStaffEmailInput(''); } else throw new Error(); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao atualizar.' }); } finally { setStaffLoading(false); } };
+  const handleDeleteStaff = async (staffId) => { setConfirmAction({ type: 'delete_staff', payload: staffId }); };
+  const handleAddStaff = async (e) => { e.preventDefault(); setStaffLoading(true); try { const secondaryApp = initializeApp(getApp().options, "Secondary"); const secondaryAuth = getAuth(secondaryApp); const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass); await sendEmailVerification(createdUser.user); await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" }); await signOut(secondaryAuth); setFeedback({ type: 'success', title: 'Criado!', msg: 'Usuário criado. Link de confirmação enviado.' }); setStaffEmail(''); setStaffPass(''); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Verifique dados.' }); } finally { setStaffLoading(false); } };
 
   // Cálculos Financeiros
-  const financialRes = reservations.filter(r => new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
+    const financialRes = reservations.filter(r => r.createdAt && new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
+  
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
-  const platformFee = totalBalance * 0.20;
+  const platformFee = totalBalance * 0.15;
   const estimatedMPFees = totalBalance * 0.0499;
   const netBalance = totalBalance - platformFee - estimatedMPFees;
+  
   const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
   const cardTotal = totalBalance - pixTotal; 
   
-  // Cálculos de Cupons
-  const couponRes = financialRes.filter(r => r.couponCode);
+  // --- CÁLCULOS DE CUPONS (ESTAVA FALTANDO ISSO) ---
+  const couponRes = financialRes.filter(r => r.couponCode); // Reservas com cupom no mês
+  
+  // 1. Receita total gerada por cupons
   const totalCouponRevenue = couponRes.reduce((acc, r) => acc + (r.total || 0), 0);
-  const couponBreakdown = couponRes.reduce((acc, r) => { if (r.discount > 0) { const code = r.couponCode || "OUTROS"; if (!acc[code]) acc[code] = { count: 0, revenue: 0 }; acc[code].count += 1; acc[code].revenue += (r.total || 0); } return acc; }, {});
+  
+  // 2. Detalhamento por cupom
+  const couponBreakdown = couponRes.reduce((acc, r) => {
+      const code = r.couponCode;
+      if (!acc[code]) acc[code] = { count: 0, revenue: 0 };
+      acc[code].count += 1;
+      acc[code].revenue += (r.total || 0);
+      return acc;
+  }, {});
 
-  // Cálculos Operacionais
-  const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
-  const dailyStats = dailyGuests.reduce((acc, curr) => { const adt = Number(curr.adults || 0); const chd = Number(curr.children || 0); const free = Number(curr.freeChildren || 0); const pet = Number(curr.pets || 0); let specials = 0; if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q)); return { adults: acc.adults + adt, children: acc.children + chd, freeChildren: acc.freeChildren + free, pets: acc.pets + pet, specials: acc.specials + specials, total: acc.total + adt + chd + free }; }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
+  // Variável legada para compatibilidade se houver uso antigo
+  const allCouponsUsed = couponRes.length;
+  
+  // Filtro Operacional
+  const dailyGuests = reservations.filter(r => 
+      r.date === filterDate && 
+      (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  
+  const dailyStats = dailyGuests.reduce((acc, curr) => {
+      const adt = Number(curr.adults || 0);
+      const chd = Number(curr.children || 0);
+      const free = Number(curr.freeChildren || 0);
+      const pet = Number(curr.pets || 0);
+      let specials = 0;
+      if (curr.selectedSpecial) Object.values(curr.selectedSpecial).forEach(q => specials += Number(q));
+      return { 
+          adults: acc.adults + adt, 
+          children: acc.children + chd, 
+          freeChildren: acc.freeChildren + free, 
+          pets: acc.pets + pet, 
+          specials: acc.specials + specials, 
+          total: acc.total + adt + chd + free 
+      };
+  }, { adults: 0, children: 0, freeChildren: 0, pets: 0, specials: 0, total: 0 });
 
   if (!user) return <div className="text-center py-20 text-slate-400">Carregando painel...</div>;
 
-  // Renderização
+  // Lógica de Conclusão do Onboarding
+  const isEmailDone = user.emailVerified;
+  const isDocsDone = docStatus === 'verified';
+  const isMpDone = mpConnected;
+  const isAdDone = items.length > 0;
+  const allDone = isEmailDone && isDocsDone && isMpDone && isAdDone;
+
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12 relative">
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
         <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
         {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
-        {confirmAction && createPortal(<ModalOverlay onClose={() => setConfirmAction(null)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmAction.type.includes('delete') ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}><AlertCircle size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Confirmar Ação?</h2><p className="text-slate-600 mb-6 text-sm">Esta ação é importante.</p><div className="flex gap-3"><Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button><Button onClick={executeAction} className="flex-1 justify-center">Confirmar</Button></div></div></ModalOverlay>, document.body)}
-        {editStaffModal && createPortal(<ModalOverlay onClose={() => setEditStaffModal(null)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center"><h3 className="font-bold text-lg mb-4 text-slate-800">Alterar E-mail</h3><input className="w-full border p-3 rounded-xl mb-4" placeholder="Novo e-mail" value={newStaffEmailInput} onChange={e=>setNewStaffEmailInput(e.target.value)} /><Button onClick={() => handleUpdateStaffEmail(editStaffModal.id, newStaffEmailInput)} disabled={staffLoading} className="w-full justify-center">{staffLoading ? 'Atualizando...' : 'Confirmar'}</Button></div></ModalOverlay>, document.body)}
-        {manageRes && createPortal(<ModalOverlay onClose={() => setManageRes(null)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in"><div className="flex justify-between items-center mb-6"><h3 className="font-bold text-lg text-slate-800">Gerenciar Reserva</h3><button onClick={()=>setManageRes(null)}><X size={20}/></button></div><div className="flex bg-slate-100 p-1 rounded-xl mb-6"><button onClick={()=>setManageAction('reschedule')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='reschedule'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Reagendar</button><button onClick={()=>setManageAction('cancel')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='cancel'?'bg-white text-red-600 shadow-sm':'text-slate-500'}`}>Cancelar</button></div>{manageAction === 'reschedule' ? (<div className="space-y-4"><p className="text-sm text-slate-600">Atual: <strong>{manageRes.date.split('-').reverse().join('/')}</strong></p><div><label className="text-xs font-bold text-slate-500 uppercase block mb-1">Nova Data</label><input type="date" className="w-full border p-3 rounded-xl bg-slate-50" value={rescheduleDate} onChange={e=>setRescheduleDate(e.target.value)} /></div><Button onClick={handleManageSubmit} disabled={manageLoading} className="w-full mt-2">{manageLoading ? 'Salvando...' : 'Confirmar Data'}</Button></div>) : (<div className="space-y-4"><div className="bg-red-50 p-4 rounded-xl border border-red-100 text-sm text-red-800"><p className="font-bold mb-1">Atenção:</p><p>O estorno será processado automaticamente.</p></div><div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Reembolso (%)</label><div className="flex items-center gap-4"><input type="range" min="0" max="100" step="10" value={refundPercent} onChange={e=>setRefundPercent(Number(e.target.value))} className="flex-1 accent-red-600"/><span className="font-bold text-red-600 w-12 text-right">{refundPercent}%</span></div><p className="text-xs text-right text-slate-400 mt-1">Devolver: <strong>{formatBRL(manageRes.total * (refundPercent/100))}</strong></p></div><Button onClick={handleManageSubmit} disabled={manageLoading} variant="danger" className="w-full mt-2">{manageLoading ? 'Processando...' : 'Confirmar Cancelamento'}</Button></div>)}</div></ModalOverlay>, document.body)}
-        {showNotifications && createPortal(<ModalOverlay onClose={() => setShowNotifications(false)}><div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in flex flex-col max-h-[80vh]"><div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2"><h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Bell className="text-yellow-500"/> Solicitações</h3><button onClick={()=>setShowNotifications(false)}><X/></button></div><div className="space-y-3 overflow-y-auto custom-scrollbar flex-1 pr-2">{requests.length === 0 ? <p className="text-slate-400 text-center py-4 text-sm">Nenhuma solicitação pendente.</p> : requests.map(req => (<div key={req.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-2"><span className="font-bold text-sm text-slate-700">{req.staffName}</span><span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase">{req.type}</span></div><p className="text-xs text-slate-500 mb-3">{req.type==='email'?`Novo: ${req.newEmailValue}`:'Reset senha'}</p><div className="flex gap-2">{req.type==='password'?(<Button onClick={()=>handleResetStaffPassword(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Link</Button>):(<Button onClick={()=>handleUpdateStaffEmail(req.staffId, req.newEmailValue, req.id)} className="w-full h-8 text-xs justify-center">Aprovar</Button>)}</div></div>))}</div></div></ModalOverlay>, document.body)}
+        
+        {confirmAction && createPortal(
+            <ModalOverlay onClose={() => setConfirmAction(null)}>
+                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmAction.type.includes('delete') ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                        <AlertCircle size={32}/>
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">Confirmar Ação?</h2>
+                    <p className="text-slate-600 mb-6 text-sm">
+                        {confirmAction.type === 'pause_ad' && 'Seu anúncio ficará oculto.'}
+                        {confirmAction.type === 'resume_ad' && 'Seu anúncio voltará a aparecer.'}
+                        {confirmAction.type === 'delete_staff' && 'O funcionário perderá acesso imediato.'}
+                        {confirmAction.type === 'reset_staff_pass' && 'Um e-mail será enviado para reset de senha.'}
+                    </p>
+                    <div className="flex gap-3">
+                        <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
+                        <Button onClick={executeAction} className={`flex-1 justify-center ${confirmAction.type.includes('delete') ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>Confirmar</Button>
+                    </div>
+                </div>
+            </ModalOverlay>, 
+            document.body
+        )}
+
+        {editStaffModal && createPortal(
+            <ModalOverlay onClose={() => setEditStaffModal(null)}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
+                    <h3 className="font-bold text-lg mb-4 text-slate-800">Alterar E-mail</h3>
+                    <p className="text-sm text-slate-500 mb-4">Atual: <strong>{editStaffModal.currentEmail}</strong></p>
+                    <input className="w-full border p-3 rounded-xl mb-4" placeholder="Novo e-mail" value={newStaffEmailInput} onChange={e=>setNewStaffEmailInput(e.target.value)} />
+                    <Button onClick={() => handleUpdateStaffEmail(editStaffModal.id, newStaffEmailInput)} disabled={staffLoading} className="w-full justify-center">{staffLoading ? 'Atualizando...' : 'Confirmar Alteração'}</Button>
+                </div>
+            </ModalOverlay>,
+            document.body
+        )}
+
+        {showNotifications && createPortal(
+            <ModalOverlay onClose={() => setShowNotifications(false)}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in flex flex-col max-h-[80vh]">
+                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                        <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800"><Bell className="text-yellow-500"/> Solicitações</h3>
+                        <button onClick={()=>setShowNotifications(false)} className="p-1 hover:bg-slate-100 rounded-full"><X size={20}/></button>
+                    </div>
+                    <div className="space-y-3 overflow-y-auto custom-scrollbar flex-1 pr-2">
+                        {requests.length === 0 ? <p className="text-slate-400 text-center py-4 text-sm">Nenhuma solicitação pendente.</p> : requests.map(req => (
+                            <div key={req.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
+                                <div className="flex justify-between mb-2">
+                                    <span className="font-bold text-sm text-slate-700">{req.staffName || 'Staff'}</span>
+                                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">{req.type}</span>
+                                </div>
+                                <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                                    {req.type === 'email' ? <span>Novo e-mail: <strong>{req.newEmailValue}</strong></span> : 'Solicitou redefinição de senha.'}
+                                </p>
+                                <div className="flex gap-2">
+                                    {req.type === 'password' ? (
+                                        <Button onClick={() => handleResetStaffPassword(req.staffEmail, req.id)} className="w-full h-8 text-xs justify-center">Enviar Link</Button>
+                                    ) : (
+                                        <Button onClick={() => handleUpdateStaffEmail(req.staffId, req.newEmailValue, req.id)} className="w-full h-8 text-xs justify-center bg-green-600 hover:bg-green-700 text-white shadow-none">Aprovar Troca</Button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </ModalOverlay>, 
+            document.body
+        )}
+        
+        {manageRes && createPortal(
+            <ModalOverlay onClose={() => setManageRes(null)}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="font-bold text-lg text-slate-800">Gerenciar Reserva</h3>
+                        <button onClick={()=>setManageRes(null)}><X size={20}/></button>
+                    </div>
+                    
+                    <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
+                        <button onClick={()=>setManageAction('reschedule')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='reschedule'?'bg-white text-[#0097A8] shadow-sm':'text-slate-500'}`}>Reagendar</button>
+                        <button onClick={()=>setManageAction('cancel')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${manageAction==='cancel'?'bg-white text-red-600 shadow-sm':'text-slate-500'}`}>Cancelar</button>
+                    </div>
+
+                    {manageAction === 'reschedule' ? (
+                        <div className="space-y-4">
+                            <p className="text-sm text-slate-600">Atual: <strong>{manageRes.date.split('-').reverse().join('/')}</strong></p>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase block mb-1">Nova Data</label><input type="date" className="w-full border p-3 rounded-xl bg-slate-50" value={rescheduleDate} onChange={e=>setRescheduleDate(e.target.value)} /></div>
+                            <Button onClick={handleManageSubmit} disabled={manageLoading} className="w-full mt-2">{manageLoading ? 'Salvando...' : 'Confirmar Data'}</Button>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            <div className="bg-red-50 p-4 rounded-xl border border-red-100 text-sm text-red-800"><p className="font-bold mb-1">Atenção:</p><p>O estorno será processado automaticamente.</p></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Reembolso (%)</label><div className="flex items-center gap-4"><input type="range" min="0" max="100" step="10" value={refundPercent} onChange={e=>setRefundPercent(Number(e.target.value))} className="flex-1 accent-red-600"/><span className="font-bold text-red-600 w-12 text-right">{refundPercent}%</span></div><p className="text-xs text-right text-slate-400 mt-1">Devolver: <strong>{formatBRL(manageRes.total * (refundPercent/100))}</strong></p></div>
+                            <Button onClick={handleManageSubmit} disabled={manageLoading} variant="danger" className="w-full mt-2">{manageLoading ? 'Processando...' : 'Confirmar Cancelamento'}</Button>
+                        </div>
+                    )}
+                </div>
+            </ModalOverlay>, 
+            document.body
+        )}
 
         {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row justify-between items-center md:items-end mb-8 border-b border-slate-200 pb-4 gap-4">
@@ -3069,88 +3265,164 @@ const PartnerDashboard = () => {
               </button>
               
               {!mpConnected ? (
-                  <Button 
+                  <button 
                     onClick={handleConnectClick} 
-                    className={`bg-blue-500 hover:bg-blue-600 text-xs md:text-sm ${docStatus !== 'verified' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`bg-[#009EE3] hover:bg-[#0081b9] text-white px-4 py-3 rounded-xl font-bold text-sm shadow-md flex items-center gap-2 transition-all active:scale-95 ${docStatus !== 'verified' ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                      Conectar MP
-                  </Button>
+                      {/* Logo simples do MP (Mãozinha) ou fallback para ícone de link */}
+                      <img 
+                        src="https://img.icons8.com/color/48/mercado-pago.png" 
+                        alt="MP" 
+                        className="w-5 h-5 bg-white rounded-full p-0.5" 
+                        onError={(e) => {e.target.style.display='none'}}
+                      />
+                      Conectar Mercado Pago
+                  </button>
               ) : (
-                  <div className="px-4 py-2 bg-green-50 text-green-700 rounded-xl font-bold border border-green-200 flex items-center text-sm shadow-sm">
+                  <div className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold border border-slate-200 flex items-center text-sm">
                       <CheckCircle size={16} className="text-green-600 inline mr-2"/> Conectado
                   </div>
               )}
               
-              <Button onClick={handleCreateAdClick} className={docStatus !== 'verified' || !mpConnected ? 'opacity-50 cursor-not-allowed' : ''}>+ Anúncio</Button>
+              <Button 
+                onClick={handleCreateAdClick}
+                className={docStatus !== 'verified' || !mpConnected ? 'opacity-50 cursor-not-allowed' : ''}
+              >
+                  Configurar meu day use
+              </Button>
            </div>
         </div>
 
-        {/* --- ÁREA DE AVISOS DE SEGURANÇA (ONBOARDING) --- */}
-        {(docStatus !== 'verified' || !user?.emailVerified || !mpConnected) && (
-            <div className="grid md:grid-cols-2 gap-6 mb-12 animate-fade-in">
+        {/* --- FLUXO DE SUCESSO (ONBOARDING PROGRESSIVO) --- */}
+        {!allDone && (
+            <div className="grid md:grid-cols-4 gap-4 mb-12 animate-fade-in">
                 
-                {/* 1. VERIFICAÇÃO DE E-MAIL */}
-                <div className={`p-6 rounded-2xl border flex flex-col justify-between ${user.emailVerified ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+                {/* 1. E-MAIL */}
+                <div className={`p-4 rounded-2xl border flex flex-col justify-between transition-all ${isEmailDone ? 'bg-white border-green-200 opacity-70' : 'bg-yellow-50 border-yellow-200 shadow-md ring-2 ring-yellow-100'}`}>
                     <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-bold uppercase tracking-widest opacity-60">Etapa 1</span>
-                            {user.emailVerified && <CheckCircle size={16} className="text-green-600"/>}
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Passo 1</span>
+                            {isEmailDone && <CheckCircle size={16} className="text-green-500"/>}
                         </div>
-                        <h3 className={`font-bold text-lg ${user.emailVerified ? 'text-green-800' : 'text-yellow-800'}`}>Confirmação de E-mail</h3>
-                        <p className={`text-sm mt-2 ${user.emailVerified ? 'text-green-700' : 'text-yellow-700'}`}>
-                            {user.emailVerified ? "E-mail confirmado. Acesso liberado para envio de documentos." : "Confirme o link enviado para sua caixa de entrada. Verifique o Spam."}
-                        </p>
+                        <h3 className={`font-bold text-sm ${isEmailDone ? 'text-slate-700' : 'text-yellow-800'}`}>Confirmar E-mail</h3>
                     </div>
-                    {!user.emailVerified && (
-                        <div className="mt-4 pt-4 border-t border-yellow-200">
-                             <Button onClick={handleResendVerify} className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-900 border-none shadow-none text-sm">Reenviar Link</Button>
-                        </div>
-                    )}
+                    {!isEmailDone ? (
+                        <button onClick={handleResendVerify} className="mt-2 text-xs font-bold bg-white border border-yellow-200 text-yellow-800 px-3 py-2 rounded-lg hover:bg-yellow-100 text-center">Reenviar Link</button>
+                    ) : <p className="text-xs text-green-600 font-bold mt-2">Concluído!</p>}
                 </div>
 
-                {/* 2. ENVIO DE DOCUMENTOS */}
-                <div className={`p-6 rounded-2xl border flex flex-col justify-between ${
-                    !user.emailVerified ? 'bg-slate-50 border-slate-200 opacity-60' : 
-                    docStatus === 'pending' ? 'bg-yellow-50 border-yellow-200' : 
-                    docStatus === 'rejected' ? 'bg-red-50 border-red-200' : 
-                    docStatus === 'verified' ? 'bg-green-50 border-green-200' :
-                    'bg-orange-50 border-orange-200'
+                {/* 2. EMPRESA */}
+                <div className={`p-4 rounded-2xl border flex flex-col justify-between transition-all ${
+                    !isEmailDone ? 'bg-slate-50 border-slate-100 opacity-40' : // Travado
+                    isDocsDone ? 'bg-white border-green-200 opacity-70' : // Feito
+                    docStatus === 'pending' ? 'bg-yellow-50 border-yellow-200' : // Em análise
+                    'bg-orange-50 border-orange-200 shadow-md ring-2 ring-orange-100' // Fazer agora
                 }`}>
                     <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-bold uppercase tracking-widest opacity-60">Etapa 2</span>
-                            {!user.emailVerified && <Lock size={14} className="text-slate-400"/>}
-                            {docStatus === 'verified' && <CheckCircle size={16} className="text-green-600"/>}
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Passo 2</span>
+                            {!isEmailDone && <Lock size={14} className="text-slate-300"/>}
+                            {isDocsDone && <CheckCircle size={16} className="text-green-500"/>}
                         </div>
-                        <h3 className={`font-bold text-lg ${docStatus === 'rejected' ? 'text-red-800' : docStatus === 'verified' ? 'text-green-800' : 'text-slate-800'}`}>
-                            {docStatus === 'verified' ? 'Empresa Verificada' : docStatus === 'pending' ? 'Em Análise (24h)' : docStatus === 'rejected' ? 'Documento Recusado' : 'Validar Empresa'}
+                        <h3 className={`font-bold text-sm ${isDocsDone ? 'text-slate-700' : 'text-slate-800'}`}>
+                            {docStatus === 'pending' ? 'Análise (24h)' : 'Validar Empresa'}
                         </h3>
-                        <p className="text-sm mt-2 text-slate-600">
-                            {!user.emailVerified ? "Complete a etapa anterior para desbloquear." : 
-                             docStatus === 'verified' ? "Sua conta empresarial está ativa e segura." :
-                             docStatus === 'pending' ? "Estamos analisando seus documentos. Você será notificado por e-mail." :
-                             "Envie seu Contrato Social ou CCMEI para liberar vendas e gestão."}
-                        </p>
+                        {docStatus === 'pending' && <p className="text-xs text-slate-500 mt-1">Estamos analisando seus docs.</p>}
+                        {docStatus === 'none' && !isDocsDone && isEmailDone && <p className="text-xs text-orange-700 mt-1">Envie Contrato Social ou CCMEI.</p>}
                     </div>
-                    {user.emailVerified && docStatus !== 'verified' && docStatus !== 'pending' && (
-                        <div className="mt-4 pt-4 border-t border-slate-200">
-                             <Button onClick={() => navigate('/partner/verificacao')} className={`w-full text-sm ${docStatus === 'rejected' ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'} border-none shadow-none`}>
-                                 {docStatus === 'rejected' ? 'Enviar Novamente' : 'Enviar Documentos'}
-                             </Button>
+                    {isEmailDone && !isDocsDone && docStatus !== 'pending' && (
+                        <button onClick={() => navigate('/partner/verificacao')} className="mt-2 text-xs font-bold bg-white border border-orange-200 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-100 text-center">Enviar Documentos</button>
+                    )}
+                    {isDocsDone && <p className="text-xs text-green-600 font-bold mt-2">Empresa Aprovada!</p>}
+                </div>
+
+                {/* 3. MERCADO PAGO (Só libera se doc aprovado) */}
+                <div className={`p-4 rounded-2xl border flex flex-col justify-between transition-all ${
+                    !isDocsDone ? 'bg-slate-50 border-slate-100 opacity-40' :
+                    isMpDone ? 'bg-white border-green-200 opacity-70' :
+                    'bg-blue-50 border-blue-200 shadow-md ring-2 ring-blue-100'
+                }`}>
+                    <div>
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Passo 3</span>
+                            {!isDocsDone && <Lock size={14} className="text-slate-300"/>}
+                            {isMpDone && <CheckCircle size={16} className="text-green-500"/>}
+                        </div>
+                        <h3 className="font-bold text-sm text-slate-800">Conectar Carteira</h3>
+                        {isDocsDone && !isMpDone && <p className="text-xs text-blue-700 mt-1">Conecte sua conta Mercado Pago e cadastre uma chave Pix.</p>}
+                    </div>
+                    {isDocsDone && !isMpDone && (
+                        <button onClick={handleConnect} className="mt-2 text-xs font-bold bg-[#009EE3] text-white px-3 py-2 rounded-lg hover:bg-[#0081b9] text-center shadow-sm">Conectar Mercado Pago</button>
+                    )}
+                    {isMpDone && <p className="text-xs text-green-600 font-bold mt-2">Conectado!</p>}
+                </div>
+
+                {/* 4. ANÚNCIO (Só libera se MP conectado) */}
+                <div className={`p-4 rounded-2xl border flex flex-col justify-between transition-all ${
+                    !isMpDone ? 'bg-slate-50 border-slate-100 opacity-40' :
+                    'bg-[#0097A8]/10 border-[#0097A8]/30 shadow-md ring-2 ring-[#0097A8]/20'
+                }`}>
+                    <div>
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Passo 4</span>
+                            {!isMpDone && <Lock size={14} className="text-slate-300"/>}
+                        </div>
+                        <h3 className="font-bold text-sm text-[#0097A8]">Configurar Day Use</h3>
+                        {isMpDone && <p className="text-xs text-slate-600 mt-1">Cadastre fotos, preços e regras.</p>}
+                    </div>
+                    {isMpDone && (
+                        <button onClick={() => navigate('/partner/new')} className="mt-2 text-xs font-bold bg-[#0097A8] text-white px-3 py-2 rounded-lg hover:bg-[#007f8f] text-center shadow-lg shadow-teal-100">Criar Anúncio</button>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* CELEBRAÇÃO (FINAL) */}
+        {allDone && (
+            <div className="bg-gradient-to-r from-teal-500 to-emerald-500 p-8 rounded-3xl text-white text-center shadow-xl mb-12 animate-fade-in relative overflow-hidden">
+                <div className="relative z-10">
+                    <span className="text-5xl block mb-4 animate-bounce">🚀</span>
+                    <h2 className="text-3xl font-extrabold mb-2">Parabéns! Você completou tudo!</h2>
+                    <p className="opacity-90 mb-8 text-lg max-w-lg mx-auto">Seu Day Use está pronto para vender. Agora é hora de divulgar.</p>
+                    
+                    {items.length > 0 && (
+                        <div className="bg-white/20 backdrop-blur-md p-6 rounded-2xl inline-flex flex-col items-center gap-4 border border-white/30">
+                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">Seu Link Exclusivo</span>
+                            <span className="text-lg font-mono font-bold select-all">mapadodayuse.com/{getStateSlug(items[0].state)}/{generateSlug(items[0].name)}</span>
+                            <button onClick={() => {navigator.clipboard.writeText(`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`); alert("Link copiado!");}} className="bg-white text-teal-600 px-6 py-3 rounded-xl font-bold hover:bg-teal-50 shadow-lg transform hover:scale-105 transition-all">
+                                Copiar e Compartilhar no WhatsApp
+                            </button>
                         </div>
                     )}
                 </div>
             </div>
         )}
 
-        {/* CONTEÚDO BLOQUEADO SE NÃO VERIFICADO */}
-        <div className={`transition-all duration-500 ${docStatus !== 'verified' ? 'opacity-30 pointer-events-none filter blur-sm select-none h-96 overflow-hidden relative' : ''}`}>
+        {/* CELEBRAÇÃO (SE TUDO ESTIVER PRONTO) */}
+        {allDone && (
+            <div className="bg-gradient-to-r from-teal-500 to-emerald-500 p-8 rounded-3xl text-white text-center shadow-xl mb-12 animate-fade-in relative overflow-hidden">
+                <div className="relative z-10">
+                    <span className="text-4xl block mb-2">🎉</span>
+                    <h2 className="text-2xl font-bold mb-2">Parabéns! Seu Day Use está no ar!</h2>
+                    <p className="opacity-90 mb-6 text-sm max-w-lg mx-auto">Você completou todas as etapas. Agora compartilhe seu link nas redes sociais e comece a receber reservas.</p>
+                    {items.length > 0 && (
+                        <div className="bg-white/20 backdrop-blur-md p-4 rounded-xl inline-flex items-center gap-4 border border-white/30">
+                            <span className="text-xs font-mono select-all">mapadodayuse.com/{getStateSlug(items[0].state)}/{generateSlug(items[0].name)}</span>
+                            <button onClick={() => {navigator.clipboard.writeText(`https://mapadodayuse.com/${getStateSlug(items[0].state)}/${generateSlug(items[0].name)}`); alert("Link copiado!");}} className="bg-white text-teal-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-teal-50">Copiar Link</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* CONTEÚDO DO PAINEL (BLOQUEADO SE NÃO VERIFICADO) */}
+        <div className={`transition-all duration-500 ${!isDocsDone ? 'opacity-30 pointer-events-none filter blur-sm select-none h-64 overflow-hidden relative' : ''}`}>
              
              {/* FINANCEIRO */}
              <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12">
                  <div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div>
                  <div className="grid md:grid-cols-3 gap-6">
-                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between"><div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas (GMV):</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Comissão Site (20%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est. 4.99%):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div><div className="pt-3 border-t border-slate-200"><div className="flex items-center gap-1 mb-1"><p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p><div className="group relative"><Info size={12} className="text-green-600 cursor-help"/><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">Valor aproximado. Consulte o extrato oficial no app do Mercado Pago.</div></div></div><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div></div>
+                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between"><div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas (GMV):</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Comissão Site (15%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est. 4.99%):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div><div className="pt-3 border-t border-slate-200"><div className="flex items-center gap-1 mb-1"><p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p><div className="group relative"><Info size={12} className="text-green-600 cursor-help"/><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">Valor aproximado. Consulte o extrato oficial no app do Mercado Pago.</div></div></div><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div></div>
                     <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p><div className="space-y-4"><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div></div><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div></div></div></div>
                     <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col h-full"><div className="flex justify-between items-start mb-4"><div><p className="text-xs text-yellow-800 font-bold uppercase">Performance de Cupons</p><p className="text-2xl font-bold text-slate-900">{formatBRL(totalCouponRevenue)}</p><p className="text-[10px] text-slate-500">Faturamento bruto via cupons</p></div><Tag className="text-yellow-600" size={32}/></div><div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar bg-white rounded-xl p-2 border border-yellow-100">{Object.keys(couponBreakdown).length === 0 ? (<p className="text-xs text-slate-400 italic text-center py-4">Nenhum cupom usado neste mês.</p>) : (Object.entries(couponBreakdown).map(([code, stats]) => (<div key={code} className="flex justify-between items-center text-xs text-slate-600 mb-2 border-b border-slate-100 pb-2 last:border-0 last:mb-0"><span className="font-bold bg-yellow-100 px-1.5 py-0.5 rounded text-yellow-900 uppercase">{code}</span><div className="text-right"><span className="block font-bold">{stats.count} usos</span><span className="block text-[10px] text-green-600">{formatBRL(stats.revenue)}</span></div></div>)))}</div></div>
                  </div>
@@ -3166,7 +3438,8 @@ const PartnerDashboard = () => {
              
              <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>
 
-             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200`}><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form></div></div></div></div>
+             {/* Gestão de Equipe (Mantido) */}
+             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditStaffModal({ id: staff.id, currentEmail: staff.email }); setNewStaffEmailInput(''); }} className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg" title="Editar Email"><Edit size={16}/></button><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200 ${docStatus !== 'verified' ? 'opacity-50 pointer-events-none' : ''}`}><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form></div></div></div></div>
         </div>
         
         <div className="bg-slate-900 rounded-3xl p-8 text-center text-white mt-12 mb-8 shadow-2xl">
@@ -3588,7 +3861,25 @@ const PartnerNew = () => {
 };
 
 // --- PAGINAS AUXILIARES ---
-const PartnerRegisterPage = () => { const navigate = useNavigate(); return <LoginModal isOpen={true} onClose={()=>navigate('/')} initialRole="partner" hideRoleSelection={true} closeOnSuccess={false} onSuccess={(u)=>navigate(u ? '/partner/new' : '/')} initialMode="register" customTitle="Criar conta" customSubtitle=" " />; };
+const PartnerRegisterPage = () => {
+    const navigate = useNavigate();
+    useSEO("Cadastro de Parceiro", "Junte-se ao Mapa do Day Use.");
+    
+    // Se cadastrar por aqui, também vai para o dashboard verificar
+    return (
+        <LoginModal 
+            isOpen={true} 
+            onClose={() => navigate('/')} 
+            onSuccess={() => navigate('/partner')} 
+            initialRole="partner" 
+            hideRoleSelection={true} 
+            initialMode="register"
+            customTitle="Boas-vindas"
+            customSubtitle="Cadastre-se para gerenciar seu Day Use."
+            closeOnSuccess={true}
+        />
+    );
+};
 
 // ... (cookie consent)
 
@@ -3918,7 +4209,6 @@ const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setG
   const navigate = useNavigate();
   const mode = searchParams.get('mode'); 
   const actionCode = searchParams.get('oobCode');
-  
   const effectRan = useRef(false);
 
   useEffect(() => {
@@ -3927,25 +4217,37 @@ const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setG
 
     const handleAction = async () => {
       try {
+        // CONFIRMAÇÃO DE E-MAIL
         if (mode === 'verifyEmail') {
           await applyActionCode(auth, actionCode);
-          if (auth.currentUser) await auth.currentUser.reload();
-          onVerificationSuccess(); 
-          navigate('/'); 
+          
+          if (auth.currentUser) {
+              await auth.currentUser.reload(); // Atualiza o status emailVerified localmente
+              onVerificationSuccess(); // Atualiza a UI (barra verde)
+              
+              // --- LÓGICA DE REDIRECIONAMENTO INTELIGENTE ---
+              // Busca o perfil no banco para saber se é Parceiro, Staff ou Usuário
+              const docSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
+              const role = docSnap.exists() ? docSnap.data().role : 'user';
+
+              if (role === 'partner') {
+                  navigate('/partner'); // Redireciona o dono direto para o dashboard
+              } else if (role === 'staff') {
+                  navigate('/portaria'); // Redireciona staff para a portaria
+              } else {
+                  navigate('/minhas-viagens'); // Usuário comum vai para seus ingressos
+              }
+          }
         } 
+        // RESET DE SENHA
         else if (mode === 'resetPassword') {
             const email = await verifyPasswordResetCode(auth, actionCode);
             onResetPasswordRequest(actionCode, email);
         }
       } catch (error) {
         console.error("Erro Auth:", error);
-        // Usa o novo modal se a função estiver disponível
         if (setGlobalFeedback) {
-            setGlobalFeedback({
-                type: 'error',
-                title: 'Link Inválido',
-                msg: 'Este link de verificação já foi utilizado ou expirou. Por favor, solicite um novo.'
-            });
+            setGlobalFeedback({ type: 'error', title: 'Link Inválido', msg: 'Este link já foi utilizado ou expirou.' });
         }
         navigate('/');
       }
@@ -3956,7 +4258,9 @@ const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setG
   return null;
 };
 
-// ... (Layout e restante do arquivo)
+// -----------------------------------------------------------------------------
+// 2. LAYOUT (ATUALIZADO COM BARRA DE STATUS)
+// -----------------------------------------------------------------------------
 const Layout = ({ children }) => {
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
@@ -3967,34 +4271,28 @@ const Layout = ({ children }) => {
   const [resetCode, setResetCode] = useState(null);
   const [resetEmail, setResetEmail] = useState('');
   
-  // Estado global para o novo FeedbackModal
+  // Estado global para Feedback
   const [globalFeedback, setGlobalFeedback] = useState(null);
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
 
-  // CORREÇÃO 1: Timer da Barra Verde (Separado para garantir execução)
+  // Auto-hide da barra verde
   useEffect(() => {
     let timer;
     if (verificationStatus === 'success') {
-      timer = setTimeout(() => {
-        setVerificationStatus('none');
-      }, 5000); // Some após 5 segundos
+      timer = setTimeout(() => setVerificationStatus('none'), 5000);
     }
     return () => clearTimeout(timer);
   }, [verificationStatus]);
 
-  // Listener em Tempo Real (Auth + Firestore)
+  // Listener em Tempo Real
   useEffect(() => {
     let unsubscribeDoc = () => {};
-
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
        if(u) {
-          // Conecta ao documento do usuário
           unsubscribeDoc = onSnapshot(doc(db, "users", u.uid), (docSnap) => {
              if (docSnap.exists()) {
                  const userData = docSnap.data();
@@ -4002,17 +4300,15 @@ const Layout = ({ children }) => {
                      ...u, 
                      role: userData.role || 'user',
                      photoURL: userData.photoURL || u.photoURL,
-                     emailVerified: u.emailVerified // Garante que pega do Auth
+                     emailVerified: u.emailVerified // Garante status atualizado
                  };
                  setUser(currentUser);
 
-                 // Lógica da Barra: Só define PENDENTE se não estiver VERIFICADO e não estiver em SUCESSO
-                 // Isso impede que o listener sobrescreva a barra verde
-                 if (!u.emailVerified) {
-                     setVerificationStatus(prev => prev === 'success' ? 'success' : 'pending');
-                 } else {
-                     // Se já verificou, mas a barra estava pendente, mostra sucesso
+                 if (u.emailVerified) {
+                     // Se estava pendente e virou verificado, mostra sucesso
                      setVerificationStatus(prev => prev === 'pending' ? 'success' : 'none');
+                 } else {
+                     setVerificationStatus('pending');
                  }
              } else {
                  setUser({ ...u, role: 'user' });
@@ -4024,53 +4320,38 @@ const Layout = ({ children }) => {
           if(unsubscribeDoc) unsubscribeDoc();
        }
     });
-
-    return () => {
-       unsubscribeAuth();
-       if(unsubscribeDoc) unsubscribeDoc();
-    };
+    return () => { unsubscribeAuth(); if(unsubscribeDoc) unsubscribeDoc(); };
   }, []);
 
-  // CORREÇÃO 2: Handler de Reenvio usando auth.currentUser
   const handleResend = async (e) => {
       e.preventDefault();
-      // Usa a instância direta do Auth para evitar erros de objeto Proxy/State
       const currentUser = auth.currentUser;
-      
       if(!currentUser) return;
-      
       try {
-          await sendEmailVerification(currentUser, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
-          setGlobalFeedback({ type: 'success', title: 'E-mail Enviado', msg: `Link enviado para ${currentUser.email}. Verifique caixa de entrada e spam.` });
-      } catch(err) { 
-          console.error("Erro ao reenviar:", err);
+          await sendEmailVerification(currentUser, { url: 'https://mapadodayuse.com/partner', handleCodeInApp: true });
+          setGlobalFeedback({ type: 'success', title: 'E-mail Enviado', msg: `Link enviado para ${user.email}. Verifique caixa de entrada e spam.` });
+      } catch(e) { 
           setGlobalFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível enviar o e-mail. Tente novamente em alguns minutos.' });
       }
   };
 
-  const handleLogout = async () => {
-     await signOut(auth);
-     navigate('/');
-  };
+  const handleLogout = async () => { await signOut(auth); navigate('/'); };
 
   const handleLoginSuccess = (userWithRole) => {
      setShowLogin(false);
      if (userWithRole.role === 'partner') navigate('/partner');
      else if (userWithRole.role === 'staff') navigate('/portaria');
+     else if (userWithRole.role === 'admin') navigate('/admin');
      else navigate('/minhas-viagens');
   };
 
-  // CORREÇÃO 3: Força a atualização visual imediata após confirmar
   const handleVerificationSuccess = async () => {
       if (auth.currentUser) {
           await auth.currentUser.reload();
-          // Atualiza o estado local para remover a barra amarela imediatamente
-          setUser(prev => ({ ...prev, emailVerified: true }));
           setVerificationStatus('success');
       }
   };
 
-  // Efeito do Favicon
   useEffect(() => {
     const link = document.querySelector("link[rel~='icon']");
     if (link) link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%230097A8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polygon points=%223 6 9 3 15 6 21 3 21 21 15 18 9 21 3 18 3 6%22/><line x1=%229%22 x2=%229%22 y1=%223%22 y2=%2221%22/><line x1=%2215%22 x2=%2215%22 y1=%226%22 y2=%2224%22/></svg>';
@@ -4094,26 +4375,26 @@ const Layout = ({ children }) => {
         setGlobalFeedback={setGlobalFeedback}
       />
 
-      <FeedbackModal 
-         isOpen={!!globalFeedback} 
-         onClose={() => setGlobalFeedback(null)}
-         type={globalFeedback?.type}
-         title={globalFeedback?.title}
-         msg={globalFeedback?.msg}
-      />
+      {globalFeedback && createPortal(
+          <FeedbackModal 
+             isOpen={!!globalFeedback} 
+             onClose={() => setGlobalFeedback(null)} 
+             type={globalFeedback.type} 
+             title={globalFeedback.title} 
+             msg={globalFeedback.msg} 
+          />,
+          document.body
+      )}
 
-      {/* BARRA DE NOTIFICAÇÃO (E-mail não verificado) */}
-      {/* Só mostra se user existe, não está verificado E status não é sucesso (para não sobrepor a verde) */}
+      {/* BARRA DE NOTIFICAÇÃO */}
       {verificationStatus === 'pending' && user && !user.emailVerified && (
           <div className="bg-yellow-50 text-yellow-800 text-xs font-bold text-center py-2 px-4 flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 relative z-50 border-b border-yellow-100 transition-all">
-              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado. Para sua segurança, confirme-o.</span>
+              <span className="flex items-center gap-1"><AlertCircle size={14}/> Seu e-mail ainda não foi confirmado.</span>
               <button onClick={handleResend} className="underline hover:text-yellow-900 cursor-pointer">Reenviar link</button>
           </div>
       )}
-      
-      {/* BARRA DE SUCESSO (Verde - Sobrepõe a amarela) */}
       {verificationStatus === 'success' && (
-          <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2 transition-all shadow-md">
+          <div className="bg-green-500 text-white text-xs font-bold text-center py-2 px-4 animate-fade-in relative z-50 flex justify-center items-center gap-2 transition-all">
               <CheckCircle size={14}/> E-mail confirmado com sucesso!
           </div>
       )}
@@ -4143,9 +4424,9 @@ const Layout = ({ children }) => {
                  <div className="flex gap-2 md:gap-4 items-center">
                     {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
                     {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
-                    {user.role !== 'partner' && user.role !== 'staff' && (
-                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>
-                    )}
+                    {user.role === 'admin' && <Button variant="ghost" onClick={()=>navigate('/admin')} className="px-2 md:px-4 text-xs md:text-sm">Admin</Button>}
+                    {user.role === 'user' && (<Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>)}
+                    
                     <div 
                         className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform cursor-pointer overflow-hidden" 
                         title={user.email}
@@ -4165,60 +4446,41 @@ const Layout = ({ children }) => {
       </header>
       <main className="flex-1 w-full max-w-full overflow-x-hidden">{children}</main>
       
-      {/* FOOTER ROBUSTO */}
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
-            <div className="grid md:grid-cols-4 gap-8 mb-12">
-               
-               {/* Coluna 1: Marca e Contato */}
-               <div className="col-span-1">
-                  <div className="flex items-center gap-2 font-bold text-xl text-slate-800 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {!logoError ? (
-                        <img 
-                           src="/logo.png?v=2" 
-                           alt="Mapa do Day Use" 
-                           className="h-8 w-auto object-contain" 
-                           onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
-                        />
-                     ) : (
-                        <MapIcon className="h-6 w-6 text-[#0097A8]" />
-                     )}
+            <div className="grid md:grid-cols-4 gap-8 mb-8">
+               <div className="col-span-1 md:col-span-2">
+                  <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
+                     {!logoError ? (<img src="/logo.png?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">
-                     A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
-                  </p>
-                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
-                     <Mail size={16} /> contato@mapadodayuse.com
-                  </a>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.</p>
+                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm"><Mail size={16} /> contato@mapadodayuse.com</a>
                </div>
                
-               {/* Coluna 2: Institucional */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
-                     {/* "Início" removido conforme solicitado */}
+                     <li><button onClick={() => navigate('/')} className="hover:text-[#0097A8] transition-colors">Início</button></li>
                      <li><button onClick={() => navigate('/sobre-nos')} className="hover:text-[#0097A8] transition-colors">Sobre Nós</button></li>
                      <li><button onClick={() => navigate('/contato')} className="hover:text-[#0097A8] transition-colors">Fale Conosco</button></li>
                      <li><button onClick={() => navigate('/mapa-do-site')} className="hover:text-[#0097A8] transition-colors">Mapa do Site</button></li>
                   </ul>
                </div>
 
-               {/* Coluna 3: Explore */}
                <div>
-                  <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
-                  <ul className="space-y-3 text-sm text-slate-500 mb-6">
-                     <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
-                     <li><button onClick={() => navigate('/quiz')} className="hover:text-[#0097A8] transition-colors">Quiz Ideal 🤖</button></li>
-                     <li><button onClick={() => navigate('/comparativo')} className="hover:text-[#0097A8] transition-colors">Comparador</button></li>
-                  </ul>
+                   <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
+                   <ul className="space-y-3 text-sm text-slate-500 mb-6">
+                      <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                      <li><button onClick={() => navigate('/quiz')} className="hover:text-[#0097A8] transition-colors">Quiz Ideal 🤖</button></li>
+                      <li><button onClick={() => navigate('/comparativo')} className="hover:text-[#0097A8] transition-colors">Comparador</button></li>
+                   </ul>
+                   <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
+                       Seja um Parceiro
+                   </button>
                </div>
 
-               {/* Coluna 4: Parceiro e Redes Sociais */}
+               {/* Coluna 4: Redes Sociais */}
                <div>
-                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105 mb-6 w-full md:w-auto">
-                      Seja um Parceiro
-                  </button>
-
                   <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
                   <div className="flex gap-3">
                      <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
@@ -4234,7 +4496,6 @@ const Layout = ({ children }) => {
                </div>
             </div>
             
-            {/* Rodapé Inferior */}
             <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
                <div className="flex flex-col md:flex-row gap-2 md:gap-6 items-center text-center md:text-left">
                    <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
@@ -4252,53 +4513,6 @@ const Layout = ({ children }) => {
       </footer>
       <CookieConsent />
     </div>
-  );
-};
-
-const DayUseCard = ({ item, onClick }) => {
-  const hasDiscount = item.coupons && item.coupons.length > 0;
-  const maxDiscount = hasDiscount ? Math.max(...item.coupons.map(c => c.percentage)) : 0;
-
-  // Função para substituir imagem quebrada por um placeholder bonito
-  const handleImageError = (e) => {
-      e.target.src = "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80"; 
-  };
-
-  return (
-     <div 
-        onClick={onClick} 
-        className="bg-white rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer overflow-hidden border border-slate-100 group flex flex-col h-full relative"
-     >
-        <div className="h-64 relative overflow-hidden">
-            <img 
-                src={item.image} 
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                onError={handleImageError} // <--- Proteção contra erro de imagem
-                alt={item.name}
-            />
-            
-            {hasDiscount && (
-              <div className="absolute top-4 right-4 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
-                 <Tag size={12} className="fill-current"/> {maxDiscount}% OFF
-              </div>
-            )}
-        </div>
-        <div className="p-6 flex flex-col flex-1">
-           <div className="mb-4">
-               <h3 className="font-bold text-xl text-slate-900 leading-tight mb-1">{item.name}</h3>
-               <p className="text-sm text-slate-500 flex items-center gap-1"><MapPin size={14} className="text-[#0097A8]"/> {item.city || 'Localização'}, {item.state}</p>
-           </div>
-           <div className="mt-auto pt-4 border-t border-slate-50 flex justify-between items-center">
-               <div>
-                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">A partir de</p>
-                   <p className="text-2xl font-bold text-[#0097A8]">{formatBRL(item.priceAdult)}</p>
-               </div>
-               <span className="text-sm font-semibold text-[#0097A8] bg-cyan-50 px-4 py-2 rounded-xl group-hover:bg-[#0097A8] group-hover:text-white transition-all">
-                   Reservar
-               </span>
-           </div>
-        </div>
-     </div>
   );
 };
 
@@ -5154,6 +5368,9 @@ const ContactPage = () => {
   );
 };
 
+// -----------------------------------------------------------------------------
+// LANDING PAGE DE PARCEIROS (VENDA B2B)
+// -----------------------------------------------------------------------------
 const PartnerLandingPage = () => {
   const navigate = useNavigate();
   useSEO("Seja um Parceiro | Mapa do Day Use", "Aumente o faturamento do seu hotel ou pousada vendendo Day Use. Plataforma completa de gestão, marketing e pagamentos seguros.");
@@ -5164,14 +5381,15 @@ const PartnerLandingPage = () => {
   const scrollToTop = () => window.scrollTo(0,0);
 
   const handleRegisterSuccess = (user) => {
-      // Redireciona para o fluxo de criação de anúncio após cadastro
-      navigate('/partner/new');
+      // CORREÇÃO: Redireciona para o Dashboard (/partner)
+      // Assim ele vê os avisos de "Verificar E-mail" e "Validar Empresa" antes de tentar criar anúncios
+      navigate('/partner');
   };
 
   return (
     <div className="animate-fade-in bg-white">
         
-        {/* MODAL DE CADASTRO INTEGRADO (Usando Portal para cobrir a tela) */}
+        {/* MODAL DE CADASTRO INTEGRADO */}
         {showRegister && createPortal(
             <LoginModal 
                 isOpen={showRegister} 
@@ -5179,7 +5397,7 @@ const PartnerLandingPage = () => {
                 initialRole="partner" 
                 hideRoleSelection={true} 
                 initialMode="register"
-                customTitle="Comece Agora"
+                customTitle="Boas-vindas"
                 customSubtitle="Crie sua conta de parceiro gratuitamente."
                 onSuccess={handleRegisterSuccess}
                 closeOnSuccess={true}
@@ -5203,7 +5421,6 @@ const PartnerLandingPage = () => {
                     A plataforma definitiva para hotéis, pousadas e resorts venderem Day Use com segurança, previsibilidade e zero dor de cabeça operacional.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                    {/* Botão corrigido com !text-[#0097A8] para garantir legibilidade e onClick abrindo o modal */}
                     <Button onClick={() => setShowRegister(true)} className="!bg-white !text-[#0097A8] hover:bg-cyan-50 px-8 py-4 text-lg shadow-xl hover:scale-105 transition-transform border-none">
                         Quero ser Parceiro
                     </Button>
@@ -6096,7 +6313,10 @@ const PartnerVerification = () => {
   const [loading, setLoading] = useState(false);
   const [docFile, setDocFile] = useState(null);
   const [user, setUser] = useState(auth.currentUser);
-  const [status, setStatus] = useState('loading'); // loading, pending, verified, rejected, none
+  const [status, setStatus] = useState('loading'); 
+  
+  // Novo: Modal de Sucesso Pós-Envio
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   useEffect(() => {
      if(user) {
@@ -6133,19 +6353,60 @@ const PartnerVerification = () => {
                   submittedAt: new Date()
               });
               
-              // Notifica Admin via API
-              await fetch('/api/send-email', {
+              // 1. Notifica Admin (Sistema)
+              fetch('/api/send-email', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ 
                       to: 'contato@mapadodayuse.com', 
-                      subject: `📄 Verificação Pendente: ${user.email}`, 
-                      html: `<p>Novo documento enviado por <strong>${user.email}</strong>.</p><p>Acesse o painel administrativo para validar.</p>` 
+                      subject: `📄 Admin: Docs de ${user.email}`, 
+                      html: `<p>Novo documento enviado.</p>` 
+                  })
+              }).catch(console.error);
+
+              // 2. Notifica o Parceiro (TEMPLATE ATUALIZADO E BONITO)
+              const partnerEmailHtml = `
+                <div style="font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                        <div style="background-color: #0097A8; padding: 30px; text-align: center;">
+                            <h1 style="color: white; margin: 0; font-size: 24px;">Mapa do Day Use</h1>
+                        </div>
+                        <div style="padding: 40px 30px; text-align: center;">
+                            <h2 style="color: #2c3e50; margin-top: 0;">Recebemos seus documentos! 📄</h2>
+                            <p style="color: #555; font-size: 16px; line-height: 1.6;">
+                                Olá! A confirmação do envio da sua documentação foi realizada com sucesso.
+                            </p>
+                            <div style="background-color: #e0f7fa; border-left: 4px solid #0097A8; padding: 20px; margin: 30px 0; text-align: left; border-radius: 4px;">
+                                <p style="margin: 0; color: #006064; font-size: 14px;">
+                                    <strong>Próximos Passos:</strong><br/>
+                                    1. Nossa equipe fará a análise de segurança (Prazo: 24h úteis).<br/>
+                                    2. Poderemos entrar em contato por telefone para validações adicionais.<br/>
+                                    3. Você receberá um e-mail assim que aprovado.
+                                </p>
+                            </div>
+                            <p style="color: #555; font-size: 15px;">
+                                <strong>Dica Importante:</strong> Enquanto aguarda, se você ainda não tem uma conta no <strong>Mercado Pago</strong>, crie uma agora. Você precisará conectá-la na próxima etapa para receber seus pagamentos.
+                            </p>
+                        </div>
+                        <div style="background-color: #f9f9f9; padding: 20px; text-align: center; border-top: 1px solid #eee;">
+                            <p style="color: #999; font-size: 12px; margin: 0;">© 2026 Mapa do Day Use. Todos os direitos reservados.</p>
+                        </div>
+                    </div>
+                </div>
+              `;
+
+              await fetch('/api/send-email', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                      to: user.email, 
+                      subject: "Documentos Recebidos - Análise em Andamento", 
+                      html: partnerEmailHtml 
                   })
               });
 
-              setStatus('pending');
               setLoading(false);
+              setShowSuccessModal(true);
           };
       } catch (error) {
           console.error(error);
@@ -6154,55 +6415,63 @@ const PartnerVerification = () => {
       }
   };
 
+  // Se já estiver em análise e entrar na página
   if (status === 'pending') return (
       <div className="max-w-2xl mx-auto py-20 px-4 text-center animate-fade-in">
           <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6"><div className="animate-spin border-4 border-yellow-500 border-t-transparent w-12 h-12 rounded-full"></div></div>
           <h1 className="text-3xl font-bold text-slate-900 mb-4">Análise em Andamento</h1>
-          <p className="text-slate-600 mb-8 max-w-lg mx-auto">Recebemos seus documentos! Nossa equipe jurídica está analisando seu cadastro. O prazo médio é de 24h úteis.</p>
+          <p className="text-slate-600 mb-8 max-w-lg mx-auto">Já recebemos tudo! Estamos correndo para liberar seu acesso. Fique de olho no seu e-mail.</p>
           <Button onClick={() => navigate('/partner')} variant="outline">Voltar ao Painel</Button>
-      </div>
-  );
-
-  if (status === 'verified') return (
-      <div className="max-w-2xl mx-auto py-20 px-4 text-center animate-fade-in">
-          <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600"><CheckCircle size={48}/></div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-4">Conta Verificada!</h1>
-          <p className="text-slate-600 mb-8">Tudo certo com seu cadastro. Você já pode criar anúncios.</p>
-          <Button onClick={() => navigate('/partner/new')}>Criar Meu Primeiro Day Use</Button>
       </div>
   );
 
   return (
     <div className="max-w-2xl mx-auto py-16 px-4 animate-fade-in">
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Verificação de Empresa</h1>
-        <p className="text-slate-500 mb-8">Para ativar sua conta e começar a vender, precisamos validar a existência jurídica do seu negócio.</p>
+        
+        {/* Modal de Sucesso Pós-Envio */}
+        {showSuccessModal && createPortal(
+            <ModalOverlay onClose={() => { setShowSuccessModal(false); navigate('/partner'); }}>
+                <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-sm w-full animate-fade-in">
+                    <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <CheckCircle size={40}/>
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">Tudo Certo!</h2>
+                    <p className="text-slate-600 text-sm mb-6 leading-relaxed">
+                        Seus documentos foram enviados para nossa equipe de segurança. Em até 24h retornaremos com a aprovação.
+                    </p>
+                    <Button onClick={() => navigate('/partner')} className="w-full justify-center shadow-lg shadow-teal-100">
+                        Voltar para o Painel
+                    </Button>
+                </div>
+            </ModalOverlay>,
+            document.body
+        )}
 
-        <div className="bg-blue-50 border border-blue-100 p-6 rounded-2xl mb-8 flex gap-4">
-            <ShieldCheck className="text-blue-600 shrink-0" size={32}/>
+        <div className="text-center mb-10">
+            <h1 className="text-4xl font-bold text-slate-900 mb-2">Vamos validar sua empresa</h1>
+            <p className="text-slate-500 text-lg">Esse é o passo mais importante para garantir a segurança dos seus recebimentos.</p>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-100 p-6 rounded-2xl mb-8 flex gap-4 items-start">
+            <ShieldCheck className="text-blue-600 shrink-0 mt-1" size={24}/>
             <div className="text-sm text-blue-800">
-                <p className="font-bold mb-2 text-lg">Segurança e Privacidade</p>
-                <p className="mb-2">Seus documentos são armazenados de forma criptografada e acessados exclusivamente por nossa equipe de compliance.</p>
-                <p className="text-blue-600/80 text-xs">Conforme Lei Geral de Proteção de Dados (LGPD).</p>
+                <p className="font-bold mb-1 text-base">Segurança de Dados (LGPD)</p>
+                <p>Seus documentos são criptografados e usados exclusivamente para validação cadastral, garantindo que apenas empresas reais operem na plataforma.</p>
             </div>
         </div>
 
-        <div className="bg-yellow-50 border border-yellow-200 p-6 rounded-2xl mb-8">
-            <h3 className="font-bold text-yellow-800 mb-2 flex items-center gap-2"><AlertCircle size={18}/> Documentação Aceita</h3>
-            <ul className="list-disc pl-5 space-y-2 text-sm text-yellow-900">
-                <li><strong>CCMEI</strong> (Certificado da Condição de Microempreendedor Individual)</li>
-                <li><strong>Contrato Social</strong> (Última alteração consolidada)</li>
+        <div className="bg-white border-l-4 border-yellow-400 p-6 rounded-r-xl shadow-sm mb-8">
+            <h3 className="font-bold text-yellow-800 mb-2 flex items-center gap-2">O que você precisa enviar:</h3>
+            <ul className="list-disc pl-5 space-y-1 text-sm text-yellow-900">
+                <li><strong>CCMEI</strong> (Para MEI) OU <strong>Contrato Social</strong> (Para LTDA/EIRELI)</li>
+                <li className="font-bold">O documento deve estar assinado e legível.</li>
             </ul>
-            <div className="mt-4 p-3 bg-white/50 rounded-lg border border-yellow-200 text-xs font-bold text-red-600">
-                ⚠️ IMPORTANTE: O Contrato Social deverá estar devidamente assinado e autenticado em cartório (ou assinatura digital Gov.br válida).
-            </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+        <form onSubmit={handleSubmit} className="bg-white p-10 rounded-[2rem] border border-slate-200 shadow-xl space-y-8">
             <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Upload do Documento (PDF ou Foto)</label>
-                
-                {/* CORREÇÃO: Input com z-index e tamanho total para garantir clique */}
-                <div className="border-2 border-dashed border-slate-300 rounded-xl p-12 text-center hover:bg-slate-50 transition-colors relative group">
+                <label className="block text-sm font-bold text-slate-700 mb-3">Anexar Documento (PDF ou Foto)</label>
+                <div className="border-2 border-dashed border-[#0097A8]/30 rounded-2xl p-12 text-center hover:bg-cyan-50/50 transition-colors cursor-pointer relative group">
                     <input 
                         type="file" 
                         accept="image/*,application/pdf" 
@@ -6210,19 +6479,26 @@ const PartnerVerification = () => {
                         onChange={handleFileChange} 
                         required={!docFile} 
                     />
-                    <div className="flex flex-col items-center group-hover:scale-105 transition-transform">
-                        <FileText size={40} className="text-slate-400 mb-3"/>
-                        <span className="text-base font-bold text-[#0097A8]">
-                            {docFile ? docFile.name : "Clique aqui para selecionar o arquivo"}
+                    <div className="flex flex-col items-center group-hover:scale-105 transition-transform duration-300">
+                        <div className="bg-cyan-100 text-[#0097A8] p-4 rounded-full mb-3">
+                             <FileText size={32}/>
+                        </div>
+                        <span className="text-lg font-bold text-slate-700">
+                            {docFile ? docFile.name : "Clique para selecionar o arquivo"}
                         </span>
-                        <span className="text-xs text-slate-400 mt-1">Formatos: PDF, JPG, PNG (Max 4MB)</span>
+                        <span className="text-sm text-slate-400 mt-1">Suporta PDF, JPG e PNG (Max 4MB)</span>
                     </div>
                 </div>
             </div>
 
-            <Button type="submit" className="w-full py-4 text-lg shadow-xl" disabled={loading}>
-                {loading ? 'Enviando Documentos...' : 'Enviar para Análise'}
-            </Button>
+            {/* BOTÃO DE ALTO CONTRASTE */}
+            <button 
+                type="submit" 
+                className="w-full py-4 text-lg font-bold text-white bg-[#0097A8] hover:bg-[#007F8F] rounded-xl shadow-lg shadow-teal-200/50 transition-all transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={loading}
+            >
+                {loading ? 'Enviando e Processando...' : 'Enviar para Análise 🚀'}
+            </button>
         </form>
     </div>
   );
@@ -6320,10 +6596,53 @@ const AdminDashboard = () => {
       if (confirm(confirmText)) {
           await updateDoc(doc(db, "users", uid), { docStatus: status });
           
-          const subject = status === 'verified' ? "Conta APROVADA! 🎉" : "Pendência na sua conta";
-          const html = status === 'verified' 
-              ? "<p>Parabéns! Documentação aprovada. Acesse seu painel.</p>" 
-              : "<p>Documento recusado. Envie uma foto legível do CCMEI/Contrato.</p>";
+          let subject = "";
+          let html = "";
+
+          // E-MAIL DE APROVAÇÃO (TEMPLATE ATUALIZADO)
+          if (status === 'verified') {
+              subject = "Parabéns! Sua empresa foi APROVADA! 🚀";
+              html = `
+                <div style="font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                        <div style="background-color: #0097A8; padding: 40px 30px; text-align: center;">
+                            <h1 style="color: white; margin: 0; font-size: 28px;">Bem-vindo(a) ao Time! 🎉</h1>
+                        </div>
+                        <div style="padding: 40px 30px; text-align: center;">
+                            <h2 style="color: #2c3e50; margin-top: 0;">Sua conta foi verificada com sucesso.</h2>
+                            <p style="color: #555; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+                                A análise jurídica foi concluída e sua empresa está apta a operar no <strong>Mapa do Day Use</strong>. Você desbloqueou o acesso completo ao painel.
+                            </p>
+                            
+                            <div style="background-color: #fff8e1; border: 1px solid #ffe0b2; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+                                <p style="color: #e65100; font-weight: bold; margin: 0 0 10px 0;">🚀 Próxima Etapa Obrigatória:</p>
+                                <p style="color: #555; margin: 0; font-size: 14px;">
+                                    Conecte sua conta do <strong>Mercado Pago</strong> para habilitar o recebimento financeiro automático.
+                                </p>
+                            </div>
+
+                            <a href="https://mapadodayuse.com/partner" style="display: inline-block; background-color: #0097A8; color: white; padding: 16px 32px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 10px rgba(0,151,168,0.3);">
+                                Acessar Painel do Parceiro
+                            </a>
+                            
+                            <p style="margin-top: 40px; font-size: 14px; color: #999;">
+                                Dúvidas? Nossa equipe de suporte está à disposição no WhatsApp.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+              `;
+          } else {
+              subject = "Atualização sobre sua conta - Ação Necessária";
+              html = `
+                <div style="font-family: sans-serif; padding: 30px;">
+                    <h2 style="color: #c0392b;">Documentação Precisa de Ajustes</h2>
+                    <p>Olá. Infelizmente, não conseguimos validar o documento enviado (motivo: ilegível, incompleto ou inválido).</p>
+                    <p>Por favor, acesse seu painel e envie uma nova foto ou PDF do <strong>Contrato Social</strong> ou <strong>CCMEI</strong>.</p>
+                    <a href="https://mapadodayuse.com/partner/verificacao">Enviar Novamente</a>
+                </div>
+              `;
+          }
           
           if (viewDoc?.email) {
               fetch('/api/send-email', {
@@ -6332,6 +6651,7 @@ const AdminDashboard = () => {
                   body: JSON.stringify({ to: viewDoc.email, subject, html })
               }).catch(console.error);
           }
+
           setViewDoc(null);
       }
   };
@@ -6658,7 +6978,7 @@ const EmbedPage = () => {
           {/* Cabeçalho opcional */}
           {title && (
               <h2 className="text-slate-800 font-bold text-sm mb-2 px-1 flex items-center gap-2 truncate">
-                  <img src="/logo.svg" className="h-4 w-auto" alt="Logo"/> {title}
+                  <img src="/logo.png" className="h-4 w-auto" alt="Logo"/> {title}
               </h2>
           )}
           
