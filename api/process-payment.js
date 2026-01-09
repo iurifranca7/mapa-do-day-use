@@ -1,40 +1,56 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import * as admin from 'firebase-admin';
 
-// --- INICIALIZAÇÃO DO FIREBASE (SIMPLIFICADA) ---
-if (!admin.apps.length) {
-  try {
-    // Tenta variáveis individuais (Mais comum de funcionar se configurado manualmente na Vercel)
+// Função auxiliar para inicializar o Firebase dentro do escopo da requisição (Mais seguro contra crashes)
+const initFirebase = () => {
+    // Se já estiver inicializado, reaproveita
+    if (admin.apps.length > 0) return admin.firestore();
+
+    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    const serviceAccountJSON = process.env.FIREBASE_SERVICE_ACCOUNT;
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-    if (projectId && clientEmail && privateKeyRaw) {
-        // Corrige a chave privada (substitui \\n por \n reais)
-        const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/"/g, '');
-        
-        admin.initializeApp({
-            credential: admin.credential.cert({
+    let credential;
+
+    try {
+        if (serviceAccountBase64) {
+            const buffer = Buffer.from(serviceAccountBase64, 'base64');
+            const serviceAccount = JSON.parse(buffer.toString('utf-8'));
+            credential = admin.credential.cert(serviceAccount);
+        } else if (serviceAccountJSON) {
+            const serviceAccount = JSON.parse(serviceAccountJSON);
+            credential = admin.credential.cert(serviceAccount);
+        } else if (projectId && clientEmail && privateKeyRaw) {
+            // Tratamento robusto de chave privada
+            const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
+            credential = admin.credential.cert({
                 projectId,
                 clientEmail,
                 privateKey,
-            }),
-        });
-        console.log("✅ Firebase Admin conectado.");
-    } else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-        // Fallback para Base64 se existir
-        const buffer = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64');
-        const serviceAccount = JSON.parse(buffer.toString('utf-8'));
-        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    } else {
-        console.error("❌ Credenciais do Firebase não encontradas nas variáveis de ambiente.");
+            });
+        }
+    } catch (parseError) {
+        throw new Error(`Falha ao ler credenciais do Firebase: ${parseError.message}`);
     }
-  } catch (e) {
-    console.error("❌ Erro ao iniciar Firebase:", e.message);
-  }
-}
 
-const db = admin.apps.length ? admin.firestore() : null;
+    if (!credential) {
+        throw new Error("Nenhuma credencial do Firebase encontrada nas Variáveis de Ambiente.");
+    }
+
+    try {
+        admin.initializeApp({ credential });
+        console.log("✅ Firebase Admin inicializado.");
+    } catch (e) {
+        // Ignora erro de "app já existe" em caso de condições de corrida
+        if (!e.message.includes('already exists')) {
+             throw e;
+        }
+    }
+
+    return admin.firestore();
+};
 
 export default async function handler(req, res) {
   // CORS
@@ -46,36 +62,33 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Se o banco não conectou, não dá para fazer split seguro
-  if (!db) {
-      return res.status(500).json({ 
-          error: 'Erro de Configuração', 
-          message: 'O servidor não conseguiu conectar ao banco de dados para buscar os dados do parceiro.' 
-      });
-  }
-
   try {
+    // 1. Inicializa o Banco (Dentro do Try para capturar erro de config)
+    const db = initFirebase();
+    
     const { token, payment_method_id, installments, payer, bookingDetails } = req.body;
 
-    // 1. Busca Day Use
+    // Validação básica
+    if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
+
+    // 2. Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
     const dayUseSnap = await dayUseRef.get();
     
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
-    // 2. Busca Token do Parceiro (ESSENCIAL PARA O SPLIT)
+    // 3. Busca Token do Parceiro
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
     if (!ownerSnap.exists || !ownerSnap.data().mp_access_token) {
-        throw new Error("O estabelecimento não conectou a conta do Mercado Pago para receber.");
+        throw new Error("O estabelecimento não configurou o recebimento de pagamentos (Token MP ausente).");
     }
     
-    // O Token que usaremos para autenticar a venda é o do PARCEIRO
     const partnerAccessToken = ownerSnap.data().mp_access_token;
 
-    // 3. Recalcula Valor (Segurança)
+    // 4. Cálculo de Preço Seguro
     const dateParts = bookingDetails.date.split('-'); 
     const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12, 0, 0); 
     const dayOfWeek = dateObj.getDay();
@@ -109,20 +122,20 @@ export default async function handler(req, res) {
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
         if (coupon) calculatedTotal -= (calculatedTotal * coupon.percentage / 100);
     }
+    
+    if (calculatedTotal <= 0) throw new Error("Valor total inválido.");
 
-    // 4. Configura o Pagamento com SPLIT
-    // Inicializa o Mercado Pago como se fôssemos o Parceiro
+    // 5. Processar Pagamento (Com Split)
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
 
-    // Define sua comissão (15%)
     const commission = Math.round(calculatedTotal * 0.15 * 100) / 100;
 
     const paymentBody = {
       transaction_amount: Number(calculatedTotal.toFixed(2)),
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: commission, // AQUI ACONTECE A MÁGICA: O MP tira isso do parceiro e manda pra você
+      application_fee: commission,
       payer: {
         email: payer.email,
         first_name: payer.first_name,
@@ -136,7 +149,7 @@ export default async function handler(req, res) {
       paymentBody.installments = Number(installments);
     }
 
-    console.log(`💳 Processando Split. Total: ${calculatedTotal}, Comissão: ${commission}`);
+    console.log(`💳 Processando MP. Total: ${calculatedTotal}, Taxa: ${commission}`);
     
     const result = await payment.create({ body: paymentBody });
 
@@ -149,16 +162,12 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("Erro Backend:", error);
+    console.error("Erro Backend (Payment):", error);
     
-    let msg = error.message;
-    if (JSON.stringify(error).includes("user_allowed_only_in_test")) {
-        msg = "ERRO SANDBOX: Use um e-mail de comprador diferente da conta do vendedor.";
-    }
-
+    // Retorna erro JSON sempre (evita HTML 500)
     return res.status(500).json({ 
         error: 'Erro no processamento', 
-        message: msg,
+        message: error.message || "Erro desconhecido",
         details: error.cause 
     });
   }
