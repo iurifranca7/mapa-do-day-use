@@ -1,9 +1,14 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin'; // CORREÇÃO: Importação padrão para garantir acesso ao .apps
 
-// Função auxiliar para inicializar o Firebase dentro do escopo da requisição (Mais seguro contra crashes)
+// Função auxiliar para inicializar o Firebase de forma segura
 const initFirebase = () => {
-    // Se já estiver inicializado, reaproveita
+    // Verificação de segurança para evitar crash se a lib não carregar
+    if (!admin || !admin.apps) {
+        throw new Error("Biblioteca Firebase Admin não foi carregada corretamente.");
+    }
+
+    // Se já estiver inicializado, reaproveita a instância
     if (admin.apps.length > 0) return admin.firestore();
 
     const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
@@ -43,7 +48,7 @@ const initFirebase = () => {
         admin.initializeApp({ credential });
         console.log("✅ Firebase Admin inicializado.");
     } catch (e) {
-        // Ignora erro de "app já existe" em caso de condições de corrida
+        // Ignora erro de "app já existe" em caso de condições de corrida (concorrência)
         if (!e.message.includes('already exists')) {
              throw e;
         }
