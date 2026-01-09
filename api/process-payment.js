@@ -48,7 +48,6 @@ export default async function handler(req, res) {
       transaction_amount: Number(Number(finalAmount).toFixed(2)),
       description: `Reserva Day Use`, 
       payment_method_id,
-      application_fee: commission,
       payer: {
         email: payer.email,
         first_name: payer.first_name,

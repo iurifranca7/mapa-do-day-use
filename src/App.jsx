@@ -1932,7 +1932,6 @@ const CheckoutPage = () => {
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // Inicialização do SDK do Mercado Pago
     const initMP = () => {
         if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
             try {
@@ -1988,7 +1987,6 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  // Salva no Firestore
   const handleConfirm = async (mpPaymentId) => {
     try {
         await addDoc(collection(db, "reservations"), {
@@ -1998,7 +1996,7 @@ const CheckoutPage = () => {
           couponCode: couponCode ? couponCode.toUpperCase() : null,
           paymentMethod: paymentMethod,
           
-          paymentId: mpPaymentId, // ID REAL DO MERCADO PAGO
+          paymentId: mpPaymentId, // ID REAL
           
           userId: user.uid, 
           ownerId: bookingData.item.ownerId,
@@ -2012,7 +2010,7 @@ const CheckoutPage = () => {
         setShowSuccess(true);
     } catch (e) {
         console.error("Erro ao salvar reserva:", e);
-        alert("Erro ao confirmar reserva no sistema. Entre em contato com o suporte.");
+        alert("Erro ao confirmar reserva no sistema.");
         setProcessing(false);
     }
   };
@@ -2029,9 +2027,10 @@ const CheckoutPage = () => {
      const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
-     // Payload completo para a API
+     // Payload completo
      const paymentPayload = {
-        transactionAmount: Number(finalTotal.toFixed(2)), // Valor final
+        transactionAmount: Number(finalTotal.toFixed(2)),
+        transaction_amount: Number(finalTotal.toFixed(2)),
         payment_method_id: paymentMethod === 'pix' ? 'pix' : getPaymentMethodId(cardNumber),
         installments: Number(installments),
         payer: {
@@ -2043,19 +2042,19 @@ const CheckoutPage = () => {
         bookingDetails: {
             dayuseId: bookingData.item.id,
             date: bookingData.date,
+            total: Number(finalTotal.toFixed(2)),
             adults: Number(bookingData.adults),
             children: Number(bookingData.children),
             pets: Number(bookingData.pets),
             selectedSpecial: bookingData.selectedSpecial,
-            couponCode: couponCode ? couponCode.toUpperCase() : null,
-            total: Number(finalTotal.toFixed(2)) // Redundância para validação
+            couponCode: couponCode ? couponCode.toUpperCase() : null
         }
      };
 
      try {
-       // 1. Tokenização do Cartão (Somente se for Cartão)
+       // 1. Tokenização do Cartão
        if (paymentMethod === 'card') {
-           if (!window.mpInstance) { alert("Sistema de pagamento indisponível (SDK não carregou)."); setProcessing(false); return; }
+           if (!window.mpInstance) { alert("Sistema de pagamento indisponível."); setProcessing(false); return; }
            
            const [month, year] = cardExpiry.split('/');
            if (!month || !year || cardNumber.length < 13 || !cardCvv) { alert("Verifique os dados do cartão."); setProcessing(false); return; }
@@ -2069,10 +2068,10 @@ const CheckoutPage = () => {
               identification: { type: 'CPF', number: cleanDoc }
            });
            
-           paymentPayload.token = tokenObj.id; // Anexa o token gerado
+           paymentPayload.token = tokenObj.id; 
        }
 
-       // 2. Chamada à API de Backend (Processamento Real)
+       // 2. Chamada à API
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
@@ -2083,25 +2082,28 @@ const CheckoutPage = () => {
 
        if (response.ok) {
            if (paymentMethod === 'pix') {
-               // Sucesso Pix: Dados reais do MP
-               setPixData(result.point_of_interaction.transaction_data);
-               setCreatedPaymentId(result.id);
-               
-               setProcessing(false);
-               setShowPixModal(true);
+               // Sucesso Pix (Dados Reais)
+               if (result.point_of_interaction?.transaction_data) {
+                   setPixData(result.point_of_interaction.transaction_data);
+                   setCreatedPaymentId(result.id);
+                   setProcessing(false);
+                   setShowPixModal(true);
+               } else {
+                   throw new Error("QR Code não gerado pelo Mercado Pago.");
+               }
            } else {
                // Sucesso Cartão
                if (result.status === 'approved' || result.status === 'in_process') {
                    handleConfirm(result.id);
                } else {
-                   alert(`Pagamento recusado. Status: ${result.status_detail || 'Verifique com seu banco.'}`);
+                   alert(`Pagamento recusado. Status: ${result.detail || result.status}`);
                    setProcessing(false);
                }
            }
        } else {
            console.error("Erro API:", result);
            let msg = result.message || "Erro desconhecido";
-           if (msg.includes("não configurou")) msg = "Erro: Este estabelecimento não conectou a conta financeira.";
+           if (msg.includes("application_fee")) msg = "Erro de configuração de comissão no servidor.";
            alert(msg);
            setProcessing(false);
        }
@@ -2217,44 +2219,12 @@ const CheckoutPage = () => {
                   <div className="flex justify-between"><span>Adultos ({bookingData.adults})</span><b>{formatBRL(bookingData.adults * bookingData.priceSnapshot.adult)}</b></div>
                   {bookingData.children > 0 && <div className="flex justify-between"><span>Crianças ({bookingData.children})</span><b>{formatBRL(bookingData.children * bookingData.priceSnapshot.child)}</b></div>}
                   {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
-                  
-                  {bookingData.freeChildren > 0 && (
-                      <div className="flex justify-between text-green-600 font-bold text-xs">
-                          <span>Crianças Grátis ({bookingData.freeChildren})</span>
-                          <span>R$ 0,00</span>
-                      </div>
-                  )}
-                  
-                  {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => {
-                     const ticket = bookingData.item?.specialTickets?.[idx];
-                     if(qtd > 0 && ticket) {
-                         return (
-                             <div key={idx} className="flex justify-between text-blue-600 text-xs">
-                                 <span>{ticket.name} ({qtd})</span>
-                                 <b>{formatBRL(ticket.price * qtd)}</b>
-                             </div>
-                         )
-                     }
-                     return null;
-                  })}
-
+                  {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis ({bookingData.freeChildren})</span><span>R$ 0,00</span></div>)}
+                  {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => { const ticket = bookingData.item?.specialTickets?.[idx]; if(qtd > 0 && ticket) { return ( <div key={idx} className="flex justify-between text-blue-600 text-xs"><span>{ticket.name} ({qtd})</span><b>{formatBRL(ticket.price * qtd)}</b></div> ) } return null; })}
                   <div className="flex justify-between"><span>Taxa de Serviço</span><span className="text-green-600 font-bold">Grátis</span></div>
-                  
-                  {discount > 0 && (
-                      <div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto</span><span>- {formatBRL(discount)}</span></div>
-                  )}
-
-                  <div className="flex gap-2 pt-2">
-                     <input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
-                     <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
-                  </div>
-                  
-                  {couponMsg && (
-                      <div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {couponMsg.text}
-                      </div>
-                  )}
-
+                  {discount > 0 && (<div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto</span><span>- {formatBRL(discount)}</span></div>)}
+                  <div className="flex gap-2 pt-2"><input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} /><button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button></div>
+                  {couponMsg && (<div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{couponMsg.text}</div>)}
                   <div className="flex justify-between pt-4 border-t border-slate-100"><span className="font-bold text-lg">Total</span><span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span></div>
               </div>
            </div>
