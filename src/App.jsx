@@ -269,7 +269,6 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
 
 const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken }) => {
   const [checking, setChecking] = useState(false);
-  const [statusMsg, setStatusMsg] = useState(null); // Novo estado para mensagens visuais
 
   // Robô de Verificação Automática (Polling)
   useEffect(() => {
@@ -277,21 +276,15 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
     if (isOpen && paymentId && partnerToken) {
       // Verifica a cada 5 segundos
       interval = setInterval(() => {
-        checkStatus(false); 
+        checkStatus(false); // false = verificação silenciosa (sem alertas)
       }, 5000);
     }
-    // Limpa estados ao fechar
-    return () => {
-        clearInterval(interval);
-        setStatusMsg(null);
-    };
+    // Limpa o robô ao fechar o modal
+    return () => clearInterval(interval);
   }, [isOpen, paymentId, partnerToken]);
 
   const checkStatus = async (isManual = true) => {
-      if (isManual) {
-          setChecking(true);
-          setStatusMsg(null); // Limpa msg anterior ao tentar de novo
-      }
+      if (isManual) setChecking(true);
       
       try {
           const response = await fetch('/api/check-payment-status', {
@@ -302,24 +295,15 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
           const data = await response.json();
           
           if (data.status === 'approved') {
-              setStatusMsg({ type: 'success', text: "Pagamento confirmado! Finalizando..." });
-              // Pequeno delay para o usuário ler a mensagem de sucesso antes de fechar
-              setTimeout(() => {
-                  onConfirm(); 
-                  onClose();
-              }, 1500);
+              if (isManual) alert("Pagamento confirmado com sucesso!");
+              onConfirm(); // Finaliza a reserva e fecha o modal
+              onClose();
           } else {
-              if (isManual) {
-                  const statusText = data.status === 'pending' ? 'Pendente' : data.status;
-                  setStatusMsg({ 
-                      type: 'info', 
-                      text: `O banco ainda está processando (Status: ${statusText}). Aguarde mais alguns segundos e tente novamente.` 
-                  });
-              }
+              if (isManual) alert(`O pagamento ainda está: ${data.status === 'pending' ? 'Pendente' : data.status}. Aguarde alguns instantes.`);
           }
       } catch (error) {
           console.error("Erro ao verificar:", error);
-          if (isManual) setStatusMsg({ type: 'error', text: "Não foi possível verificar o status agora. Tente novamente." });
+          if (isManual) alert("Erro ao verificar status. Tente novamente.");
       } finally {
           if (isManual) setChecking(false);
       }
@@ -327,7 +311,7 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(pixData.qr_code);
-    setStatusMsg({ type: 'success', text: "Código copia e cola copiado com sucesso!" });
+    alert("Código PIX copiado!");
   };
 
   if (!isOpen || !pixData) return null;
@@ -354,17 +338,6 @@ const PixModal = ({ isOpen, onClose, pixData, onConfirm, paymentId, partnerToken
            <p className="text-xs text-slate-500 font-mono truncate flex-1">{pixData.qr_code}</p>
            <button onClick={copyToClipboard} className="text-teal-600 hover:text-teal-700 p-2"><Copy size={16}/></button>
         </div>
-
-        {/* ÁREA DE FEEDBACK VISUAL (Substitui o Alert) */}
-        {statusMsg && (
-            <div className={`text-xs p-3 rounded-xl mb-4 font-medium animate-fade-in ${
-                statusMsg.type === 'success' ? 'bg-green-100 text-green-700' :
-                statusMsg.type === 'error' ? 'bg-red-100 text-red-700' :
-                'bg-blue-50 text-blue-700'
-            }`}>
-                {statusMsg.text}
-            </div>
-        )}
 
         <Button className="w-full mb-3" onClick={() => checkStatus(true)} disabled={checking}>
             {checking ? 'Verificando...' : 'Já fiz o pagamento'}
@@ -1921,19 +1894,19 @@ const CheckoutPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
+  
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [partnerToken, setPartnerToken] = useState(null);
   
-  // Lógica de Cupom
+  // Lógica de Cupom e Totais
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
-  const [couponMsg, setCouponMsg] = useState(null); // Estado para feedback visual
+  const [couponMsg, setCouponMsg] = useState(null);
 
-  // States para o formulário manual de cartão
+  // States do Pagamento Manual
   const [paymentMethod, setPaymentMethod] = useState('card'); 
   const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
@@ -1946,13 +1919,45 @@ const CheckoutPage = () => {
   
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
+  // NOVO STATE: Para guardar o ID do pagamento e verificar status
+  const [createdPaymentId, setCreatedPaymentId] = useState(null);
+
+  // Helper para detectar bandeira
+  const getPaymentMethodId = (number) => {
+    const cleanNum = number.replace(/\D/g, '');
+    if (/^4/.test(cleanNum)) return 'visa';
+    if (/^5[1-5]/.test(cleanNum)) return 'master';
+    if (/^3[47]/.test(cleanNum)) return 'amex';
+    if (/^6/.test(cleanNum)) return 'elo'; 
+    if (/^3(?:0[0-5]|[68][0-9])/.test(cleanNum)) return 'diners'; // Diners
+    if (/^3(?:60|68|8)/.test(cleanNum)) return 'diners'; // Diners
+    return 'visa'; // Fallback
+  };
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
+    
+    // Inicialização do SDK do MP com logs para debug
+    const initMP = () => {
+        if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
+            try {
+                if (!window.mpInstance) {
+                    window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+                    console.log("✅ SDK MercadoPago pronto.");
+                }
+            } catch (e) { console.error("Erro init MP:", e); }
+        }
+    };
+    initMP();
+    // Retry caso o script demore um pouco
+    setTimeout(initMP, 1500); 
+
     const fetchOwner = async () => {
         const docRef = doc(db, "users", bookingData.item.ownerId);
         const snap = await getDoc(docRef);
-        if(snap.exists() && snap.data().mp_access_token) setPartnerToken(snap.data().mp_access_token);
+        if(snap.exists() && snap.data().mp_access_token) {
+            setPartnerToken(snap.data().mp_access_token);
+        }
     };
     fetchOwner();
     const unsub = onAuthStateChanged(auth, u => setUser(u));
@@ -1962,9 +1967,7 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      setCouponMsg(null); // Limpa msg anterior
-      
-      // Verifica se o local tem cupons cadastrados
+      setCouponMsg(null); 
       if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
@@ -1996,7 +1999,8 @@ const CheckoutPage = () => {
       ...bookingData, 
       total: finalTotal,
       discount: discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null, // Salva o cupom usado
+      couponCode: couponCode ? couponCode.toUpperCase() : null,
+      paymentMethod: paymentMethod, // Salva se foi Pix ou Card
       userId: user.uid, 
       ownerId: bookingData.item.ownerId,
       createdAt: new Date(), 
@@ -2010,20 +2014,23 @@ const CheckoutPage = () => {
 
   const processCardPayment = async () => {
      if(!partnerToken) { 
-        if(confirm("MODO TESTE: O parceiro não conectou a conta MP. Deseja simular uma aprovação?")) {
+        if(confirm("MODO TESTE (Sem Parceiro): Deseja simular uma aprovação para testar o fluxo?")) {
             handleConfirm();
             return;
         }
+        alert("Erro: O estabelecimento precisa conectar a conta para receber pagamentos.");
         return; 
      }
      
      // Sanitização
      const cleanDoc = docNumber.replace(/\D/g, ''); 
-     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "comprador_guest@mapadodayuse.com";
+     // Fallback seguro para e-mail
+     const cleanEmail = user?.email && user.email.includes('@') ? user.email.trim() : "cliente_guest@mapadodayuse.com";
      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Viajante";
      const lastName = user?.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      setProcessing(true);
+
      try {
        // --- FLUXO PIX ---
        if (paymentMethod === 'pix') {
@@ -2047,22 +2054,31 @@ const CheckoutPage = () => {
           });
           const result = await response.json();
           
-          if(result.status === 'pending' && result.point_of_interaction) {
+          if (response.ok && result.point_of_interaction) {
              setPixData(result.point_of_interaction.transaction_data);
+             // Salva o ID do pagamento para o modal poder consultar
+             setCreatedPaymentId(result.id); 
              setProcessing(false);
              setShowPixModal(true);
           } else {
-             const msg = result.message?.includes("user_allowed_only_in_test") 
-                ? "Erro de Teste: Use um e-mail de comprador de teste." 
-                : (result.message || "Erro no Pix.");
-             alert(msg);
+             console.error("Erro Pix:", result);
+             let errorMsg = result.message || JSON.stringify(result);
+             if (errorMsg.includes("user_allowed_only_in_test")) {
+                 errorMsg = "Erro de Ambiente: Conta de teste usada indevidamente. Use uma conta real.";
+             }
+             alert(`Não foi possível gerar o Pix: ${errorMsg}`);
              setProcessing(false);
           }
           return;
        }
 
        // --- FLUXO CARTÃO ---
-       const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+       if (!window.mpInstance) {
+           alert("Sistema de pagamento indisponível (SDK não carregou). Tente recarregar a página.");
+           setProcessing(false);
+           return;
+       }
+
        const [month, year] = cardExpiry.split('/');
        
        if (!month || !year || cardNumber.length < 13 || cleanDoc.length === 0) {
@@ -2077,18 +2093,22 @@ const CheckoutPage = () => {
           cardExpirationMonth: month,
           cardExpirationYear: '20' + year,
           securityCode: cardCvv,
-          identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
+          identification: { 
+              type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', 
+              number: cleanDoc 
+          }
        };
 
-       const tokenObj = await mp.createCardToken(tokenParams);
+       console.log("Gerando token...");
+       const tokenObj = await window.mpInstance.createCardToken(tokenParams);
+       console.log("Token gerado:", tokenObj.id);
        
        const response = await fetch("/api/process-payment", { 
           method: "POST", 
           headers: { "Content-Type":"application/json" }, 
           body: JSON.stringify({ 
              token: tokenObj.id,
-             issuer_id: "visa", 
-             payment_method_id: "visa", 
+             payment_method_id: getPaymentMethodId(cardNumber), 
              transaction_amount: Number(finalTotal),
              installments: Number(installments),
              description: `Day Use - ${bookingData.item.name}`,
@@ -2104,28 +2124,35 @@ const CheckoutPage = () => {
 
        const result = await response.json();
        
-       if(result.status === 'approved' || result.status === 'in_process') {
+       if (response.ok && (result.status === 'approved' || result.status === 'in_process')) {
            handleConfirm();
        } else { 
            console.error("Erro Pagamento:", result);
-           if (result.message && result.message.includes("user_allowed_only_in_test")) {
-                alert("ERRO DE AMBIENTE: Você está usando chaves de Teste. Use um e-mail de Teste do Mercado Pago.");
-           } else {
-                alert("Pagamento recusado: " + (result.message || "Verifique os dados.")); 
-           }
+           const errorMsg = result.message || (result.api_response ? JSON.stringify(result.api_response) : "Erro desconhecido");
+           alert(`Pagamento recusado: ${errorMsg}`); 
            setProcessing(false); 
        }
      } catch (err) {
-        console.error(err);
-        if(confirm("Erro de comunicação. Tentar novamente?")) processCardPayment();
-        else setProcessing(false);
+        console.error("Erro Catch:", err);
+        alert(`Erro de comunicação: ${err.message}`);
+        setProcessing(false);
      }
   };
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4">
       <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado!" message="Sua reserva foi confirmada. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>
-      <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={handleConfirm} />
+      
+      {/* MODAL PIX COM VERIFICAÇÃO AUTOMÁTICA */}
+      <PixModal 
+          isOpen={showPixModal} 
+          onClose={()=>setShowPixModal(false)} 
+          pixData={pixData} 
+          onConfirm={handleConfirm}
+          paymentId={createdPaymentId}
+          partnerToken={partnerToken}
+      />
+      
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />
       
       <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
@@ -2148,7 +2175,7 @@ const CheckoutPage = () => {
             )}
           </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 overflow-hidden ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              
              {/* Abas de Método */}
@@ -2174,7 +2201,6 @@ const CheckoutPage = () => {
                   <p className="text-sm text-slate-600 mb-4">Ao clicar abaixo, geraremos um código QR para você pagar instantaneamente.</p>
                   <div className="flex justify-center"><Badge type="green">Aprovação Imediata</Badge></div>
                   
-                  {/* Campo de CPF para Pix, caso necessário pelo banco */}
                   <div className="text-left mt-4">
                       <label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label>
                       <input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
@@ -2189,6 +2215,7 @@ const CheckoutPage = () => {
           </div>
         </div>
 
+        {/* Resumo Lateral */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
@@ -2209,7 +2236,6 @@ const CheckoutPage = () => {
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
                   
-                  {/* Feedback Visual do Cupom */}
                   {couponMsg && (
                       <div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {couponMsg.text}
