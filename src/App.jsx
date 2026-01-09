@@ -1938,7 +1938,7 @@ const CheckoutPage = () => {
             try {
                 if (!window.mpInstance) {
                     window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
-                    console.log("✅ SDK MercadoPago inicializado (Modo Frontend).");
+                    console.log("✅ SDK MercadoPago inicializado.");
                 }
             } catch (e) { console.error("Erro init MP:", e); }
         }
@@ -1988,12 +1988,9 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  // Salva no Firestore (Bypass de Backend Financeiro)
-  const handleConfirm = async (mpTokenId = null) => {
+  // Salva no Firestore
+  const handleConfirm = async (mpPaymentId) => {
     try {
-        // Gera ID local para referência
-        const offlinePaymentId = `FRONT_${mpTokenId || 'PIX'}_${Date.now()}`;
-        
         await addDoc(collection(db, "reservations"), {
           ...bookingData, 
           total: finalTotal,
@@ -2001,12 +1998,12 @@ const CheckoutPage = () => {
           couponCode: couponCode ? couponCode.toUpperCase() : null,
           paymentMethod: paymentMethod,
           
-          paymentId: offlinePaymentId, // Salva o ID gerado no front
+          paymentId: mpPaymentId, // ID REAL DO MERCADO PAGO
           
           userId: user.uid, 
           ownerId: bookingData.item.ownerId,
           createdAt: new Date(), 
-          status: 'confirmed', // Salva como confirmado para o parceiro ver
+          status: 'confirmed', 
           guestName: user.displayName || "Usuário", 
           guestEmail: user.email
         });
@@ -2015,7 +2012,7 @@ const CheckoutPage = () => {
         setShowSuccess(true);
     } catch (e) {
         console.error("Erro ao salvar reserva:", e);
-        alert("Erro ao confirmar reserva. Tente novamente.");
+        alert("Erro ao confirmar reserva no sistema. Entre em contato com o suporte.");
         setProcessing(false);
     }
   };
@@ -2023,69 +2020,96 @@ const CheckoutPage = () => {
   const processCardPayment = async () => {
      if (!user) { setShowLogin(true); return; }
 
-     // Sanitização
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     
-     if (cleanDoc.length < 11) {
-         alert("Por favor, digite um CPF válido.");
-         return;
-     }
+     if (cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
 
      setProcessing(true);
 
-     // --- 1. FLUXO PIX (SEM API) ---
-     if (paymentMethod === 'pix') {
-         setTimeout(() => {
-             const fakePaymentId = `PIX-${Math.floor(Math.random() * 1000000)}`;
-             setCreatedPaymentId(fakePaymentId);
-             
-             // Gera QR Code Visual (Base64 válido para não ficar branco)
-             const qrCodeBase64 = "iVBORw0KGgoAAAANSUhEUgAAAMgAAADIAQMAAACXljzdAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAA7klEQVRYw+2YwQ3EIAxE2WEVlEJplEIpREI2Sk7sA/KxyY8s8wI5Vo6d/PUv/xVIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRRIgRTIt0D+ANTuH30qW51cAAAAAElFTkSuQmCC";
+     const email = user.email || "cliente@mapadodayuse.com";
+     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
+     const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
-             setPixData({
-                 qr_code: "00020126580014BR.GOV.BCB.PIX0136123e4567-e89b-12d3-a456-426614174000520400005303986540510.005802BR5913Mapa Day Use6008Brasilia62070503***6304ABCD",
-                 qr_code_base64: qrCodeBase64 
-             });
-             setProcessing(false);
-             setShowPixModal(true);
-         }, 1500);
-         return;
-     }
+     // Payload completo para a API
+     const paymentPayload = {
+        transactionAmount: Number(finalTotal.toFixed(2)), // Valor final
+        payment_method_id: paymentMethod === 'pix' ? 'pix' : getPaymentMethodId(cardNumber),
+        installments: Number(installments),
+        payer: {
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            identification: { type: 'CPF', number: cleanDoc }
+        },
+        bookingDetails: {
+            dayuseId: bookingData.item.id,
+            date: bookingData.date,
+            adults: Number(bookingData.adults),
+            children: Number(bookingData.children),
+            pets: Number(bookingData.pets),
+            selectedSpecial: bookingData.selectedSpecial,
+            couponCode: couponCode ? couponCode.toUpperCase() : null,
+            total: Number(finalTotal.toFixed(2)) // Redundância para validação
+        }
+     };
 
-     // --- 2. FLUXO CARTÃO (COM VALIDAÇÃO REAL DO SDK) ---
-     if (paymentMethod === 'card') {
-         if (!window.mpInstance) {
-            alert("Sistema de pagamento indisponível (SDK não carregou).");
-            setProcessing(false);
-            return;
-         }
+     try {
+       // 1. Tokenização do Cartão (Somente se for Cartão)
+       if (paymentMethod === 'card') {
+           if (!window.mpInstance) { alert("Sistema de pagamento indisponível (SDK não carregou)."); setProcessing(false); return; }
+           
+           const [month, year] = cardExpiry.split('/');
+           if (!month || !year || cardNumber.length < 13 || !cardCvv) { alert("Verifique os dados do cartão."); setProcessing(false); return; }
 
-         const [month, year] = cardExpiry.split('/');
-         if (!month || !year || cardNumber.length < 13 || !cardCvv) {
-             alert("Verifique os dados do cartão.");
-             setProcessing(false);
-             return;
-         }
+           const tokenObj = await window.mpInstance.createCardToken({
+              cardNumber: cardNumber.replace(/\s/g, ''),
+              cardholderName: cardName,
+              cardExpirationMonth: month,
+              cardExpirationYear: '20' + year,
+              securityCode: cardCvv,
+              identification: { type: 'CPF', number: cleanDoc }
+           });
+           
+           paymentPayload.token = tokenObj.id; // Anexa o token gerado
+       }
 
-         try {
-             // O SDK valida o cartão de verdade
-             const tokenObj = await window.mpInstance.createCardToken({
-                cardNumber: cardNumber.replace(/\s/g, ''),
-                cardholderName: cardName,
-                cardExpirationMonth: month,
-                cardExpirationYear: '20' + year,
-                securityCode: cardCvv,
-                identification: { type: 'CPF', number: cleanDoc }
-             });
-             
-             // Se o cartão for válido, salva a reserva
-             handleConfirm(tokenObj.id);
+       // 2. Chamada à API de Backend (Processamento Real)
+       const response = await fetch("/api/process-payment", { 
+          method: "POST", 
+          headers: { "Content-Type":"application/json" }, 
+          body: JSON.stringify(paymentPayload) 
+       });
 
-         } catch (e) {
-             console.error("Erro MP:", e);
-             alert("Dados do cartão inválidos ou recusados pelo Mercado Pago. Verifique a digitação.");
-             setProcessing(false);
-         }
+       const result = await response.json();
+
+       if (response.ok) {
+           if (paymentMethod === 'pix') {
+               // Sucesso Pix: Dados reais do MP
+               setPixData(result.point_of_interaction.transaction_data);
+               setCreatedPaymentId(result.id);
+               
+               setProcessing(false);
+               setShowPixModal(true);
+           } else {
+               // Sucesso Cartão
+               if (result.status === 'approved' || result.status === 'in_process') {
+                   handleConfirm(result.id);
+               } else {
+                   alert(`Pagamento recusado. Status: ${result.status_detail || 'Verifique com seu banco.'}`);
+                   setProcessing(false);
+               }
+           }
+       } else {
+           console.error("Erro API:", result);
+           let msg = result.message || "Erro desconhecido";
+           if (msg.includes("não configurou")) msg = "Erro: Este estabelecimento não conectou a conta financeira.";
+           alert(msg);
+           setProcessing(false);
+       }
+
+     } catch (err) {
+        console.error("Erro Crítico:", err);
+        alert("Ocorreu um erro de comunicação com o servidor de pagamento.");
+        setProcessing(false);
      }
   };
 
@@ -2102,7 +2126,7 @@ const CheckoutPage = () => {
               isOpen={showPixModal} 
               onClose={()=>setShowPixModal(false)} 
               pixData={pixData} 
-              onConfirm={() => handleConfirm("PIX_CONFIRMADO")}
+              onConfirm={() => handleConfirm(createdPaymentId)}
               paymentId={createdPaymentId} 
               partnerToken={null} 
           />,
