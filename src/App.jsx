@@ -1941,6 +1941,7 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
+  // Pix Modal
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
   const [createdPaymentId, setCreatedPaymentId] = useState(null);
@@ -1958,12 +1959,12 @@ const CheckoutPage = () => {
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
+    // Inicialização do SDK do Mercado Pago
     const initMP = () => {
         if (window.MercadoPago && import.meta.env.VITE_MP_PUBLIC_KEY) {
             try {
                 if (!window.mpInstance) {
                     window.mpInstance = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
-                    console.log("✅ SDK MercadoPago inicializado.");
                 }
             } catch (e) { console.error("Erro init MP:", e); }
         }
@@ -1981,10 +1982,7 @@ const CheckoutPage = () => {
       try {
           await sendEmailVerification(currentUser, { url: window.location.href, handleCodeInApp: true });
           alert(`✅ E-mail enviado para ${currentUser.email}!`);
-      } catch (e) { 
-          console.error(e);
-          alert("Erro ao enviar e-mail. Tente novamente mais tarde."); 
-      } 
+      } catch (e) { alert("Erro ao enviar e-mail."); } 
       finally { setResendLoading(false); }
   };
 
@@ -2016,17 +2014,18 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  const handleConfirm = async (mpTokenId = null) => {
+  const handleConfirm = async (mpPaymentId) => {
     try {
-        const offlinePaymentId = `FRONT_${mpTokenId || 'PIX'}_${Date.now()}`;
-        
+        // Salva a reserva com o ID REAL do pagamento (fundamental para estorno/status)
         await addDoc(collection(db, "reservations"), {
           ...bookingData, 
           total: finalTotal,
           discount: discount,
           couponCode: couponCode ? couponCode.toUpperCase() : null,
           paymentMethod: paymentMethod,
-          paymentId: offlinePaymentId,
+          
+          paymentId: mpPaymentId, // ID vindo da API/Mercado Pago
+          
           userId: user.uid, 
           ownerId: bookingData.item.ownerId,
           createdAt: new Date(), 
@@ -2039,73 +2038,111 @@ const CheckoutPage = () => {
         setShowSuccess(true);
     } catch (e) {
         console.error("Erro ao salvar reserva:", e);
-        alert("Erro ao confirmar reserva. Tente novamente.");
+        alert("Erro ao confirmar reserva no sistema. Entre em contato com o suporte.");
         setProcessing(false);
     }
   };
 
   const processCardPayment = async () => {
+     if (!user) { setShowLogin(true); return; }
+
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     
-     if (cleanDoc.length < 11) {
-         alert("Por favor, digite um CPF válido.");
-         return;
-     }
+     if (cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
 
      setProcessing(true);
 
-     if (paymentMethod === 'pix') {
-         setTimeout(() => {
-             const fakePaymentId = `PIX-${Math.floor(Math.random() * 1000000)}`;
-             setCreatedPaymentId(fakePaymentId);
-             setPixData({
-                 qr_code: "00020126580014BR.GOV.BCB.PIX0136123e4567-e89b-12d3-a456-426614174000520400005303986540510.005802BR5913Mapa Day Use6008Brasilia62070503***6304ABCD",
-                 qr_code_base64: null 
-             });
-             setProcessing(false);
-             setShowPixModal(true);
-         }, 1000);
-         return;
-     }
+     const email = user.email || "cliente@mapadodayuse.com";
+     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
+     const lastName = user.displayName && user.displayName.includes(' ') ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
-     if (paymentMethod === 'card') {
-         if (!window.mpInstance) {
-            alert("Sistema de pagamento indisponível (SDK não carregou).");
-            setProcessing(false);
-            return;
-         }
+     // Prepara payload para a API
+     const paymentPayload = {
+        payment_method_id: paymentMethod === 'pix' ? 'pix' : getPaymentMethodId(cardNumber),
+        installments: Number(installments),
+        payer: {
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            identification: { type: 'CPF', number: cleanDoc }
+        },
+        bookingDetails: {
+            dayuseId: bookingData.item.id,
+            date: bookingData.date,
+            adults: Number(bookingData.adults),
+            children: Number(bookingData.children),
+            pets: Number(bookingData.pets),
+            selectedSpecial: bookingData.selectedSpecial,
+            couponCode: couponCode ? couponCode.toUpperCase() : null
+        }
+     };
 
-         const [month, year] = cardExpiry.split('/');
-         if (!month || !year || cardNumber.length < 13 || !cardCvv) {
-             alert("Verifique os dados do cartão.");
-             setProcessing(false);
-             return;
-         }
+     try {
+       // 1. Se for Cartão, Tokeniza no Frontend primeiro
+       if (paymentMethod === 'card') {
+           if (!window.mpInstance) { alert("Sistema de pagamento indisponível."); setProcessing(false); return; }
+           
+           const [month, year] = cardExpiry.split('/');
+           if (!month || !year || cardNumber.length < 13 || !cardCvv) { alert("Verifique os dados do cartão."); setProcessing(false); return; }
 
-         try {
-             const tokenObj = await window.mpInstance.createCardToken({
-                cardNumber: cardNumber.replace(/\s/g, ''),
-                cardholderName: cardName,
-                cardExpirationMonth: month,
-                cardExpirationYear: '20' + year,
-                securityCode: cardCvv,
-                identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
-             });
-             
-             handleConfirm(tokenObj.id);
+           const tokenObj = await window.mpInstance.createCardToken({
+              cardNumber: cardNumber.replace(/\s/g, ''),
+              cardholderName: cardName,
+              cardExpirationMonth: month,
+              cardExpirationYear: '20' + year,
+              securityCode: cardCvv,
+              identification: { type: cleanDoc.length > 11 ? 'CNPJ' : 'CPF', number: cleanDoc }
+           });
+           
+           paymentPayload.token = tokenObj.id; // Adiciona o token ao payload
+       }
 
-         } catch (e) {
-             console.error("Erro MP:", e);
-             alert("Dados do cartão inválidos ou recusados. Verifique a digitação.");
-             setProcessing(false);
-         }
+       // 2. Chama a API de Backend (Obrigatório para Pix e Cobrança Real)
+       const response = await fetch("/api/process-payment", { 
+          method: "POST", 
+          headers: { "Content-Type":"application/json" }, 
+          body: JSON.stringify(paymentPayload) 
+       });
+
+       const result = await response.json();
+
+       if (response.ok) {
+           if (paymentMethod === 'pix') {
+               // Pix gerado com sucesso!
+               setPixData(result.point_of_interaction.transaction_data);
+               setCreatedPaymentId(result.id);
+               if(result.charged_amount) setFinalTotal(result.charged_amount);
+               
+               setProcessing(false);
+               setShowPixModal(true);
+           } else {
+               // Cartão Aprovado
+               if (result.status === 'approved' || result.status === 'in_process') {
+                   if(result.charged_amount) setFinalTotal(result.charged_amount);
+                   handleConfirm(result.id);
+               } else {
+                   alert(`Pagamento não aprovado. Status: ${result.status_detail}`);
+                   setProcessing(false);
+               }
+           }
+       } else {
+           console.error("Erro API:", result);
+           let msg = result.message || "Erro desconhecido";
+           // Mensagens amigáveis para erros comuns
+           if (msg.includes("não configurou")) msg = "Erro: Este estabelecimento ainda não conectou a conta financeira.";
+           alert(msg);
+           setProcessing(false);
+       }
+
+     } catch (err) {
+        console.error("Erro Crítico:", err);
+        alert("Ocorreu um erro de comunicação com o servidor de pagamento.");
+        setProcessing(false);
      }
   };
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* CORREÇÃO: Modais renderizados via Portal para garantir sobreposição correta */}
       {showSuccess && createPortal(
           <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Sua reserva foi realizada com sucesso. Acesse seu voucher." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos"/>,
           document.body
@@ -2116,9 +2153,9 @@ const CheckoutPage = () => {
               isOpen={showPixModal} 
               onClose={()=>setShowPixModal(false)} 
               pixData={pixData} 
-              onConfirm={() => handleConfirm("PIX_CONFIRMADO")}
+              onConfirm={() => handleConfirm(createdPaymentId)} // Clicar em "Já paguei" apenas salva se API não tiver webhook
               paymentId={createdPaymentId} 
-              partnerToken={null} 
+              // Removido partnerToken pois a verificação agora é via API (check-payment-status)
           />,
           document.body
       )}
@@ -2165,28 +2202,32 @@ const CheckoutPage = () => {
 
              {paymentMethod === 'card' ? (
                <div className="space-y-4 animate-fade-in">
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)} disabled={!user?.emailVerified}/></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)} disabled={!user?.emailVerified}/></div>
                  <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange} disabled={!user?.emailVerified}/></div>
+                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)} disabled={!user?.emailVerified}/></div>
                  </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)} disabled={!user?.emailVerified}/></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)} disabled={!user?.emailVerified}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
                </div>
              ) : (
                <div className="text-center py-6 animate-fade-in">
                   <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
                   <p className="text-sm text-slate-600 mb-4">Ao confirmar, geraremos um código Pix para você.</p>
-                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
+                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)} disabled={!user?.emailVerified}/></div>
                </div>
              )}
              
+             {/* BOTÃO COM TRAVA DE EMAIL */}
              <div className="mt-6">
+                 {user && !user.emailVerified && (
+                     <p className="text-center text-xs text-red-500 font-bold mb-2">Confirme seu e-mail para habilitar o pagamento.</p>
+                 )}
                  <Button 
-                    className="w-full py-4 text-lg" 
+                    className={`w-full py-4 text-lg ${!user?.emailVerified ? 'bg-slate-300 cursor-not-allowed hover:bg-slate-300 shadow-none text-slate-500' : ''}`} 
                     onClick={processCardPayment} 
-                    disabled={processing}
+                    disabled={processing || !user?.emailVerified}
                  >
                      {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Confirmar Reserva (${formatBRL(finalTotal)})`)}
                  </Button>
@@ -2206,7 +2247,13 @@ const CheckoutPage = () => {
                   <div className="flex justify-between"><span>Adultos ({bookingData.adults})</span><b>{formatBRL(bookingData.adults * bookingData.priceSnapshot.adult)}</b></div>
                   {bookingData.children > 0 && <div className="flex justify-between"><span>Crianças ({bookingData.children})</span><b>{formatBRL(bookingData.children * bookingData.priceSnapshot.child)}</b></div>}
                   {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
-                  {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis ({bookingData.freeChildren})</span><span>R$ 0,00</span></div>)}
+                  
+                  {bookingData.freeChildren > 0 && (
+                      <div className="flex justify-between text-green-600 font-bold text-xs">
+                          <span>Crianças Grátis ({bookingData.freeChildren})</span>
+                          <span>R$ 0,00</span>
+                      </div>
+                  )}
                   
                   {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => {
                      const ticket = bookingData.item?.specialTickets?.[idx];
@@ -2232,7 +2279,12 @@ const CheckoutPage = () => {
                      <button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button>
                   </div>
                   
-                  {couponMsg && (<div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{couponMsg.text}</div>)}
+                  {couponMsg && (
+                      <div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {couponMsg.text}
+                      </div>
+                  )}
+
                   <div className="flex justify-between pt-4 border-t border-slate-100"><span className="font-bold text-lg">Total</span><span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span></div>
               </div>
            </div>
