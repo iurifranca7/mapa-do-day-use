@@ -64,6 +64,12 @@ const AMENITIES_LIST = [
 const MEALS_LIST = ["Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas", "Bebidas NÃO Alcoólicas", "Bebidas Alcoólicas", "Buffet Livre"];
 const WEEK_DAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
+// NOVAS CONSTANTES DE TIPO
+const ESTABLISHMENT_TYPES = [
+    "Hotel", "Hotel Fazenda", "Fazenda", "Motel", "Spa", 
+    "Pesqueiro", "Academia", "Futvôlei", "Beach Tennis", 
+    "Clube", "Parque Aquático", "Resort"
+];
 
 // --- CONFIGURAÇÃO ---
 try {
@@ -1394,13 +1400,6 @@ const HomePage = () => {
                        <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
                    </div>
                </div>
-                
-                {/* CTA FINAL */}
-                <div className="bg-slate-50 rounded-3xl p-8 text-center border border-slate-100 mt-12">
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">Não encontrou o que procurava?</h3>
-                    <p className="text-slate-500 mb-6">Use nosso mapa do site para ver todas as cidades disponíveis.</p>
-                    <Button onClick={() => navigate('/mapa-do-site')} variant="outline">Ver Todos os Destinos</Button>
-                </div>
             </div>
         )}
       </div>
@@ -3207,13 +3206,61 @@ const PartnerDashboard = () => {
       setManageLoading(true);
 
       try {
-          // 1. REAGENDAMENTO (Atualiza apenas o Firestore)
+          // 1. REAGENDAMENTO (Atualiza Firestore + Notifica Cliente)
           if (manageAction === 'reschedule') {
               await updateDoc(doc(db, "reservations", manageRes.id), {
                   date: rescheduleDate,
                   updatedAt: new Date()
               });
-              setFeedback({ type: 'success', title: 'Sucesso', msg: 'Data da reserva alterada.' });
+
+              // Dispara e-mail de aviso para o cliente
+              const dayUseName = manageRes.item?.name || manageRes.itemName || "Day Use";
+              const emailHtml = `
+                <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                        <div style="background-color: #0097A8; padding: 25px; text-align: center;">
+                            <h2 style="color: white; margin: 0; font-size: 24px;">Sua reserva foi reagendada 🗓️</h2>
+                        </div>
+                        <div style="padding: 35px;">
+                            <p style="font-size: 16px; color: #333; margin-bottom: 20px;">
+                                Olá, <strong>${manageRes.guestName}</strong>!
+                            </p>
+                            <p style="font-size: 16px; color: #333; line-height: 1.5;">
+                                Informamos que a data da sua reserva no <strong>${dayUseName}</strong> foi alterada pelo estabelecimento.
+                            </p>
+                            
+                            <div style="background-color: #e0f7fa; padding: 20px; border-radius: 8px; margin: 25px 0; border-left: 5px solid #0097A8;">
+                                <p style="margin: 0; font-size: 13px; color: #006064; font-weight: bold; text-transform: uppercase;">Nova Data</p>
+                                <p style="margin: 5px 0 0 0; font-size: 24px; font-weight: bold; color: #0097A8;">
+                                    ${rescheduleDate.split('-').reverse().join('/')}
+                                </p>
+                            </div>
+
+                            <p style="font-size: 14px; color: #555; margin-bottom: 30px;">
+                                Se você tiver dúvidas ou não solicitou essa alteração, entre em contato diretamente com o local.
+                            </p>
+
+                            <div style="text-align: center;">
+                                <a href="https://mapadodayuse.com/minhas-viagens" style="background-color: #0097A8; color: white; padding: 14px 28px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                    Acessar Meu Voucher Atualizado
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+              `;
+
+              fetch('/api/send-email', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                      to: manageRes.guestEmail, 
+                      subject: `Reserva Reagendada: ${dayUseName}`, 
+                      html: emailHtml 
+                  })
+              }).catch(console.error);
+
+              setFeedback({ type: 'success', title: 'Sucesso', msg: 'Data alterada e cliente notificado por e-mail.' });
           } 
           
           // 2. CANCELAMENTO / REEMBOLSO
@@ -4940,7 +4987,7 @@ const NotFoundPage = () => {
 // -----------------------------------------------------------------------------
 const RouteResolver = () => {
     const { state, cityOrSlug } = useParams();
-    const [decision, setDecision] = useState(null); // 'listing', 'details', '404'
+    const [decision, setDecision] = useState(null); // 'listing', 'type_listing', 'details', '404'
     const [loading, setLoading] = useState(true);
     
     useEffect(() => {
@@ -4962,20 +5009,26 @@ const RouteResolver = () => {
                 return;
             }
 
+            // 3. Verifica se é um TIPO DE ESTABELECIMENTO (Ex: /mg/hotel-fazenda)
+            const isType = ESTABLISHMENT_TYPES.some(t => generateSlug(t) === cityOrSlug);
+            if (isType) {
+                setDecision('type_listing');
+                setLoading(false);
+                return;
+            }
+
             try {
-                // 3. Verifica se é um Local (Slug exato)
+                // 4. Verifica se é um Local (Slug exato)
                 const qSlug = query(collection(db, "dayuses"), where("slug", "==", cityOrSlug));
                 const snapSlug = await getDocs(qSlug);
 
                 if (!snapSlug.empty) {
                     setDecision('details');
                 } else {
-                    // 4. Verifica se é uma Cidade Válida
-                    // Busca itens do estado para conferir se a cidade existe
+                    // 5. Verifica se é uma Cidade Válida
                     const qState = query(collection(db, "dayuses"), where("state", "==", state.toUpperCase()));
                     const snapState = await getDocs(qState);
                     
-                    // Verifica se algum day use pertence a uma cidade que gera esse slug
                     const cityExists = snapState.docs.some(doc => {
                         const data = doc.data();
                         return data.city && generateSlug(data.city) === cityOrSlug;
@@ -4984,13 +5037,12 @@ const RouteResolver = () => {
                     if (cityExists) {
                         setDecision('listing');
                     } else {
-                        // Não é local nem cidade com day use -> 404
                         setDecision('404');
                     }
                 }
             } catch (error) {
                 console.error("Erro na validação de rota:", error);
-                setDecision('404'); // Segurança: na dúvida, 404
+                setDecision('404'); 
             } finally {
                 setLoading(false);
             }
@@ -5007,6 +5059,10 @@ const RouteResolver = () => {
     if (decision === '404') return <NotFoundPage />;
     if (decision === 'details') return <DetailsPage />;
     
+    // Rota de Tipo (ex: /mg/hotel-fazenda)
+    if (decision === 'type_listing') return <TypeListingPage typeParam={cityOrSlug} stateParam={state} />;
+    
+    // Rota de Cidade (ex: /mg/belo-horizonte) ou Estado Puro
     return <ListingPage stateParam={state} cityParam={cityOrSlug} />;
 };
 
@@ -7252,6 +7308,236 @@ const EmbedPage = () => {
   );
 };
 
+// -----------------------------------------------------------------------------
+// PÁGINA DE LISTAGEM POR TIPO (SEO OTIMIZADO)
+// -----------------------------------------------------------------------------
+const TypeListingPage = ({ typeParam, stateParam, cityParam }) => {
+  const params = useParams();
+  const navigate = useNavigate();
+  
+  // Prioriza props (RouteResolver) ou URL
+  const typeSlug = typeParam || params.type;
+  const stateSlug = stateParam || params.state;
+  const citySlug = cityParam || params.city;
+
+  const [items, setItems] = useState([]);
+  const [filteredItems, setFilteredItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+  // Estados dos Filtros (Igual ListingPage)
+  const [maxPrice, setMaxPrice] = useState("");
+  const [filterCity, setFilterCity] = useState(citySlug || "");
+  const [selectedAmenities, setSelectedAmenities] = useState([]);
+  const [selectedMeals, setSelectedMeals] = useState([]);
+  const [selectedDays, setSelectedDays] = useState([]);
+  const [selectedPets, setSelectedPets] = useState([]);
+
+  // Dados Auxiliares
+  const typeName = ESTABLISHMENT_TYPES.find(t => generateSlug(t) === typeSlug) || typeSlug?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const stateName = STATE_NAMES[stateSlug?.toUpperCase()] || stateSlug?.toUpperCase();
+  const cityName = citySlug 
+      ? citySlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') 
+      : null;
+  // REMOVIDO: "Estado de" para deixar mais natural
+  const locationTitle = cityName ? `${cityName}, ${stateName}` : stateName;
+
+  // --- 1. SEO DINÂMICO ---
+  const seoTitle = cityName 
+    ? `Day Use ${typeName}: Veja ${filteredItems.length} Opções Em ${cityName}!`
+    : `Day Use ${typeName}: ${filteredItems.length} Locais em ${stateName}!`;
+
+  const seoDesc = `Procurando ${typeName} em ${locationTitle}? Encontre as melhores opções com piscina, almoço e lazer completo. Compare preços e reserve agora no Mapa do Day Use.`;
+
+  useSEO(seoTitle, seoDesc);
+
+  // --- 2. SCHEMA MARKUP ---
+  useSchema({
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      "name": seoTitle,
+      "description": seoDesc,
+      "breadcrumb": {
+          "@type": "BreadcrumbList",
+          "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mapadodayuse.com" },
+              { "@type": "ListItem", "position": 2, "name": stateName, "item": `https://mapadodayuse.com/${stateSlug}` },
+              ...(cityName ? [{ "@type": "ListItem", "position": 3, "name": cityName, "item": `https://mapadodayuse.com/${stateSlug}/${citySlug}` }] : []),
+              { "@type": "ListItem", "position": cityName ? 4 : 3, "name": typeName }
+          ]
+      },
+      "mainEntity": {
+          "@type": "ItemList",
+          "itemListElement": filteredItems.map((item, index) => ({
+              "@type": "ListItem",
+              "position": index + 1,
+              "url": `https://mapadodayuse.com/${getStateSlug(item.state)}/${generateSlug(item.name)}`,
+              "name": item.name
+          }))
+      }
+  });
+
+  // Fetch Inicial (Carrega base de dados do tipo/estado)
+  useEffect(() => {
+    const fetchItems = async () => {
+      setLoading(true);
+      try {
+        const q = query(collection(db, "dayuses"));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        
+        const baseFiltered = data.filter(item => {
+            // Filtro Localização
+            const matchState = getStateSlug(item.state) === stateSlug?.toLowerCase();
+            // Se tiver cidade na URL, filtra aqui. Se não, deixa para o filtro lateral.
+            const matchCity = citySlug ? generateSlug(item.city) === citySlug : true;
+            
+            // Filtro Tipo
+            const itemTypeSlug = item.type ? generateSlug(item.type) : null;
+            // Fallback para busca textual se o campo type estiver vazio em registros antigos
+            const matchType = itemTypeSlug === typeSlug || (!item.type && (item.name + " " + item.description).toLowerCase().includes(typeName.toLowerCase()));
+
+            return matchState && matchCity && matchType;
+        });
+        
+        setItems(baseFiltered);
+      } catch (error) { console.error(error); } 
+      finally { setLoading(false); }
+    };
+    fetchItems();
+  }, [typeSlug, stateSlug, citySlug]);
+
+  // Lógica de Filtros (Refinamento local)
+  useEffect(() => {
+    let result = items;
+    
+    // Filtro de Cidade (Se não veio na URL)
+    if (!citySlug && filterCity) result = result.filter(i => generateSlug(i.city) === filterCity);
+    
+    // Filtros Comuns
+    if (maxPrice) result = result.filter(i => Number(i.priceAdult) <= Number(maxPrice));
+    if (selectedAmenities.length > 0) result = result.filter(i => selectedAmenities.every(a => (i.amenities || []).includes(a)));
+    if (selectedMeals.length > 0) result = result.filter(i => selectedMeals.some(m => (i.meals || []).includes(m)));
+    if (selectedDays.length > 0) result = result.filter(i => selectedDays.some(dayIdx => (i.availableDays || []).includes(dayIdx)));
+    if (selectedPets.length > 0) {
+        result = result.filter(i => {
+            if (selectedPets.includes("Não aceita animais")) return !i.petAllowed;
+            if (!i.petAllowed) return false;
+            return selectedPets.some(p => {
+                const size = p.split(' ')[3];
+                if (!size) return true;
+                const localPetSize = (i.petSize || "").toLowerCase();
+                return localPetSize.includes(size) || localPetSize.includes("qualquer") || localPetSize.includes("todos");
+            });
+        });
+    }
+    setFilteredItems(result);
+  }, [items, filterCity, maxPrice, selectedAmenities, selectedMeals, selectedDays, selectedPets, citySlug]);
+
+  const toggleFilter = (list, setList, item) => {
+      if (list.includes(item)) setList(list.filter(i => i !== item));
+      else setList([...list, item]);
+  };
+  
+  const clearFilters = () => { setMaxPrice(""); setSelectedAmenities([]); setSelectedMeals([]); setSelectedDays([]); setSelectedPets([]); setFilterCity(""); };
+  const availableCities = [...new Set(items.map(i => i.city))].sort();
+
+  // Componente Visual de Filtros (Reutilizável Desktop/Mobile)
+  const FiltersContent = () => (
+      <div className="space-y-6">
+          <div className="flex justify-between items-center">
+              <h2 className="font-bold text-slate-900 flex items-center gap-2 text-lg"><Filter size={18}/> Filtros</h2>
+              <button onClick={clearFilters} className="text-xs text-[#0097A8] font-bold hover:underline">Limpar</button>
+          </div>
+          
+          {/* Se estiver na página do Estado, mostra filtro de cidade. Se estiver na página da Cidade, esconde. */}
+          {!citySlug && (
+              <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Cidade</label>
+                  <select className="w-full p-2 border rounded-xl text-sm bg-slate-50" value={filterCity} onChange={e => setFilterCity(e.target.value)}>
+                      <option value="">Todas as cidades</option>
+                      {availableCities.map(c => <option key={c} value={generateSlug(c)}>{c}</option>)}
+                  </select>
+              </div>
+          )}
+
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Preço Máximo (Adulto)</label><div className="flex items-center gap-2 border rounded-xl p-2 bg-white"><span className="text-slate-400 text-sm">R$</span><input type="number" placeholder="0,00" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} className="w-full outline-none text-sm"/></div></div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Dias de Funcionamento</label><div className="flex flex-wrap gap-2">{WEEK_DAYS.map((d, i) => (<button key={i} onClick={()=>toggleFilter(selectedDays, setSelectedDays, i)} className={`text-xs px-2 py-1 rounded border transition-colors ${selectedDays.includes(i) ? 'bg-[#0097A8] text-white border-[#0097A8]' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{d.slice(0,3)}</button>))}</div></div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pensão / Refeições</label>{MEALS_LIST.map(m => (<label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1"><input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleFilter(selectedMeals, setSelectedMeals, m)} className="accent-[#0097A8] rounded"/> {m}</label>))}</div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Pets</label>{["Aceita animais de pequeno porte", "Aceita animais de médio porte", "Aceita animais de grande porte", "Não aceita animais"].map(p => (<label key={p} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8] mb-1"><input type="checkbox" checked={selectedPets.includes(p)} onChange={()=>toggleFilter(selectedPets, setSelectedPets, p)} className="accent-[#0097A8] rounded"/> {p}</label>))}</div>
+          <div><label className="text-xs font-bold text-slate-500 uppercase block mb-2">Comodidades</label><div className="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar">{AMENITIES_LIST.map(a => (<label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleFilter(selectedAmenities, setSelectedAmenities, a)} className="accent-[#0097A8] rounded"/> {a}</label>))}</div></div>
+      </div>
+  );
+
+  if (loading) return (
+      <div className="max-w-7xl mx-auto py-12 px-4">
+          <div className="h-8 w-64 bg-slate-200 rounded-lg animate-pulse mb-6"></div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+      </div>
+  );
+
+  return (
+    <div className="max-w-7xl mx-auto py-8 px-4 animate-fade-in">
+        
+        {/* TÍTULO */}
+        <div className="mb-8">
+            <span className="text-xs font-bold text-[#0097A8] uppercase tracking-wider bg-cyan-50 px-3 py-1 rounded-full mb-3 inline-block">Categoria</span>
+            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-2 capitalize">
+                Day Use em <span className="text-[#0097A8]">{typeName}</span>
+            </h1>
+            <p className="text-slate-500 text-lg">
+                {filteredItems.length} opções encontradas em {locationTitle}
+            </p>
+        </div>
+
+        {/* FILTRO MOBILE */}
+        <div className="md:hidden mb-8">
+            <button onClick={() => setShowMobileFilters(!showMobileFilters)} className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-bold active:bg-slate-50 transition-colors">
+                <span className="flex items-center gap-2"><Filter size={20} className="text-[#0097A8]"/> Filtrar</span>
+                <ChevronDown size={20} className={`transition-transform duration-300 ${showMobileFilters ? 'rotate-180' : ''}`}/>
+            </button>
+            {showMobileFilters && <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-3 shadow-lg animate-fade-in"><FiltersContent /></div>}
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-8">
+            
+            {/* SIDEBAR DESKTOP */}
+            <div className="hidden md:block w-1/4 space-y-6 h-fit sticky top-24">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <FiltersContent />
+                </div>
+            </div>
+
+            {/* LISTA DE CARDS */}
+            <div className="flex-1">
+                {filteredItems.length === 0 ? (
+                    <div className="bg-slate-50 p-12 rounded-[2.5rem] border border-dashed border-slate-300 text-center">
+                        <Search size={32} className="mx-auto text-slate-400 mb-4"/>
+                        <h3 className="text-xl font-bold text-slate-700 mb-2">Nenhum local encontrado.</h3>
+                        <p className="text-slate-500 mb-6 max-w-md mx-auto">
+                            Tente ajustar os filtros ou veja outras opções na região.
+                        </p>
+                        <Button onClick={clearFilters}>Limpar Filtros</Button>
+                    </div>
+                ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {filteredItems.map(item => (
+                            <DayUseCard 
+                                key={item.id} 
+                                item={item} 
+                                onClick={() => navigate(`/${getStateSlug(item.state)}/${generateSlug(item.name)}`, {state: {id: item.id}})} 
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    </div>
+  );
+};
+
 const App = () => {
   return (
       <Routes>
@@ -7270,6 +7556,7 @@ const App = () => {
 
         <Route path="/:state" element={<Layout><RouteResolver /></Layout>} />
         <Route path="/:state/:cityOrSlug" element={<Layout><RouteResolver /></Layout>} />
+        <Route path="/:state/:type/:city" element={<Layout><TypeListingPage /></Layout>} />
         <Route path="/stay/:id" element={<Layout><DetailsPage /></Layout>} />
         <Route path="/checkout" element={<Layout><CheckoutPage /></Layout>} />
         
