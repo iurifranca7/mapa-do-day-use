@@ -1,9 +1,10 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import * as admin from 'firebase-admin';
 
-// --- INICIALIZAÇÃO BLINDADA (Mesma dos outros arquivos) ---
-function initFirebaseAdmin() {
-  if (admin.apps.length > 0) return;
+// --- INICIALIZAÇÃO FIREBASE (Mesma lógica segura do processamento) ---
+const initFirebase = () => {
+  if (admin.apps.length > 0) return admin.firestore();
+
   try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
         const buffer = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64');
@@ -15,16 +16,17 @@ function initFirebaseAdmin() {
         const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
         const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
         if (projectId && clientEmail && privateKeyRaw) {
-            let privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
+            const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
             admin.initializeApp({ credential: admin.credential.cert({ projectId, clientEmail, privateKey }) });
         }
     }
   } catch (e) { console.error("Erro Firebase Init:", e); }
-}
-
-const getDb = () => admin.apps.length ? admin.firestore() : null;
+  
+  return admin.firestore();
+};
 
 export default async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -36,20 +38,21 @@ export default async function handler(req, res) {
   const { paymentId, ownerId } = req.body;
 
   try {
-    initFirebaseAdmin();
-    const db = getDb();
+    const db = initFirebase();
 
-    // 1. Define qual token usar (do Parceiro ou da Plataforma)
-    let accessToken = process.env.MP_ACCESS_TOKEN; // Default
+    // 1. Define qual token usar
+    // Se tiver ownerId (Venda com Split), busca o token do parceiro
+    let accessToken = process.env.MP_ACCESS_TOKEN; // Default (Plataforma)
 
     if (ownerId && db) {
         const ownerDoc = await db.collection('users').doc(ownerId).get();
         if (ownerDoc.exists && ownerDoc.data().mp_access_token) {
             accessToken = ownerDoc.data().mp_access_token;
+            console.log("🔍 Verificando na conta do Parceiro:", ownerId);
         }
     }
 
-    if (!accessToken) throw new Error("Token MP não encontrado.");
+    if (!accessToken) throw new Error("Token MP não encontrado para consulta.");
 
     // 2. Consulta Status no Mercado Pago
     const client = new MercadoPagoConfig({ accessToken });
@@ -59,7 +62,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
         id: paymentData.id,
-        status: paymentData.status, // 'approved', 'pending', etc.
+        status: paymentData.status, // approved, pending, rejected
         status_detail: paymentData.status_detail
     });
 
