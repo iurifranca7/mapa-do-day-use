@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy, arrayUnion } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
 import { 
   signInWithPopup, 
@@ -3206,27 +3206,63 @@ const PartnerDashboard = () => {
       if (!manageRes) return;
       setManageLoading(true);
 
-      const payload = {
-          reservationId: manageRes.id,
-          action: manageAction === 'reschedule' ? 'reschedule' : (refundPercent === 100 ? 'cancel_full' : 'cancel_partial'),
-          percentage: refundPercent,
-          newDate: rescheduleDate
-      };
-
       try {
-          const response = await fetch('/api/refund', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-          });
-          const data = await response.json();
+          // 1. REAGENDAMENTO (Atualiza apenas o Firestore)
+          if (manageAction === 'reschedule') {
+              await updateDoc(doc(db, "reservations", manageRes.id), {
+                  date: rescheduleDate,
+                  updatedAt: new Date()
+              });
+              setFeedback({ type: 'success', title: 'Sucesso', msg: 'Data da reserva alterada.' });
+          } 
+          
+          // 2. CANCELAMENTO / REEMBOLSO
+          else {
+              // Verifica se é um pagamento real que pode ser estornado via API
+              const shouldRefundMoney = manageRes.paymentId && !manageRes.paymentId.startsWith('FRONT_') && !manageRes.paymentId.startsWith('PIX-');
+              
+              if (shouldRefundMoney) {
+                  // Busca o token do parceiro atual para autorizar o estorno na API
+                  const userSnap = await getDoc(doc(db, "users", user.uid));
+                  const partnerToken = userSnap.data()?.mp_access_token;
+                  
+                  if (!partnerToken) throw new Error("Seu token do Mercado Pago não foi encontrado. Tente reconectar sua conta.");
 
-          if (response.ok) {
-              setFeedback({ type: 'success', title: 'Sucesso', msg: data.message });
-              setManageRes(null);
-          } else {
-              throw new Error(data.error || "Erro desconhecido");
+                  const refundAmount = refundPercent === 100 ? undefined : Number((manageRes.total * (refundPercent / 100)).toFixed(2));
+
+                  // Chama a API apenas para devolver o dinheiro
+                  const response = await fetch('/api/refund', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ 
+                          paymentId: manageRes.paymentId, 
+                          amount: refundAmount,
+                          partnerAccessToken: partnerToken
+                      })
+                  });
+
+                  const apiData = await response.json();
+                  if (!response.ok) throw new Error(apiData.message || "Erro no estorno financeiro.");
+              }
+
+              // Atualiza o status da reserva no banco de dados
+              await updateDoc(doc(db, "reservations", manageRes.id), {
+                  status: 'cancelled',
+                  refundStatus: refundPercent === 100 ? 'full' : 'partial',
+                  refundedAmount: refundPercent === 100 ? manageRes.total : (manageRes.total * (refundPercent / 100)),
+                  cancelledAt: new Date(),
+                  note: shouldRefundMoney ? 'Estornado via MP' : 'Cancelamento manual (sem estorno financeiro automático)'
+              });
+
+              setFeedback({ 
+                  type: 'success', 
+                  title: 'Cancelado', 
+                  msg: shouldRefundMoney ? 'Reserva cancelada e estorno processado.' : 'Reserva cancelada no sistema.' 
+              });
           }
+          
+          setManageRes(null);
+
       } catch (err) {
           console.error(err);
           setFeedback({ type: 'error', title: 'Erro', msg: err.message });
