@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
 import { 
   signInWithPopup, 
@@ -33,7 +33,8 @@ import {
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
-  Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile
+  Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
+  Eye, Archive, ExternalLink
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -3604,8 +3605,8 @@ const PartnerNew = () => {
   const handleSubmit = async (e) => {
     e.preventDefault(); 
     
-    // TRAVA DE SEGURANÇA (E-MAIL)
-    if (user && !user.emailVerified) {
+    // Trava de e-mail (Mantida para parceiros, liberada para admin)
+    if (user && !user.emailVerified && user.role !== 'admin') {
          setFeedback({
              type: 'warning',
              title: 'Ação Bloqueada',
@@ -3629,7 +3630,9 @@ const PartnerNew = () => {
     const dataToSave = { 
         ...formData, 
         ...imageFields, 
-        ownerId: user?.uid || "admin", 
+        // CORREÇÃO CRÍTICA PARA CMS: 
+        // Se já existe um ownerId no formulário (edição), mantém ele. Se for novo, usa o usuário atual.
+        ownerId: (id && formData.ownerId) ? formData.ownerId : (user?.uid || "admin"), 
         coupons, 
         dailyStock, 
         weeklyPrices, 
@@ -3646,7 +3649,11 @@ const PartnerNew = () => {
     try { 
         if (id) await updateDoc(doc(db, "dayuses", id), dataToSave);
         else await addDoc(collection(db, "dayuses"), { ...dataToSave, createdAt: new Date() });
-        navigate('/partner'); 
+        
+        // Redirecionamento Inteligente: Admin volta pro CMS, Parceiro volta pro Painel
+        if (user.role === 'admin') navigate('/admin');
+        else navigate('/partner');
+
     } catch (err) { 
         console.error("Erro ao salvar:", err);
         setFeedback({ type: 'error', title: 'Erro ao Salvar', msg: 'Verifique sua conexão ou se as imagens são muito pesadas.' });
@@ -6530,47 +6537,50 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // PAINEL ADMINISTRATIVO (MODERAÇÃO)
 // -----------------------------------------------------------------------------
 const AdminDashboard = () => {
-  const [activeTab, setActiveTab] = useState('partners'); // 'partners', 'leads', 'claims'
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('partners'); 
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   
-  // States - Parceiros
+  // States - Listas
   const [pendingUsers, setPendingUsers] = useState([]);
-  const [viewDoc, setViewDoc] = useState(null);
-
-  // States - Leads
   const [leads, setLeads] = useState([]);
+  const [claims, setClaims] = useState([]);
+  const [cmsItems, setCmsItems] = useState([]);
+  
+  // States - Controles
+  const [viewDoc, setViewDoc] = useState(null);
+  const [viewClaim, setViewClaim] = useState(null);
+  
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
-
-  // States - Claims (Solicitações)
-  const [claims, setClaims] = useState([]);
-  const [claimFilter, setClaimFilter] = useState('pending'); // 'pending', 'done'
+  const [claimFilter, setClaimFilter] = useState('pending');
+  const [cmsSearch, setCmsSearch] = useState("");
 
   useEffect(() => {
+    let unsubs = []; 
+
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
         if(u) {
-            const snap = await getDoc(doc(db, "users", u.uid));
-            if (snap.data()?.role === 'admin') {
-                setUser(u);
-                
-                // Listener Parceiros Pendentes
-                onSnapshot(query(collection(db, "users"), where("docStatus", "==", "pending")), (s) => {
-                    setPendingUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
-                });
+            try {
+                const snap = await getDoc(doc(db, "users", u.uid));
+                if (snap.exists() && snap.data().role === 'admin') {
+                    setUser(u);
+                    
+                    unsubs.push(onSnapshot(query(collection(db, "users"), where("docStatus", "==", "pending")), (s) => setPendingUsers(s.docs.map(d => ({id: d.id, ...d.data()})))));
+                    unsubs.push(onSnapshot(query(collection(db, "leads"), orderBy("createdAt", "desc")), (s) => setLeads(s.docs.map(d => ({id: d.id, ...d.data()})))));
+                    unsubs.push(onSnapshot(query(collection(db, "property_claims"), orderBy("createdAt", "desc")), (s) => setClaims(s.docs.map(d => ({id: d.id, ...d.data()})))));
+                    unsubs.push(onSnapshot(collection(db, "dayuses"), (s) => setCmsItems(s.docs.map(d => ({id: d.id, ...d.data()})))));
 
-                // Listener Leads (Quiz)
-                onSnapshot(query(collection(db, "leads"), orderBy("createdAt", "desc")), (s) => {
-                    setLeads(s.docs.map(d => ({id: d.id, ...d.data()})));
-                });
-
-                // Listener Solicitações (Claims)
-                onSnapshot(query(collection(db, "property_claims"), orderBy("createdAt", "desc")), (s) => {
-                    setClaims(s.docs.map(d => ({id: d.id, ...d.data()})));
-                });
-            }
-        }
+                    setLoading(false);
+                } else {
+                    navigate('/');
+                }
+            } catch (err) { console.error(err); }
+        } else { navigate('/'); }
     });
-    return unsubAuth;
+
+    return () => { unsubAuth(); unsubs.forEach(u => u()); };
   }, []);
 
   // --- AÇÕES PARCEIROS ---
@@ -6581,50 +6591,12 @@ const AdminDashboard = () => {
           
           let subject = "";
           let html = "";
-
-          // E-MAIL DE APROVAÇÃO (TEMPLATE ATUALIZADO)
           if (status === 'verified') {
-              subject = "Parabéns! Sua empresa foi APROVADA! 🚀";
-              html = `
-                <div style="font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
-                    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
-                        <div style="background-color: #0097A8; padding: 40px 30px; text-align: center;">
-                            <h1 style="color: white; margin: 0; font-size: 28px;">Bem-vindo(a) ao Time! 🎉</h1>
-                        </div>
-                        <div style="padding: 40px 30px; text-align: center;">
-                            <h2 style="color: #2c3e50; margin-top: 0;">Sua conta foi verificada com sucesso.</h2>
-                            <p style="color: #555; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
-                                A análise jurídica foi concluída e sua empresa está apta a operar no <strong>Mapa do Day Use</strong>. Você desbloqueou o acesso completo ao painel.
-                            </p>
-                            
-                            <div style="background-color: #fff8e1; border: 1px solid #ffe0b2; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
-                                <p style="color: #e65100; font-weight: bold; margin: 0 0 10px 0;">🚀 Próxima Etapa Obrigatória:</p>
-                                <p style="color: #555; margin: 0; font-size: 14px;">
-                                    Conecte sua conta do <strong>Mercado Pago</strong> para habilitar o recebimento financeiro automático.
-                                </p>
-                            </div>
-
-                            <a href="https://mapadodayuse.com/partner" style="display: inline-block; background-color: #0097A8; color: white; padding: 16px 32px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 10px rgba(0,151,168,0.3);">
-                                Acessar Painel do Parceiro
-                            </a>
-                            
-                            <p style="margin-top: 40px; font-size: 14px; color: #999;">
-                                Dúvidas? Nossa equipe de suporte está à disposição no WhatsApp.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-              `;
+              subject = "Conta APROVADA! 🎉";
+              html = `<p>Parabéns! Documentação aprovada. <a href="https://mapadodayuse.com/partner">Acesse seu painel</a>.</p>`;
           } else {
-              subject = "Atualização sobre sua conta - Ação Necessária";
-              html = `
-                <div style="font-family: sans-serif; padding: 30px;">
-                    <h2 style="color: #c0392b;">Documentação Precisa de Ajustes</h2>
-                    <p>Olá. Infelizmente, não conseguimos validar o documento enviado (motivo: ilegível, incompleto ou inválido).</p>
-                    <p>Por favor, acesse seu painel e envie uma nova foto ou PDF do <strong>Contrato Social</strong> ou <strong>CCMEI</strong>.</p>
-                    <a href="https://mapadodayuse.com/partner/verificacao">Enviar Novamente</a>
-                </div>
-              `;
+              subject = "Pendência na sua conta";
+              html = `<p>Documento recusado. Envie uma foto legível do CCMEI/Contrato.</p>`;
           }
           
           if (viewDoc?.email) {
@@ -6634,38 +6606,67 @@ const AdminDashboard = () => {
                   body: JSON.stringify({ to: viewDoc.email, subject, html })
               }).catch(console.error);
           }
-
           setViewDoc(null);
       }
   };
 
-  // --- AÇÕES LEADS ---
-  const filteredLeads = leads.filter(l => {
-      if (!dateStart && !dateEnd) return true;
-      const leadDate = l.createdAt?.toDate ? l.createdAt.toDate() : new Date(l.createdAt);
-      const start = dateStart ? new Date(dateStart) : new Date('2000-01-01');
-      const end = dateEnd ? new Date(dateEnd) : new Date();
-      end.setHours(23, 59, 59);
-      return leadDate >= start && leadDate <= end;
-  });
+  // --- AÇÃO: TRANSFERÊNCIA DE PROPRIEDADE ---
+  const handleTransferProperty = async (claim) => {
+      if (!confirm(`ATENÇÃO: Isso vai transferir a administração do local "${claim.propertyName}" para "${claim.userEmail}".\n\nTem certeza?`)) return;
 
+      try {
+          const usersRef = collection(db, "users");
+          const q = query(usersRef, where("email", "==", claim.userEmail));
+          const querySnapshot = await getDocs(q);
+
+          if (querySnapshot.empty) {
+              alert("ERRO: Este e-mail não possui uma conta cadastrada. O usuário precisa criar uma conta primeiro.");
+              return;
+          }
+
+          const targetUserId = querySnapshot.docs[0].id;
+
+          await updateDoc(doc(db, "dayuses", claim.propertyId), { ownerId: targetUserId, updatedAt: new Date() });
+          await updateDoc(doc(db, "property_claims", claim.id), { status: 'done' });
+          
+          fetch('/api/send-email', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ to: claim.userEmail, subject: "Acesso Liberado! 🔑", html: `<p>Seu pedido para administrar <strong>${claim.propertyName}</strong> foi aprovado.</p>` })
+          });
+
+          alert("Transferência realizada!");
+          setViewClaim(null);
+
+      } catch (error) {
+          console.error(error);
+          alert("Erro ao transferir.");
+      }
+  };
+
+  const handleArchiveClaim = async (id) => {
+      if(confirm("Arquivar esta solicitação?")) {
+          await updateDoc(doc(db, "property_claims", id), { status: 'archived' });
+          setViewClaim(null);
+      }
+  };
+
+  // --- AÇÕES CMS E EXPORT ---
+  const handleToggleStatus = async (item) => { if(confirm(`Alterar status de ${item.name}?`)) await updateDoc(doc(db, "dayuses", item.id), { paused: !item.paused }); };
+  const handleDeletePage = async (id) => { if(confirm("Excluir permanentemente?")) await deleteDoc(doc(db, "dayuses", id)); };
+  
   const exportLeadsCSV = () => {
-      const headers = ["Data", "Nome", "Email", "Cidade", "Newsletter", "Perfil", "Pet", "Alimentação"];
+      const headers = ["Data Hora", "Nome", "Email", "Cidade", "Newsletter", "Companhia", "Pet", "Alimentação", "Exigência"];
       const rows = filteredLeads.map(l => [
-          l.createdAt?.toDate ? l.createdAt.toDate().toLocaleDateString('pt-BR') : new Date().toLocaleDateString(),
-          l.name,
-          l.email,
-          l.city,
-          l.newsletter ? "Sim" : "Não",
-          l.preferences?.company || "-",
-          l.preferences?.pet ? "Sim" : "Não",
-          l.preferences?.food || "-"
+          l.createdAt?.toDate ? l.createdAt.toDate().toLocaleString('pt-BR') : '-',
+          l.name, l.email, l.city, l.newsletter ? "Sim" : "Não",
+          l.preferences?.company || "-", 
+          l.preferences?.pet ? "Sim" : "Não", 
+          l.preferences?.food || "-",
+          l.preferences?.must_have || "-"
       ]);
 
-      const csvContent = "data:text/csv;charset=utf-8," 
-          + headers.join(",") + "\n" 
-          + rows.map(e => e.join(",")).join("\n");
-
+      const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
       link.setAttribute("href", encodedUri);
@@ -6675,101 +6676,75 @@ const AdminDashboard = () => {
       document.body.removeChild(link);
   };
 
-  // --- AÇÕES SOLICITAÇÕES ---
-  const handleClaimStatus = async (id, newStatus) => {
-      if(confirm("Alterar status da solicitação?")) {
-          await updateDoc(doc(db, "property_claims", id), { status: newStatus });
-      }
-  };
-
+  // Filtros
+  const filteredLeads = leads.filter(l => { if (!dateStart && !dateEnd) return true; const d = l.createdAt?.toDate ? l.createdAt.toDate() : new Date(); const s = dateStart ? new Date(dateStart) : new Date('2000-01-01'); const e = dateEnd ? new Date(dateEnd) : new Date(); e.setHours(23,59,59); return d >= s && d <= e; });
   const filteredClaims = claims.filter(c => claimFilter === 'all' || c.status === claimFilter);
+  const filteredCmsItems = cmsItems.filter(i => (i.name || "").toLowerCase().includes(cmsSearch.toLowerCase()) || (i.city || "").toLowerCase().includes(cmsSearch.toLowerCase()));
 
-  if (!user) return <div className="text-center py-20">Verificando permissões...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin w-10 h-10 border-4 border-[#0097A8] border-t-transparent rounded-full"></div></div>;
+  if (!user) return <div className="text-center py-20 text-red-500">Acesso restrito.</div>;
 
   return (
     <div className="max-w-6xl mx-auto py-12 px-4 animate-fade-in">
-        <h1 className="text-3xl font-bold text-slate-900 mb-8 flex items-center gap-2">
-            <ShieldCheck className="text-[#0097A8]"/> Painel Administrativo
-        </h1>
+        <h1 className="text-3xl font-bold text-slate-900 mb-8 flex items-center gap-2"><ShieldCheck className="text-[#0097A8]"/> Painel Administrativo</h1>
 
-        {/* NAVEGAÇÃO EM ABAS */}
+        {/* NAVEGAÇÃO */}
         <div className="flex gap-4 mb-8 border-b border-slate-200 pb-1 overflow-x-auto">
-            <button onClick={() => setActiveTab('partners')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'partners' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
-                Moderação Parceiros {pendingUsers.length > 0 && <span className="ml-2 bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">{pendingUsers.length}</span>}
-            </button>
-            <button onClick={() => setActiveTab('leads')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'leads' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
-                Leads Quiz
-            </button>
-            <button onClick={() => setActiveTab('claims')} className={`pb-3 px-4 text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'claims' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>
-                Solicitações de Propriedade {claims.filter(c=>c.status==='pending').length > 0 && <span className="ml-2 bg-orange-500 text-white text-[10px] px-2 py-0.5 rounded-full">{claims.filter(c=>c.status==='pending').length}</span>}
-            </button>
+            <button onClick={() => setActiveTab('partners')} className={`pb-3 px-4 text-sm font-bold whitespace-nowrap ${activeTab === 'partners' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Moderação {pendingUsers.length > 0 && <span className="ml-2 bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">{pendingUsers.length}</span>}</button>
+            <button onClick={() => setActiveTab('cms')} className={`pb-3 px-4 text-sm font-bold whitespace-nowrap ${activeTab === 'cms' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>CMS ({cmsItems.length})</button>
+            <button onClick={() => setActiveTab('leads')} className={`pb-3 px-4 text-sm font-bold whitespace-nowrap ${activeTab === 'leads' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Leads ({leads.length})</button>
+            <button onClick={() => setActiveTab('claims')} className={`pb-3 px-4 text-sm font-bold whitespace-nowrap ${activeTab === 'claims' ? 'text-[#0097A8] border-b-2 border-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Solicitações {claims.filter(c=>c.status==='pending').length > 0 && <span className="ml-2 bg-orange-500 text-white text-[10px] px-2 py-0.5 rounded-full">{claims.filter(c=>c.status==='pending').length}</span>}</button>
         </div>
 
-        {/* --- CONTEÚDO: PARCEIROS --- */}
+        {/* TAB PARCEIROS */}
         {activeTab === 'partners' && (
-            <div>
-                {pendingUsers.length === 0 ? (
-                    <div className="bg-slate-50 p-12 rounded-3xl border border-dashed border-slate-300 text-center">
-                        <CheckCircle size={48} className="text-green-500 mx-auto mb-4"/>
-                        <p className="text-slate-500">Tudo limpo! Nenhuma verificação pendente.</p>
-                    </div>
-                ) : (
-                    <div className="grid gap-4">
-                        {pendingUsers.map(p => (
-                            <div key={p.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
-                                <div>
-                                    <p className="font-bold text-lg text-slate-800">{p.name || "Sem nome"}</p>
-                                    <p className="text-sm text-slate-500">{p.email}</p>
-                                    <p className="text-xs text-slate-400 mt-1">Enviado em: {p.submittedAt?.toDate ? p.submittedAt.toDate().toLocaleString() : 'Data inválida'}</p>
-                                </div>
-                                <Button onClick={() => setViewDoc(p)} className="px-6">Analisar Documento</Button>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+            <div className="grid gap-4">{pendingUsers.length === 0 ? <p className="text-slate-400 text-center py-8">Tudo limpo!</p> : pendingUsers.map(p => (<div key={p.id} className="bg-white p-6 rounded-2xl border flex justify-between items-center"><div><p className="font-bold">{p.name}</p><p className="text-sm text-slate-500">{p.email}</p><p className="text-xs text-slate-400">Enviado: {p.submittedAt?.toDate().toLocaleString()}</p></div><Button onClick={() => setViewDoc(p)}>Analisar</Button></div>))}</div>
         )}
 
-        {/* --- CONTEÚDO: LEADS --- */}
+        {/* TAB CMS */}
+        {activeTab === 'cms' && (
+             <div className="space-y-6">
+                <div className="relative max-w-md"><Search size={18} className="absolute left-3 top-3.5 text-slate-400"/><input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8]" placeholder="Buscar página..." value={cmsSearch} onChange={e=>setCmsSearch(e.target.value)}/></div>
+                <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs"><tr><th className="p-4">Capa</th><th className="p-4">Nome</th><th className="p-4">Local</th><th className="p-4">Status</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-slate-100">{filteredCmsItems.map(item => (<tr key={item.id} className="hover:bg-slate-50 transition-colors"><td className="p-4"><img src={item.image} className="w-12 h-12 rounded-lg object-cover bg-slate-200" alt="Capa"/></td><td className="p-4"><p className="font-bold text-slate-800">{item.name}</p><a href={`/${getStateSlug(item.state)}/${item.slug}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#0097A8] hover:underline flex items-center gap-1">Ver online <ExternalLink size={10}/></a></td><td className="p-4 text-slate-600">{item.city}, {item.state}</td><td className="p-4">{item.paused ? <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 w-fit"><Archive size={12}/> Arquivado</span> : <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 w-fit"><CheckCircle size={12}/> Ativo</span>}</td><td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => navigate(`/partner/edit/${item.id}`)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg" title="Editar"><Edit size={16}/></button><button onClick={() => handleToggleStatus(item)} className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg" title={item.paused ? "Publicar" : "Arquivar"}><Archive size={16}/></button><button onClick={() => handleDeletePage(item.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Excluir"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
+            </div>
+        )}
+        
+        {/* TAB LEADS */}
         {activeTab === 'leads' && (
             <div className="space-y-6">
-                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div className="flex gap-4 items-center">
-                        <div>
-                            <label className="text-xs font-bold text-slate-400 block mb-1">De</label>
-                            <input type="date" className="border p-2 rounded-lg text-sm" value={dateStart} onChange={e=>setDateStart(e.target.value)} />
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-slate-400 block mb-1">Até</label>
-                            <input type="date" className="border p-2 rounded-lg text-sm" value={dateEnd} onChange={e=>setDateEnd(e.target.value)} />
-                        </div>
-                    </div>
-                    <div className="text-right">
-                        <p className="text-xs text-slate-400 mb-1">Total Filtrado: <strong>{filteredLeads.length}</strong></p>
-                        <Button onClick={exportLeadsCSV} variant="outline" className="text-xs h-9"><Download size={14}/> Exportar CSV</Button>
-                    </div>
+                <div className="bg-white p-4 rounded-2xl border flex justify-between items-center">
+                    <div className="flex gap-4"><input type="date" className="border p-2 rounded" value={dateStart} onChange={e=>setDateStart(e.target.value)} /><input type="date" className="border p-2 rounded" value={dateEnd} onChange={e=>setDateEnd(e.target.value)} /></div>
+                    <div className="text-right"><p className="text-xs text-slate-400 mb-1">Total: <strong>{filteredLeads.length}</strong></p><Button onClick={exportLeadsCSV} variant="outline" className="text-xs h-9"><Download size={14}/> CSV</Button></div>
                 </div>
-
-                <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-3xl border overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
                             <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs">
                                 <tr>
-                                    <th className="p-4 whitespace-nowrap">Data</th>
+                                    <th className="p-4 whitespace-nowrap">Data/Hora</th>
                                     <th className="p-4 whitespace-nowrap">Nome</th>
                                     <th className="p-4 whitespace-nowrap">Email</th>
                                     <th className="p-4 whitespace-nowrap">Cidade</th>
-                                    <th className="p-4 whitespace-nowrap">Perfil</th>
+                                    <th className="p-4 whitespace-nowrap">Preferências</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {filteredLeads.map(lead => (
                                     <tr key={lead.id} className="hover:bg-slate-50">
-                                        <td className="p-4 text-slate-500">{lead.createdAt?.toDate ? lead.createdAt.toDate().toLocaleDateString() : '-'}</td>
+                                        <td className="p-4 text-slate-500 whitespace-nowrap">
+                                            {lead.createdAt?.toDate ? lead.createdAt.toDate().toLocaleString('pt-BR') : '-'}
+                                        </td>
                                         <td className="p-4 font-bold text-slate-700">{lead.name}</td>
                                         <td className="p-4 text-slate-600">{lead.email}</td>
                                         <td className="p-4 text-slate-600">{lead.city}</td>
-                                        <td className="p-4"><span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs capitalize">{lead.preferences?.company || '-'}</span></td>
+                                        <td className="p-4">
+                                            <div className="flex flex-col gap-1 text-xs">
+                                                {lead.preferences?.company && <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded w-fit">Perfil: {lead.preferences.company}</span>}
+                                                {lead.preferences?.pet !== undefined && <span className={`px-2 py-0.5 rounded w-fit ${lead.preferences.pet ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>Pet: {lead.preferences.pet ? 'Sim' : 'Não'}</span>}
+                                                {lead.preferences?.food && <span className="bg-orange-50 text-orange-700 px-2 py-0.5 rounded w-fit">Comida: {lead.preferences.food}</span>}
+                                                {lead.preferences?.must_have && <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded w-fit">Exigência: {lead.preferences.must_have}</span>}
+                                            </div>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -6779,40 +6754,35 @@ const AdminDashboard = () => {
                 </div>
             </div>
         )}
-
-        {/* --- CONTEÚDO: SOLICITAÇÕES (CLAIMS) --- */}
+        
+        {/* TAB CLAIMS (SOLICITAÇÕES) */}
         {activeTab === 'claims' && (
             <div className="space-y-6">
                 <div className="flex gap-2">
                     <button onClick={()=>setClaimFilter('pending')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='pending' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>Pendentes</button>
-                    <button onClick={()=>setClaimFilter('done')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='done' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>Atendidas</button>
+                    <button onClick={()=>setClaimFilter('done')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='done' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>Concluídas</button>
                     <button onClick={()=>setClaimFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${claimFilter==='all' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>Todas</button>
                 </div>
 
                 <div className="grid gap-4">
                     {filteredClaims.map(claim => (
-                        <div key={claim.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative">
-                            <div className="absolute top-4 right-4">
-                                {claim.status === 'done' 
-                                    ? <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Atendido</span>
-                                    : <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><Inbox size={12}/> Pendente</span>
-                                }
-                            </div>
-                            <h3 className="font-bold text-lg text-slate-800 mb-1">{claim.propertyName} <span className="text-xs font-normal text-slate-400">(ID: {claim.propertyId})</span></h3>
-                            <p className="text-xs text-slate-400 mb-4">Solicitado em: {claim.createdAt?.toDate ? claim.createdAt.toDate().toLocaleString() : 'Data inválida'}</p>
-                            
-                            <div className="grid md:grid-cols-2 gap-4 text-sm bg-slate-50 p-4 rounded-xl mb-4">
-                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Solicitante</span> <strong>{claim.userName}</strong></div>
-                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Cargo</span> <strong>{claim.userJob}</strong></div>
-                                <div><span className="text-slate-400 block text-xs uppercase font-bold">E-mail</span> {claim.userEmail}</div>
-                                <div><span className="text-slate-400 block text-xs uppercase font-bold">Telefone</span> {claim.userPhone}</div>
-                            </div>
-
-                            {claim.status !== 'done' && (
-                                <div className="flex gap-4">
-                                    <Button onClick={() => handleClaimStatus(claim.id, 'done')} className="h-10 text-sm bg-green-600 hover:bg-green-700 shadow-none">Marcar como Atendido</Button>
-                                    <a href={`mailto:${claim.userEmail}`} className="h-10 px-4 flex items-center justify-center border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-bold text-sm transition-colors">Entrar em contato</a>
+                        <div key={claim.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative flex flex-col md:flex-row justify-between items-start gap-4">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <h3 className="font-bold text-lg text-slate-800">{claim.propertyName}</h3>
+                                    {claim.status === 'done' 
+                                        ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-green-200">Transferido</span>
+                                        : <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-orange-200">Pendente</span>
+                                    }
                                 </div>
+                                <p className="text-sm text-slate-500 mb-1"><strong>Solicitante:</strong> {claim.userName} ({claim.userEmail})</p>
+                                <p className="text-xs text-slate-400">Solicitado em: {claim.createdAt?.toDate ? claim.createdAt.toDate().toLocaleString() : 'Data inválida'}</p>
+                            </div>
+                            
+                            {claim.status !== 'done' && (
+                                <Button onClick={() => setViewClaim(claim)} className="px-6 shadow-sm bg-slate-800 hover:bg-slate-900">
+                                    Analisar Pedido
+                                </Button>
                             )}
                         </div>
                     ))}
@@ -6821,33 +6791,52 @@ const AdminDashboard = () => {
             </div>
         )}
 
-        {/* MODAL DE DOCUMENTO (Mantido) */}
-        {viewDoc && createPortal(
-            <ModalOverlay onClose={() => setViewDoc(null)}>
-                <div className="bg-white p-6 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col relative">
-                    <button onClick={() => setViewDoc(null)} className="absolute top-4 right-4 p-2 bg-slate-100 rounded-full hover:bg-slate-200"><X/></button>
-                    
-                    <h2 className="text-2xl font-bold mb-2">Análise de Documento</h2>
-                    <div className="mb-4 text-sm text-slate-600 bg-slate-50 p-4 rounded-xl">
-                        <p><strong>Parceiro:</strong> {viewDoc.name}</p>
-                        <p><strong>Email:</strong> {viewDoc.email}</p>
+        {/* MODAL DE ANÁLISE DE DOCUMENTO */}
+        {viewDoc && createPortal(<ModalOverlay onClose={() => setViewDoc(null)}><div className="bg-white p-6 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-y-auto relative"><button onClick={() => setViewDoc(null)} className="absolute top-4 right-4"><X/></button><h2 className="text-2xl font-bold mb-4">Análise</h2><div className="bg-slate-100 h-[500px] flex items-center justify-center rounded-xl mb-4">{viewDoc.docFile ? <iframe src={viewDoc.docFile} className="w-full h-full"></iframe> : <p>Sem arquivo</p>}</div><div className="grid grid-cols-2 gap-4"><button onClick={()=>handlePartnerAction(viewDoc.id, 'rejected')} className="bg-red-50 text-red-600 py-3 rounded-xl font-bold">Rejeitar</button><button onClick={()=>handlePartnerAction(viewDoc.id, 'verified')} className="bg-green-600 text-white py-3 rounded-xl font-bold">Aprovar Parceiro</button></div></div></ModalOverlay>, document.body)}
+
+        {/* MODAL DE ANÁLISE DE SOLICITAÇÃO (CLAIM) - RESTAURADO COM TODOS OS DETALHES */}
+        {viewClaim && createPortal(
+            <ModalOverlay onClose={() => setViewClaim(null)}>
+                <div className="bg-white p-8 rounded-3xl w-full max-w-md animate-fade-in relative shadow-2xl">
+                    <button onClick={() => setViewClaim(null)} className="absolute top-4 right-4 p-1 rounded-full hover:bg-slate-100"><X/></button>
+                    <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2"><Briefcase className="text-[#0097A8]"/> Transferência</h2>
+                    <div className="space-y-4 mb-8">
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Propriedade Alvo</p>
+                            <p className="font-bold text-slate-800 text-lg">{viewClaim.propertyName}</p>
+                            <p className="text-xs text-slate-400 font-mono select-all">ID: {viewClaim.propertyId}</p>
+                        </div>
+
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Dados do Solicitante</p>
+                            <div className="space-y-3 text-sm">
+                                <div className="flex items-center gap-3">
+                                    <User size={16} className="text-slate-400 shrink-0"/> 
+                                    <span className="font-bold text-slate-700">{viewClaim.userName}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Briefcase size={16} className="text-slate-400 shrink-0"/> 
+                                    <span className="text-slate-600">{viewClaim.userJob || 'Não informado'}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Mail size={16} className="text-slate-400 shrink-0"/> 
+                                    <span className="text-slate-600 break-all">{viewClaim.userEmail}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Phone size={16} className="text-slate-400 shrink-0"/> 
+                                    <span className="text-slate-600">{viewClaim.userPhone || 'Não informado'}</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="flex-1 bg-slate-100 rounded-xl overflow-hidden mb-6 border border-slate-200 flex items-center justify-center min-h-[300px]">
-                        {viewDoc.docFile ? (
-                            viewDoc.docFile.startsWith('data:application/pdf') ? (
-                                <iframe src={viewDoc.docFile} className="w-full h-[500px]" title="PDF"></iframe>
-                            ) : (
-                                <img src={viewDoc.docFile} className="max-w-full max-h-[70vh] object-contain" alt="Doc" />
-                            )
-                        ) : (
-                            <p className="text-red-500">Erro: Arquivo não encontrado.</p>
-                        )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <button onClick={() => handlePartnerAction(viewDoc.id, 'rejected')} className="py-4 rounded-xl font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-colors border border-red-200">Rejeitar</button>
-                        <button onClick={() => handlePartnerAction(viewDoc.id, 'verified')} className="py-4 rounded-xl font-bold text-white bg-green-600 hover:bg-green-700 transition-colors shadow-lg shadow-green-200">Aprovar Parceiro</button>
+                    <div className="grid grid-cols-2 gap-3">
+                        <Button variant="ghost" onClick={() => handleArchiveClaim(viewClaim.id)} className="text-red-500 hover:text-red-700 hover:bg-red-50">
+                            Arquivar
+                        </Button>
+                        <Button onClick={() => handleTransferProperty(viewClaim)} className="bg-[#0097A8] hover:bg-[#007F8F]">
+                            Aprovar Transferência
+                        </Button>
                     </div>
                 </div>
             </ModalOverlay>,
@@ -7083,7 +7072,7 @@ const App = () => {
         <Route 
             path="/partner/edit/:id" 
             element={
-                <ProtectedRoute allowedRoles={['partner']}>
+                <ProtectedRoute allowedRoles={['partner','admin']}>
                     <Layout><PartnerNew /></Layout>
                 </ProtectedRoute>
             } 
