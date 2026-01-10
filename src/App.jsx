@@ -2031,30 +2031,166 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  const handleConfirm = async (mpPaymentId) => {
+   // --- NOTIFICAÇÃO DE VOUCHER PARA O CLIENTE ---
+  const notifyCustomer = async (reservationData, reservationId) => {
+      try {
+          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${reservationId}`;
+          const mapLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
+
+          const emailHtml = `
+            <div style="font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                    <div style="background-color: #0097A8; padding: 30px; text-align: center;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">Reserva Confirmada! 🎟️</h1>
+                    </div>
+                    <div style="padding: 40px 30px; text-align: center;">
+                        <p style="font-size: 18px; color: #333; margin-bottom: 10px;">Olá, <strong>${reservationData.guestName}</strong>!</p>
+                        <p style="color: #666; margin-bottom: 30px;">Aqui está o seu voucher para o <strong>${reservationData.item.name}</strong>.</p>
+                        
+                        <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 30px; margin-bottom: 30px;">
+                            <img src="${qrCodeUrl}" alt="QR Code" style="width: 180px; height: 180px; margin-bottom: 20px; border-radius: 8px;" />
+                            <p style="margin: 0; font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Código de Validação</p>
+                            <p style="margin: 5px 0 0 0; font-size: 28px; font-weight: 800; color: #0f172a; letter-spacing: 2px;">${reservationId.slice(0,6).toUpperCase()}</p>
+                        </div>
+
+                        <div style="text-align: left; margin-bottom: 30px;">
+                            <div style="border-bottom: 1px solid #f1f5f9; padding-bottom: 15px; margin-bottom: 15px;">
+                                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b; text-transform: uppercase;">Data do Passeio</p>
+                                <p style="margin: 0; font-size: 16px; font-weight: bold; color: #334155;">${reservationData.date.split('-').reverse().join('/')}</p>
+                            </div>
+                            <div style="border-bottom: 1px solid #f1f5f9; padding-bottom: 15px; margin-bottom: 15px;">
+                                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b; text-transform: uppercase;">Localização</p>
+                                <p style="margin: 0; font-size: 16px; font-weight: bold; color: #334155;">${reservationData.item.city}, ${reservationData.item.state}</p>
+                                <a href="${mapLink}" style="color: #0097A8; font-size: 14px; text-decoration: none;">Ver no Mapa</a>
+                            </div>
+                            <div>
+                                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b; text-transform: uppercase;">Quantidade</p>
+                                <p style="margin: 0; font-size: 14px; color: #334155;">
+                                    ${reservationData.adults} Adultos 
+                                    ${reservationData.children > 0 ? `• ${reservationData.children} Crianças` : ''}
+                                    ${reservationData.pets > 0 ? `• ${reservationData.pets} Pets` : ''}
+                                </p>
+                            </div>
+                        </div>
+
+                        <a href="https://mapadodayuse.com/minhas-viagens" style="display: inline-block; background-color: #0097A8; color: white; padding: 16px 32px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 10px rgba(0,151,168,0.3);">
+                            Acessar Meus Ingressos
+                        </a>
+                        <p style="font-size: 12px; color: #999; margin-top: 20px;">Apresente este voucher na portaria para entrar.</p>
+                    </div>
+                </div>
+            </div>
+          `;
+
+          await fetch('/api/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  to: reservationData.guestEmail, 
+                  subject: `Seu Voucher: ${reservationData.item.name}`, 
+                  html: emailHtml 
+              })
+          });
+      } catch (e) {
+          console.error("Erro ao notificar cliente:", e);
+      }
+  };
+
+   // --- NOTIFICAÇÃO DE VENDA PARA O PARCEIRO ---
+  const notifyPartner = async (reservationData, paymentId) => {
+      try {
+          // 1. Busca e-mail do dono do day use
+          const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
+          if (!ownerSnap.exists()) return;
+          const ownerEmail = ownerSnap.data().email;
+
+          // 2. Monta o HTML do E-mail (Valor Bruto + Aviso)
+          const emailHtml = `
+            <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <div style="background-color: #0097A8; padding: 25px; text-align: center;">
+                        <h2 style="color: white; margin: 0; font-size: 24px;">Nova Venda Confirmada! 🚀</h2>
+                    </div>
+                    <div style="padding: 35px;">
+                        <p style="font-size: 16px; color: #333; margin-bottom: 20px;">
+                            Olá! Uma nova reserva foi realizada para o <strong>${bookingData.item.name}</strong>.
+                        </p>
+                        
+                        <div style="background-color: #e0f7fa; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 5px solid #0097A8;">
+                            <p style="margin: 0; font-size: 13px; color: #006064; font-weight: bold; text-transform: uppercase;">Valor Total da Venda</p>
+                            <p style="margin: 5px 0 10px 0; font-size: 36px; font-weight: bold; color: #0097A8;">${formatBRL(reservationData.total)}</p>
+                            <p style="margin: 0; font-size: 11px; color: #666; line-height: 1.4;">
+                                *<strong>Atenção:</strong> Este é o valor bruto transacionado. As taxas da plataforma e do Mercado Pago serão descontadas automaticamente no repasse.
+                            </p>
+                        </div>
+
+                        <h3 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-top: 0;">Detalhes do Cliente</h3>
+                        <ul style="list-style: none; padding: 0; color: #555; font-size: 14px; line-height: 2;">
+                            <li><strong>Nome:</strong> ${reservationData.guestName}</li>
+                            <li><strong>E-mail:</strong> ${reservationData.guestEmail}</li>
+                            <li><strong>Data do Passeio:</strong> ${reservationData.date.split('-').reverse().join('/')}</li>
+                            <li><strong>Pagamento:</strong> ${reservationData.paymentMethod === 'pix' ? 'Pix' : 'Cartão de Crédito'}</li>
+                            <li><strong>ID Transação:</strong> ${paymentId}</li>
+                            <li><strong>Data da Compra:</strong> ${new Date().toLocaleString('pt-BR')}</li>
+                        </ul>
+
+                        <div style="text-align: center; margin-top: 35px;">
+                            <a href="https://mapadodayuse.com/partner" style="background-color: #0097A8; color: white; padding: 14px 28px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                Acessar Painel do Parceiro
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+          `;
+
+          // 3. Envia via API
+          await fetch('/api/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  to: ownerEmail, 
+                  subject: `Venda Confirmada: ${formatBRL(reservationData.total)} - ${reservationData.guestName}`, 
+                  html: emailHtml 
+              })
+          });
+
+      } catch (e) {
+          console.error("Erro ao notificar parceiro:", e);
+      }
+  };
+
+  const handleConfirm = async (mpTokenId = null) => {
     try {
-        await addDoc(collection(db, "reservations"), {
+        const offlinePaymentId = `FRONT_${mpTokenId || 'PIX'}_${Date.now()}`;
+        
+        const reservationData = {
           ...bookingData, 
           total: finalTotal,
           discount: discount,
           couponCode: couponCode ? couponCode.toUpperCase() : null,
           paymentMethod: paymentMethod,
-          
-          paymentId: mpPaymentId, // ID REAL
-          
+          paymentId: offlinePaymentId, // Salva o ID gerado no front
           userId: user.uid, 
           ownerId: bookingData.item.ownerId,
           createdAt: new Date(), 
           status: 'confirmed', 
           guestName: user.displayName || "Usuário", 
           guestEmail: user.email
-        });
+        };
+
+        const docRef = await addDoc(collection(db, "reservations"), reservationData);
         
+        // --- ENVIA NOTIFICAÇÕES ---
+        notifyPartner(reservationData, offlinePaymentId);
+        notifyCustomer(reservationData, docRef.id); // <--- NOVO: Envia voucher com o ID da reserva
+        // --------------------------
+
         setProcessing(false);
         setShowSuccess(true);
     } catch (e) {
         console.error("Erro ao salvar reserva:", e);
-        alert("Erro ao confirmar reserva no sistema.");
+        alert("Erro ao confirmar reserva. Tente novamente.");
         setProcessing(false);
     }
   };
@@ -6655,36 +6791,86 @@ const AdminDashboard = () => {
   };
 
   // --- AÇÃO: TRANSFERÊNCIA DE PROPRIEDADE ---
-  const handleTransferProperty = async (claim) => {
+const handleTransferProperty = async (claim) => {
       if (!confirm(`ATENÇÃO: Isso vai transferir a administração do local "${claim.propertyName}" para "${claim.userEmail}".\n\nTem certeza?`)) return;
 
       try {
+          // 1. Busca o usuário pelo e-mail para pegar o UID correto
           const usersRef = collection(db, "users");
           const q = query(usersRef, where("email", "==", claim.userEmail));
           const querySnapshot = await getDocs(q);
 
           if (querySnapshot.empty) {
-              alert("ERRO: Este e-mail não possui uma conta cadastrada. O usuário precisa criar uma conta primeiro.");
+              alert("ERRO: Este e-mail não possui uma conta cadastrada no site. O usuário precisa criar uma conta primeiro.");
               return;
           }
 
           const targetUserId = querySnapshot.docs[0].id;
 
-          await updateDoc(doc(db, "dayuses", claim.propertyId), { ownerId: targetUserId, updatedAt: new Date() });
+          // 2. Atualiza o Day Use com o novo Dono
+          await updateDoc(doc(db, "dayuses", claim.propertyId), {
+              ownerId: targetUserId,
+              updatedAt: new Date()
+          });
+
+          // 3. Atualiza o status da solicitação
           await updateDoc(doc(db, "property_claims", claim.id), { status: 'done' });
           
+          // 4. Envia E-mail de Aviso (TEMPLATE ATUALIZADO)
+          const emailHtml = `
+            <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
+                <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <div style="background-color: #0097A8; padding: 25px; text-align: center;">
+                        <h2 style="color: white; margin: 0; font-size: 24px;">Solicitação Aprovada! 🎉</h2>
+                    </div>
+                    <div style="padding: 35px;">
+                        <p style="font-size: 16px; color: #333; margin-bottom: 20px;">
+                            Olá, <strong>${claim.userName}</strong>!
+                        </p>
+                        <p style="font-size: 16px; color: #333; line-height: 1.5; margin-bottom: 20px;">
+                            Temos ótimas notícias! Sua solicitação para administrar o <strong>${claim.propertyName}</strong> foi aprovada pela nossa equipe.
+                        </p>
+                        
+                        <div style="background-color: #e0f7fa; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 5px solid #0097A8;">
+                            <p style="margin: 0; font-size: 14px; color: #006064; font-weight: bold;">🚀 Acesso Liberado</p>
+                            <p style="margin: 5px 0 0 0; font-size: 14px; color: #555;">
+                                Você já pode acessar seu painel, configurar seus preços e começar a vender ingressos de Day Use agora mesmo.
+                            </p>
+                        </div>
+
+                        <h3 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-top: 0;">Próximos Passos</h3>
+                        <ul style="list-style: none; padding: 0; color: #555; font-size: 14px; line-height: 1.8;">
+                            <li>1. Acesse a plataforma com o e-mail: <strong>${claim.userEmail}</strong></li>
+                            <li>2. Crie sua senha (caso ainda não tenha) ou faça login.</li>
+                            <li>3. Conecte sua conta financeira e revise seu anúncio.</li>
+                        </ul>
+
+                        <div style="text-align: center; margin-top: 35px;">
+                            <a href="https://mapadodayuse.com/partner" style="background-color: #0097A8; color: white; padding: 14px 28px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                Acessar Painel do Parceiro
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+          `;
+
           fetch('/api/send-email', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ to: claim.userEmail, subject: "Acesso Liberado! 🔑", html: `<p>Seu pedido para administrar <strong>${claim.propertyName}</strong> foi aprovado.</p>` })
+              body: JSON.stringify({ 
+                  to: claim.userEmail, 
+                  subject: "Acesso Liberado! 🔑 - Mapa do Day Use", 
+                  html: emailHtml 
+              })
           });
 
-          alert("Transferência realizada!");
+          alert("Transferência realizada com sucesso!");
           setViewClaim(null);
 
       } catch (error) {
-          console.error(error);
-          alert("Erro ao transferir.");
+          console.error("Erro na transferência:", error);
+          alert("Erro ao transferir propriedade.");
       }
   };
 
