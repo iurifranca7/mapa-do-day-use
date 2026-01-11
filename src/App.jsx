@@ -6889,6 +6889,7 @@ const handleTransferProperty = async (claim) => {
       try {
           // 1. Busca o usuário pelo e-mail para pegar o UID correto
           const usersRef = collection(db, "users");
+          const emailToSearch = claim.userEmail.toLowerCase().trim();
           const q = query(usersRef, where("email", "==", claim.userEmail));
           const querySnapshot = await getDocs(q);
 
