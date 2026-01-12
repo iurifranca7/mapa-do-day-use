@@ -3065,6 +3065,8 @@ const PartnerDashboard = () => {
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [refundPercent, setRefundPercent] = useState(100);
   const [manageLoading, setManageLoading] = useState(false);
+  const [scannedRes, setScannedRes] = useState(null);
+  
 
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -3320,7 +3322,31 @@ const PartnerDashboard = () => {
 
   // --- OPERACIONAL ---
   const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); setFeedback({ type: 'success', title: 'Check-in Realizado!', msg: 'Acesso liberado.' }); setValidationCode(""); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); } } else { setFeedback({ type: 'error', title: 'Código Inválido', msg: 'Verifique o código.' }); } };
-  const onScanSuccess = (decodedText) => { setShowScanner(false); const res = reservations.find(r => r.id === decodedText); if (res) { if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' }); else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' }); else handleValidate(res.id, res.id); } else setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code inválido.' }); };
+  const onScanSuccess = (decodedText) => {
+      setShowScanner(false);
+      const res = reservations.find(r => r.id === decodedText);
+      
+      if (res) {
+          // Abre o modal de conferência em vez de validar direto
+          setScannedRes(res);
+      } else {
+          setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code não pertence a este local ou não foi encontrado.' });
+      }
+  };
+
+  const handleConfirmValidation = async () => {
+      if (!scannedRes) return;
+      
+      if (scannedRes.status === 'validated') {
+          setFeedback({ type: 'warning', title: 'Já Validado', msg: 'Este ingresso já foi utilizado anteriormente.' });
+      } else if (scannedRes.status === 'cancelled') {
+          setFeedback({ type: 'error', title: 'Cancelado', msg: 'Impossível validar: Ingresso cancelado.' });
+      } else {
+          // Chama a função de validação existente passando o ID
+          await handleValidate(scannedRes.id, scannedRes.id);
+      }
+      setScannedRes(null);
+  };
 
   // --- GESTÃO DE EQUIPE (API + FIREBASE) ---
   const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: `E-mail alterado para ${newEmail}. Link de confirmação enviado.` }); setEditStaffModal(null); setNewStaffEmailInput(''); } else throw new Error(); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao atualizar.' }); } finally { setStaffLoading(false); } };
@@ -3698,6 +3724,72 @@ const PartnerDashboard = () => {
                 <a href="https://mapadodayuse.notion.site/Central-de-Ajuda-Mapa-do-Day-Use-2dc9dd27aaf88071b399cdb623b66b77" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-white text-slate-800 px-8 py-3 rounded-xl font-bold hover:bg-slate-100 transition-all shadow-lg"><Info size={22} /> Central de Ajuda</a>
             </div>
         </div>
+        {/* --- MODAL DE CONFERÊNCIA DE VOUCHER (NOVO) --- */}
+        {scannedRes && createPortal(
+            <ModalOverlay onClose={() => setScannedRes(null)}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in">
+                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                        <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800">
+                            <ScanLine className="text-[#0097A8]"/> Conferir Ingresso
+                        </h3>
+                        <button onClick={() => setScannedRes(null)}><X size={20}/></button>
+                    </div>
+
+                    <div className="text-center mb-6">
+                        <h2 className="text-2xl font-bold text-slate-900 leading-tight">{scannedRes.guestName}</h2>
+                        <p className="text-sm text-slate-500 font-mono mt-1">Voucher #{scannedRes.id.slice(0,6).toUpperCase()}</p>
+                    </div>
+
+                    {/* ALERTA DE DATA DIFERENTE */}
+                    {scannedRes.date !== new Date().toISOString().split('T')[0] && (
+                        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-xl text-left shadow-sm">
+                            <div className="flex items-center gap-2 text-red-800 font-bold mb-1">
+                                <AlertCircle size={20}/> 
+                                <span>ATENÇÃO: DATA ERRADA!</span>
+                            </div>
+                            <p className="text-sm text-red-700">
+                                Este ingresso é válido para <strong>{scannedRes.date.split('-').reverse().join('/')}</strong>.
+                                <br/>Hoje é {new Date().toLocaleDateString('pt-BR')}.
+                            </p>
+                        </div>
+                    )}
+
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-6 text-sm space-y-2">
+                        <div className="flex justify-between"><span>Adultos:</span> <b>{scannedRes.adults}</b></div>
+                        {scannedRes.children > 0 && <div className="flex justify-between"><span>Crianças:</span> <b>{scannedRes.children}</b></div>}
+                        {scannedRes.pets > 0 && <div className="flex justify-between"><span>Pets:</span> <b>{scannedRes.pets}</b></div>}
+                        {scannedRes.freeChildren > 0 && <div className="flex justify-between text-green-600"><span>Crianças Grátis:</span> <b>{scannedRes.freeChildren}</b></div>}
+                        
+                        <div className="pt-2 mt-2 border-t border-slate-200 flex justify-between items-center">
+                            <span>Status Atual:</span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                                scannedRes.status === 'validated' ? 'bg-green-100 text-green-700' :
+                                scannedRes.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                            }`}>
+                                {scannedRes.status === 'validated' ? 'JÁ USADO' :
+                                 scannedRes.status === 'cancelled' ? 'CANCELADO' : 'VÁLIDO'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <Button variant="ghost" onClick={() => setScannedRes(null)} className="flex-1 justify-center">Cancelar</Button>
+                        
+                        {scannedRes.status === 'confirmed' ? (
+                            <Button onClick={handleConfirmValidation} className="flex-1 justify-center bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-200">
+                                Confirmar Entrada
+                            </Button>
+                        ) : (
+                            <Button disabled className="flex-1 justify-center opacity-50 cursor-not-allowed bg-slate-200 text-slate-500">
+                                Ação Indisponível
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            </ModalOverlay>, 
+            document.body
+        )}
      </div>
   );
 };
