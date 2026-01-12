@@ -3072,27 +3072,49 @@ const PartnerDashboard = () => {
   const [user, setUser] = useState(null);
   const [showCelebration, setShowCelebration] = useState(true); // Controla o banner final
 
+  const [newMemberRole, setNewMemberRole] = useState('staff');
+  const [mainOwnerId, setMainOwnerId] = useState(null);
+
   // 1. CARREGAMENTO INICIAL E LISTENERS
-  useEffect(() => {
+    useEffect(() => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
-           setUser(u);
-           const userDoc = await getDoc(doc(db, "users", u.uid));
+           // 1. Busca dados do usuário logado
+           const userDocRef = doc(db, "users", u.uid);
+           const userDocSnap = await getDoc(userDocRef);
            
-           if(userDoc.exists()) {
-               const d = userDoc.data();
-               setDocStatus(d.docStatus || 'none');
-               if(d.mp_access_token) {
-                   setMpConnected(true);
-                   setTokenType(d.mp_access_token.startsWith('TEST') ? 'TEST' : 'PROD');
+           // Padrão: Eu sou o dono dos dados
+           let effectiveOwnerId = u.uid; 
+
+           if(userDocSnap.exists()) {
+               const d = userDocSnap.data();
+               
+               // LÓGICA DE SÓCIO: Se tiver um ownerId salvo, os dados pertencem ao chefe
+               if (d.ownerId) {
+                   effectiveOwnerId = d.ownerId;
+               }
+
+               // Carrega status da empresa do DONO REAL (para liberar o painel)
+               const ownerDocSnap = await getDoc(doc(db, "users", effectiveOwnerId));
+               if(ownerDocSnap.exists()) {
+                   const ownerData = ownerDocSnap.data();
+                   setDocStatus(ownerData.docStatus || 'none');
+                   if(ownerData.mp_access_token) {
+                       setMpConnected(true);
+                       setTokenType(ownerData.mp_access_token.startsWith('TEST') ? 'TEST' : 'PROD');
+                   }
                }
            }
            
-           // Listeners em Tempo Real
-           const qDay = query(collection(db, "dayuses"), where("ownerId", "==", u.uid));
-           const qRes = query(collection(db, "reservations"), where("ownerId", "==", u.uid));
-           const qStaff = query(collection(db, "users"), where("ownerId", "==", u.uid));
-           const qReq = query(collection(db, "requests"), where("ownerId", "==", u.uid), where("status", "==", "pending"));
+           setUser({ ...u, role: userDocSnap.data()?.role || 'partner' });
+           setMainOwnerId(effectiveOwnerId); // Salva quem é o dono para travas de segurança
+           
+           // CORREÇÃO CRÍTICA: Os listeners agora buscam pelo 'effectiveOwnerId'
+           // Assim o sócio vê os dados do dono, e o dono vê os seus próprios
+           const qDay = query(collection(db, "dayuses"), where("ownerId", "==", effectiveOwnerId));
+           const qRes = query(collection(db, "reservations"), where("ownerId", "==", effectiveOwnerId));
+           const qStaff = query(collection(db, "users"), where("ownerId", "==", effectiveOwnerId));
+           const qReq = query(collection(db, "requests"), where("ownerId", "==", effectiveOwnerId), where("status", "==", "pending"));
 
            onSnapshot(qDay, s => setItems(s.docs.map(d => ({id: d.id, ...d.data()}))));
            onSnapshot(qRes, s => setReservations(s.docs.map(d => ({id: d.id, ...d.data()}))));
@@ -3105,6 +3127,16 @@ const PartnerDashboard = () => {
   
   // 2. CONEXÃO MERCADO PAGO
   const handleConnect = () => {
+     // Segurança: Só o dono principal (cujo ID bate com o ID logado) pode mexer no banco
+     if (user.uid !== mainOwnerId) {
+         setFeedback({ 
+             type: 'warning', 
+             title: 'Acesso Restrito', 
+             msg: 'Por segurança, apenas o titular da conta principal pode conectar ou alterar a conta do Mercado Pago.' 
+         });
+         return;
+     }
+
      const currentBaseUrl = window.location.origin; 
      const redirect = `${currentBaseUrl}/partner/callback`;
      const encodedRedirect = encodeURIComponent(redirect);
@@ -3351,7 +3383,35 @@ const PartnerDashboard = () => {
   // --- GESTÃO DE EQUIPE (API + FIREBASE) ---
   const handleUpdateStaffEmail = async (staffId, newEmail, requestId = null) => { setStaffLoading(true); try { const response = await fetch('/api/admin-update-staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ staffId, newEmail, ownerId: user.uid }) }); if (response.ok) { await fetch('/api/send-auth-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: newEmail, type: 'verify_email', name: 'Colaborador' }) }); if (requestId) await updateDoc(doc(db, "requests", requestId), { status: 'completed' }); setFeedback({ type: 'success', title: 'Atualizado!', msg: `E-mail alterado para ${newEmail}. Link de confirmação enviado.` }); setEditStaffModal(null); setNewStaffEmailInput(''); } else throw new Error(); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao atualizar.' }); } finally { setStaffLoading(false); } };
   const handleDeleteStaff = async (staffId) => { setConfirmAction({ type: 'delete_staff', payload: staffId }); };
-  const handleAddStaff = async (e) => { e.preventDefault(); setStaffLoading(true); try { const secondaryApp = initializeApp(getApp().options, "Secondary"); const secondaryAuth = getAuth(secondaryApp); const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass); await sendEmailVerification(createdUser.user); await setDoc(doc(db, "users", createdUser.user.uid), { email: staffEmail, role: 'staff', ownerId: user.uid, createdAt: new Date(), name: "Portaria" }); await signOut(secondaryAuth); setFeedback({ type: 'success', title: 'Criado!', msg: 'Usuário criado. Link de confirmação enviado.' }); setStaffEmail(''); setStaffPass(''); } catch (err) { setFeedback({ type: 'error', title: 'Erro', msg: 'Verifique dados.' }); } finally { setStaffLoading(false); } };
+  const handleAddStaff = async (e) => {
+      e.preventDefault();
+      if (docStatus !== 'verified') return setFeedback({ type: 'warning', title: 'Restrito', msg: 'Valide sua empresa primeiro.' });
+      
+      setStaffLoading(true);
+      try {
+          const secondaryApp = initializeApp(getApp().options, "Secondary");
+          const secondaryAuth = getAuth(secondaryApp);
+          
+          const createdUser = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPass);
+          await sendEmailVerification(createdUser.user);
+          
+          await setDoc(doc(db, "users", createdUser.user.uid), {
+              email: staffEmail,
+              role: newMemberRole, // Salva o cargo escolhido (staff ou partner)
+              ownerId: user.uid,   // Vincula ao dono atual
+              createdAt: new Date(),
+              name: newMemberRole === 'partner' ? "Sócio" : "Portaria"
+          });
+          
+          await signOut(secondaryAuth);
+          setFeedback({ type: 'success', title: 'Cadastrado!', msg: `Novo ${newMemberRole === 'partner' ? 'Sócio' : 'Membro'} criado. Link de confirmação enviado.` });
+          setStaffEmail(''); setStaffPass('');
+      } catch (err) {
+          setFeedback({ type: 'error', title: 'Erro', msg: err.code === 'auth/email-already-in-use' ? 'E-mail já existe.' : 'Verifique os dados.' });
+      } finally {
+          setStaffLoading(false);
+      }
+  };
 
   // Cálculos Financeiros
     const financialRes = reservations.filter(r => r.createdAt && new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
@@ -3713,7 +3773,27 @@ const PartnerDashboard = () => {
              <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>
 
              {/* Gestão de Equipe (Mantido) */}
-             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className="text-[10px] text-slate-400">Portaria</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditStaffModal({ id: staff.id, currentEmail: staff.email }); setNewStaffEmailInput(''); }} className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg" title="Editar Email"><Edit size={16}/></button><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200 ${docStatus !== 'verified' ? 'opacity-50 pointer-events-none' : ''}`}><form onSubmit={handleAddStaff} className="space-y-4"><input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do funcionário" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required /><input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required /><Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button></form></div></div></div></div>
+             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-12"><h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-slate-800"><Users/> Gerenciar Equipe</h2><div className="grid md:grid-cols-2 gap-8"><div className="space-y-4"><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Membros Ativos</h3>{staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum funcionário cadastrado.</p> : (<ul className="space-y-3">{staffList.map(staff => (<li key={staff.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 group hover:border-[#0097A8] transition-colors"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xs font-bold">{staff.email[0].toUpperCase()}</div><div className="flex flex-col"><span className="text-sm font-bold text-slate-700">{staff.email}</span><span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded w-fit ${staff.role === 'partner' ? 'bg-purple-100 text-purple-700' : 'text-slate-400 bg-slate-100'}`}>{staff.role === 'partner' ? 'Sócio / Admin' : 'Portaria'}</span></div></div><div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditStaffModal({ id: staff.id, currentEmail: staff.email }); setNewStaffEmailInput(''); }} className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg" title="Editar Email"><Edit size={16}/></button><button onClick={() => confirmResetStaffPass(staff.email)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Redefinir Senha"><Lock size={16}/></button><button onClick={() => confirmDeleteStaff(staff.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Remover"><Trash2 size={16}/></button></div></li>))}</ul>)}</div><div><h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Cadastrar Novo</h3><div className={`bg-slate-50 p-6 rounded-2xl border border-slate-200 ${docStatus !== 'verified' ? 'opacity-50 pointer-events-none' : ''}`}>
+                <form onSubmit={handleAddStaff} className="space-y-4">
+                            <input className="w-full border p-3 rounded-xl bg-white" placeholder="E-mail do novo membro" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required />
+                            
+                            <div className="flex gap-2">
+                                <input className="w-full border p-3 rounded-xl bg-white" placeholder="Senha de acesso" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required />
+                                
+                                {/* SELETOR DE CARGO (NOVO) */}
+                                <select 
+                                    className="border p-3 rounded-xl bg-white text-sm font-bold text-slate-700 outline-none cursor-pointer"
+                                    value={newMemberRole}
+                                    onChange={e => setNewMemberRole(e.target.value)}
+                                >
+                                    <option value="staff">Portaria (Limitado)</option>
+                                    <option value="partner">Sócio (Total)</option>
+                                </select>
+                            </div>
+
+                            <Button type="submit" disabled={staffLoading} className="w-full">{staffLoading ? 'Cadastrando...' : 'Criar Acesso'}</Button>
+                        </form>
+                        </div></div></div></div>
         </div>
         
         <div className="bg-slate-900 rounded-3xl p-8 text-center text-white mt-12 mb-8 shadow-2xl">
@@ -3842,36 +3922,46 @@ const PartnerNew = () => {
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
            setUser(u);
-           if (!id) setFormData(prev => ({ ...prev, contactName: u.displayName || '', contactEmail: u.email }));
-        } else navigate('/');
+           
+           if (!id) {
+               // Novo Cadastro: Preenche com dados do usuário logado
+               setFormData(prev => ({ ...prev, contactName: u.displayName || '', contactEmail: u.email }));
+           } else {
+               // Edição: Busca dados do Day Use
+               const s = await getDoc(doc(db, "dayuses", id));
+               if(s.exists()) {
+                   const d = s.data();
+                   const safeData = { 
+                       ...d, 
+                       availableDays: d.availableDays || [0, 6], 
+                       images: d.images || ['', '', '', '', '', ''], 
+                       priceAdult: d.priceAdult || '', 
+                       priceChild: d.priceChild || '', 
+                       petFee: d.petFee || '' 
+                   };
+
+                   // CORREÇÃO: Se o usuário logado for o dono (mesmo após transferência),
+                   // atualiza o e-mail de contato visualmente para o dele.
+                   if (d.ownerId === u.uid) {
+                       safeData.contactEmail = u.email;
+                   }
+
+                   setFormData(safeData);
+                   
+                   if(d.coupons) setCoupons(d.coupons);
+                   if(d.dailyStock) setDailyStock(d.dailyStock || { adults: 50, children: 20, pets: 5 });
+                   if(d.weeklyPrices) setWeeklyPrices(d.weeklyPrices);
+                   setSelectedAmenities(d.amenities || []);
+                   setSelectedMeals(d.meals || []);
+                   setBlockedDates(d.blockedDates || []);
+                   if(d.specialTickets) setSpecialTickets(d.specialTickets);
+                   if(d.trackFreeChildren) setTrackFreeChildren(d.trackFreeChildren);
+               }
+           }
+        } else {
+            navigate('/');
+        }
      });
-     if (id) {
-        getDoc(doc(db, "dayuses", id)).then(s => { 
-            if(s.exists()) {
-                const d = s.data();
-                const safeData = { 
-                    ...d, 
-                    availableDays: d.availableDays || [0, 6], 
-                    images: d.images || ['', '', '', '', '', ''], 
-                    priceAdult: d.priceAdult || '', 
-                    priceChild: d.priceChild || '', 
-                    petFee: d.petFee || '' 
-                };
-                setFormData(safeData);
-                
-                if(d.coupons) setCoupons(d.coupons);
-                if(d.dailyStock) setDailyStock(d.dailyStock || { adults: 50, children: 20, pets: 5 });
-                if(d.weeklyPrices) setWeeklyPrices(d.weeklyPrices);
-                
-                setSelectedAmenities(d.amenities || []);
-                setSelectedMeals(d.meals || []);
-                setBlockedDates(d.blockedDates || []);
-                
-                if(d.specialTickets) setSpecialTickets(d.specialTickets);
-                if(d.trackFreeChildren) setTrackFreeChildren(d.trackFreeChildren);
-            }
-        });
-     }
      return unsub;
   }, [id]);
 
