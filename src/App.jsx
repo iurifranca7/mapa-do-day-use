@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy, arrayUnion, increment, arrayUnion  } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy, arrayUnion, increment  } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
 import { 
   signInWithPopup, 
