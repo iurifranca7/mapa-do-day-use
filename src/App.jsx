@@ -34,7 +34,7 @@ import {
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
-  Eye, Archive, ExternalLink
+  Eye, Archive, ExternalLink, RefreshCcw
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -3023,6 +3023,203 @@ const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
   );
 };
 
+const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex }) => {
+  const [reconciledData, setReconciledData] = useState({});
+  const [loadingMap, setLoadingMap] = useState({});
+
+  if (!isOpen) return null;
+
+  const data = reservations.filter(r => 
+      r.createdAt && 
+      new Date(r.createdAt.seconds * 1000).getMonth() === monthIndex && 
+      (r.status === 'confirmed' || r.status === 'validated')
+  ).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
+
+  const calculateMpFee = (amount, method) => {
+      // Taxas estimadas: Pix 0.99%, Cartão 4.98%
+      if (method === 'pix') return amount * 0.0099; 
+      return amount * 0.0498; 
+  };
+
+  const totalGross = data.reduce((acc, r) => acc + (r.total || 0), 0);
+  const totalDiscounts = data.reduce((acc, r) => acc + (r.discount || 0), 0);
+  const totalPlatformFee = totalGross * 0.15; // 15%
+  const totalMpFee = data.reduce((acc, r) => acc + calculateMpFee(r.total || 0, r.paymentMethod), 0);
+  const totalNet = totalGross - totalPlatformFee - totalMpFee;
+
+  const monthName = new Date(new Date().getFullYear(), monthIndex).toLocaleString('pt-BR', { month: 'long' });
+
+  const handleExport = () => {
+      // Cabeçalhos Completos (Sem abreviações)
+      const headers = [
+          "Data da Venda", 
+          "ID da Reserva", 
+          "Nome do Cliente", 
+          "Método de Pagamento", 
+          "Valor Pago (R$)", 
+          "Desconto de Cupom (R$)",
+          "Comissão da Plataforma (15%)", 
+          "Taxa do Mercado Pago (Estimada)", 
+          "Valor Líquido a Receber (R$)"
+      ];
+
+      const rows = data.map(r => {
+          const pago = r.total || 0; // Valor que o cliente pagou efetivamente
+          const desconto = r.discount || 0;
+          const plat = pago * 0.15;
+          const mp = calculateMpFee(pago, r.paymentMethod);
+          const liq = pago - plat - mp;
+          
+          return [
+              new Date(r.createdAt.seconds * 1000).toLocaleDateString('pt-BR'),
+              r.id.slice(0,8).toUpperCase(),
+              r.guestName,
+              r.paymentMethod === 'pix' ? 'Pix' : 'Cartão de Crédito',
+              pago.toFixed(2).replace('.', ','),
+              desconto.toFixed(2).replace('.', ','),
+              plat.toFixed(2).replace('.', ','),
+              mp.toFixed(2).replace('.', ','),
+              liq.toFixed(2).replace('.', ',')
+          ];
+      });
+
+      const csvContent = "data:text/csv;charset=utf-8," 
+          + "\uFEFF" 
+          + headers.join(";") + "\n" 
+          + rows.map(e => e.join(";")).join("\n");
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `extrato_dayuse_${monthName}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  const handleRefresh = () => { setReconciledData({}); setLoadingMap({}); };
+
+  // CORREÇÃO UX: max-w-7xl para ficar bem largo e confortável no desktop
+  return (
+    <ModalOverlay onClose={onClose} className="w-[95vw] max-w-7xl h-[90vh] flex flex-col">
+        
+        {/* Header Fixo */}
+        <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50 gap-4 shrink-0">
+            <div>
+                <h2 className="text-xl md:text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <FileText className="text-[#0097A8]"/> Extrato Financeiro Detalhado
+                </h2>
+                <p className="text-sm text-slate-500 capitalize">Período: {monthName}</p>
+            </div>
+            <div className="flex gap-3">
+                <button 
+                    onClick={handleRefresh}
+                    className="p-2.5 hover:bg-slate-200 rounded-xl transition-colors text-slate-500 border border-slate-200 bg-white shadow-sm"
+                    title="Atualizar Dados"
+                >
+                    <RefreshCcw size={18}/>
+                </button>
+                <Button onClick={handleExport} variant="outline" className="h-11 text-sm px-4 shadow-sm border-slate-300">
+                    <Download size={18} className="mr-2"/> Exportar Excel
+                </Button>
+                <button onClick={onClose} className="p-2.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-full transition-colors">
+                    <X size={24}/>
+                </button>
+            </div>
+        </div>
+
+        {/* Resumo do Mês (Grid Largo) */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-6 bg-white border-b border-slate-100 shrink-0">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Pago</p>
+                <p className="text-xl font-bold text-slate-800">{formatBRL(totalGross)}</p>
+            </div>
+            <div className="p-4 bg-yellow-50 rounded-2xl border border-yellow-100">
+                <p className="text-[10px] uppercase font-bold text-yellow-600 tracking-wider">Descontos (Cupons)</p>
+                <p className="text-xl font-bold text-yellow-700">-{formatBRL(totalDiscounts)}</p>
+            </div>
+            <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+                <p className="text-[10px] uppercase font-bold text-red-400 tracking-wider">Plataforma (15%)</p>
+                <p className="text-xl font-bold text-red-600">-{formatBRL(totalPlatformFee)}</p>
+            </div>
+            <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                <p className="text-[10px] uppercase font-bold text-orange-400 tracking-wider">Taxas Mercado Pago</p>
+                <p className="text-xl font-bold text-orange-600">-{formatBRL(totalMpFee)}</p>
+            </div>
+            <div className="p-4 bg-green-50 rounded-2xl border border-green-200 col-span-2 md:col-span-1 shadow-sm">
+                <p className="text-[10px] uppercase font-bold text-green-600 tracking-wider">Líquido a Receber</p>
+                <p className="text-2xl font-bold text-green-700">{formatBRL(totalNet)}</p>
+            </div>
+        </div>
+
+        {/* Tabela de Transações */}
+        <div className="flex-1 overflow-auto bg-slate-50">
+            <div className="min-w-[1000px]"> {/* Garante que não espreme no horizontal */}
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-500 font-bold text-xs uppercase sticky top-0 z-10 shadow-sm">
+                        <tr>
+                            <th className="p-5 whitespace-nowrap">Data / Hora</th>
+                            <th className="p-5 whitespace-nowrap">Reserva</th>
+                            <th className="p-5 whitespace-nowrap">Cliente</th>
+                            <th className="p-5 text-center whitespace-nowrap">Método</th>
+                            <th className="p-5 text-right whitespace-nowrap bg-slate-50">Valor Pago</th>
+                            <th className="p-5 text-right text-yellow-600 whitespace-nowrap">Desconto</th>
+                            <th className="p-5 text-right text-red-400 whitespace-nowrap">Taxas (Site+MP)</th>
+                            <th className="p-5 text-right text-green-600 whitespace-nowrap bg-green-50">Líquido</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                        {data.length === 0 ? (
+                            <tr><td colSpan="8" className="p-12 text-center text-slate-400">Nenhuma movimentação confirmada neste período.</td></tr>
+                        ) : data.map(r => {
+                            const pago = r.total || 0;
+                            const desconto = r.discount || 0;
+                            const plat = pago * 0.15;
+                            const mp = calculateMpFee(pago, r.paymentMethod);
+                            const totalTaxas = plat + mp;
+                            const liquido = pago - totalTaxas;
+
+                            return (
+                                <tr key={r.id} className="hover:bg-slate-50 transition-colors group">
+                                    <td className="p-5 text-slate-500 whitespace-nowrap">
+                                        <div className="font-medium">{new Date(r.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}</div>
+                                        <div className="text-[10px] opacity-70">{new Date(r.createdAt.seconds * 1000).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</div>
+                                    </td>
+                                    <td className="p-5">
+                                        <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded text-slate-600 border border-slate-200">#{r.id.slice(0,6).toUpperCase()}</span>
+                                    </td>
+                                    <td className="p-5 font-medium text-slate-700 truncate max-w-[180px]" title={r.guestName}>{r.guestName}</td>
+                                    <td className="p-5 text-center">
+                                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${r.paymentMethod === 'pix' ? 'bg-teal-100 text-teal-700' : 'bg-blue-100 text-blue-700'}`}>
+                                            {r.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
+                                        </span>
+                                    </td>
+                                    <td className="p-5 text-right font-bold text-slate-700 bg-slate-50/50">{formatBRL(pago)}</td>
+                                    <td className="p-5 text-right text-yellow-600 text-xs">{desconto > 0 ? `-${formatBRL(desconto)}` : '-'}</td>
+                                    <td className="p-5 text-right text-red-500 text-xs">
+                                        <div className="flex flex-col items-end">
+                                            <span className="font-bold">-{formatBRL(totalTaxas)}</span>
+                                            <span className="text-[9px] opacity-60 hidden group-hover:block transition-opacity">Site: {formatBRL(plat)}</span>
+                                            <span className="text-[9px] opacity-60 hidden group-hover:block transition-opacity">MP: {formatBRL(mp)}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-5 text-right font-bold text-green-600 bg-green-50/30">{formatBRL(liquido)}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {/* Footer Disclaimer */}
+        <div className="p-4 bg-slate-50 text-[10px] text-slate-400 text-center border-t border-slate-200 shrink-0">
+            * Valores líquidos são estimativas baseadas nas taxas contratuais (15% Plataforma + ~4.99% MP). O valor final creditado pode variar centavos devido a regras de arredondamento e prazos do Mercado Pago.
+        </div>
+    </ModalOverlay>
+  );
+};
+
 // -----------------------------------------------------------------------------
 // PAINEL DO PARCEIRO (COMPLETO E BLINDADO + ONBOARDING)
 // -----------------------------------------------------------------------------
@@ -3049,6 +3246,7 @@ const PartnerDashboard = () => {
   const [expandedStats, setExpandedStats] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showFinancialModal, setShowFinancialModal] = useState(false);
   const [feedback, setFeedback] = useState(null); 
   const [confirmAction, setConfirmAction] = useState(null);
   
@@ -3414,11 +3612,14 @@ const PartnerDashboard = () => {
   };
 
   // Cálculos Financeiros
-    const financialRes = reservations.filter(r => r.createdAt && new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
+  const financialRes = reservations.filter(r => r.createdAt && new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
   
   const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
   const platformFee = totalBalance * 0.15;
-  const estimatedMPFees = totalBalance * 0.0499;
+  const estimatedMPFees = financialRes.reduce((acc, r) => {
+      if (r.paymentMethod === 'pix') return acc + ((r.total || 0) * 0.0099); // 0.99%
+      return acc + ((r.total || 0) * 0.0498); // 4.98%
+  }, 0);
   const netBalance = totalBalance - platformFee - estimatedMPFees;
   
   const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
@@ -3476,6 +3677,17 @@ const PartnerDashboard = () => {
 
   return (
      <div className="max-w-7xl mx-auto py-12 px-4 animate-fade-in space-y-12 relative">
+        {/* 1. Modal Financeiro */}
+        {showFinancialModal && createPortal(
+            <FinancialStatementModal 
+                isOpen={showFinancialModal} 
+                onClose={() => setShowFinancialModal(false)}
+                reservations={reservations}
+                monthIndex={filterMonth}
+            />, 
+            document.body // <--- ISSO GARANTE QUE ELE VÁ PARA O BODY
+        )}
+        
         <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
         <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
         {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
@@ -3752,15 +3964,92 @@ const PartnerDashboard = () => {
         {/* CONTEÚDO DO PAINEL (BLOQUEADO SE NÃO VERIFICADO) */}
         <div className={`transition-all duration-500 ${!isDocsDone ? 'opacity-30 pointer-events-none filter blur-sm select-none h-64 overflow-hidden relative' : ''}`}>
              
-             {/* FINANCEIRO */}
-             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12">
-                 <div className="flex justify-between mb-6"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2><select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>{['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}</select></div>
-                 <div className="grid md:grid-cols-3 gap-6">
-                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between"><div><p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p><div className="space-y-1 mb-4"><div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas (GMV):</span><span className="font-bold">{formatBRL(totalBalance)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Comissão Site (15%):</span><span>- {formatBRL(platformFee)}</span></div><div className="flex justify-between text-xs text-red-400"><span>Taxas MP (Est. 4.99%):</span><span>- {formatBRL(estimatedMPFees)}</span></div></div></div><div className="pt-3 border-t border-slate-200"><div className="flex items-center gap-1 mb-1"><p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p><div className="group relative"><Info size={12} className="text-green-600 cursor-help"/><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">Valor aproximado. Consulte o extrato oficial no app do Mercado Pago.</div></div></div><p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p></div></div>
-                    <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200"><p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p><div className="space-y-4"><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div></div><div><div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div><div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div></div></div></div>
-                    <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col h-full"><div className="flex justify-between items-start mb-4"><div><p className="text-xs text-yellow-800 font-bold uppercase">Performance de Cupons</p><p className="text-2xl font-bold text-slate-900">{formatBRL(totalCouponRevenue)}</p><p className="text-[10px] text-slate-500">Faturamento bruto via cupons</p></div><Tag className="text-yellow-600" size={32}/></div><div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar bg-white rounded-xl p-2 border border-yellow-100">{Object.keys(couponBreakdown).length === 0 ? (<p className="text-xs text-slate-400 italic text-center py-4">Nenhum cupom usado neste mês.</p>) : (Object.entries(couponBreakdown).map(([code, stats]) => (<div key={code} className="flex justify-between items-center text-xs text-slate-600 mb-2 border-b border-slate-100 pb-2 last:border-0 last:mb-0"><span className="font-bold bg-yellow-100 px-1.5 py-0.5 rounded text-yellow-900 uppercase">{code}</span><div className="text-right"><span className="block font-bold">{stats.count} usos</span><span className="block text-[10px] text-green-600">{formatBRL(stats.revenue)}</span></div></div>)))}</div></div>
+  {/* FINANCEIRO */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+           <div className="flex flex-col md:flex-row justify-between mb-6 gap-4 items-center">
+               <div className="flex items-center gap-2">
+                   <h2 className="text-xl font-bold flex gap-2 text-slate-800"><DollarSign/> Financeiro</h2>
+                   <button 
+                       onClick={() => setShowFinancialModal(true)}
+                       className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1"
+                   >
+                       <FileText size={14}/> Ver Extrato Detalhado
+                   </button>
+               </div>
+               <select className="border p-2 rounded-lg bg-slate-50 text-sm font-medium" value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))}>
+                   {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m,i)=><option key={i} value={i}>{m}</option>)}
+               </select>
+           </div>
+           
+           <div className="grid md:grid-cols-3 gap-6">
+              {/* CARD 1: Detalhamento */}
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                 <div>
+                     <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
+                     <div className="space-y-1 mb-4">
+                        <div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas:</span><span className="font-bold">{formatBRL(totalBalance)}</span></div>
+                        <div className="flex justify-between text-xs text-red-400"><span>Plataforma (15%):</span><span>- {formatBRL(platformFee)}</span></div>
+                        <div className="flex justify-between text-xs text-orange-400"><span>Mercado Pago (Var.):</span><span>- {formatBRL(estimatedMPFees)}</span></div>
+                     </div>
                  </div>
-             </div>
+                 <div className="pt-3 border-t border-slate-200">
+                     <div className="flex items-center gap-1 mb-1">
+                         <p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p>
+                         <div className="group relative">
+                             <Info size={12} className="text-green-600 cursor-help"/>
+                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                 Baseado em Pix (0,99%) e Cartão (4,98%). Consulte o extrato oficial no app do Mercado Pago para valores exatos.
+                             </div>
+                         </div>
+                     </div>
+                     <p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p>
+                 </div>
+              </div>
+              
+              {/* CARD 2: Métodos (Mantido) */}
+              <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200">
+                 <p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-4">Por Método</p>
+                 <div className="space-y-4">
+                    <div>
+                        <div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><CreditCard size={16}/> Cartão de Crédito</span><span className="font-bold text-blue-900">{formatBRL(cardTotal)}</span></div>
+                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: totalBalance > 0 ? `${(cardTotal/totalBalance)*100}%` : '0%' }}></div></div>
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center mb-1"><span className="text-sm text-blue-900 font-medium flex items-center gap-2"><QrCode size={16}/> Pix</span><span className="font-bold text-blue-900">{formatBRL(pixTotal)}</span></div>
+                        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full" style={{ width: totalBalance > 0 ? `${(pixTotal/totalBalance)*100}%` : '0%' }}></div></div>
+                    </div>
+                 </div>
+              </div>
+
+              {/* CARD 3: Cupons (Mantido) */}
+              <div className="p-6 bg-yellow-50 rounded-2xl border border-yellow-200 flex flex-col h-full">
+                 <div className="flex justify-between items-start mb-4">
+                    <div>
+                        <p className="text-xs text-yellow-800 font-bold uppercase">Performance de Cupons</p>
+                        <p className="text-2xl font-bold text-slate-900">{formatBRL(totalCouponRevenue)}</p>
+                        <p className="text-[10px] text-slate-500">Faturamento bruto via cupons</p>
+                    </div>
+                    <Tag className="text-yellow-600" size={32}/>
+                 </div>
+                 
+                 <div className="flex-1 overflow-y-auto max-h-32 pr-2 custom-scrollbar bg-white rounded-xl p-2 border border-yellow-100">
+                    {Object.keys(couponBreakdown).length === 0 ? (
+                        <p className="text-xs text-slate-400 italic text-center py-4">Nenhum cupom usado neste mês.</p>
+                    ) : (
+                        Object.entries(couponBreakdown).map(([code, stats]) => (
+                            <div key={code} className="flex justify-between items-center text-xs text-slate-600 mb-2 border-b border-slate-100 pb-2 last:border-0 last:mb-0">
+                                <span className="font-bold bg-yellow-100 px-1.5 py-0.5 rounded text-yellow-900 uppercase">{code}</span>
+                                <div className="text-right">
+                                    <span className="block font-bold">{stats.count} usos</span>
+                                    <span className="block text-[10px] text-green-600">{formatBRL(stats.revenue)}</span>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                 </div>
+              </div>
+           </div>
+        </div>
              
              <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mb-12">
                <div className="flex flex-col md:flex-row justify-between mb-8 gap-4"><h2 className="text-xl font-bold flex gap-2 text-slate-800"><List/> Lista de Presença</h2><div className="flex gap-4"><input type="date" className="border p-2 rounded-lg text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button variant="outline" onClick={() => setShowScanner(true)}><ScanLine size={18}/> Validar Ingresso</Button></div></div>
@@ -3804,6 +4093,9 @@ const PartnerDashboard = () => {
                 <a href="https://mapadodayuse.notion.site/Central-de-Ajuda-Mapa-do-Day-Use-2dc9dd27aaf88071b399cdb623b66b77" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-white text-slate-800 px-8 py-3 rounded-xl font-bold hover:bg-slate-100 transition-all shadow-lg"><Info size={22} /> Central de Ajuda</a>
             </div>
         </div>
+
+        <FinancialStatementModal isOpen={showFinancialModal} onClose={() => setShowFinancialModal(false)} reservations={reservations} monthIndex={filterMonth} />
+
         {/* --- MODAL DE CONFERÊNCIA DE VOUCHER (NOVO) --- */}
         {scannedRes && createPortal(
             <ModalOverlay onClose={() => setScannedRes(null)}>
