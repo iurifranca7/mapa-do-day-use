@@ -1690,7 +1690,9 @@ const DetailsPage = () => {
       });
   }
   const total = (adults * currentPrice) + (children * childPrice) + (pets * petFee) + specialTotal;
-  const showPets = (item.petAllowed === true || (item.petSize && item.petSize !== 'Não aceita'));
+  const showPets = typeof item.petAllowed === 'boolean' 
+      ? item.petAllowed 
+      : (item.petSize && item.petSize !== 'Não aceita' && item.petSize !== '');
 
   const handleUpdateSpecial = (idx, delta) => {
       const current = selectedSpecial[idx] || 0;
@@ -2371,7 +2373,7 @@ const CheckoutPage = () => {
                <div className="text-center py-6 animate-fade-in">
                   <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
                   <p className="text-sm text-slate-600 mb-4">Ao confirmar, geraremos um código Pix para você.</p>
-                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (Opcional)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
+                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (obrigatório)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
                </div>
              )}
              
