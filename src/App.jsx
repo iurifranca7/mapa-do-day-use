@@ -1855,9 +1855,7 @@ const DetailsPage = () => {
 
   return (
     <div className="max-w-7xl mx-auto pt-8 px-4 pb-20 animate-fade-in">
-      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-8 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><div className="bg-white p-2 rounded-full border border-slate-200 shadow-sm"><ChevronLeft size={20}/></div> Voltar</button>
-      
+      <ImageGallery images={[item.image, item.image2, item.image3].filter(Boolean)} isOpen={galleryOpen} onClose={()=>setGalleryOpen(false)} />      
       {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados com sucesso. Nossa equipe analisará as informações e entrará em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
 
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-fade-in"><div className="w-16 h-16 bg-cyan-100 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-4"><Briefcase size={32}/></div><h2 className="text-xl font-bold text-slate-900 mb-2">Assumir este Perfil</h2><p className="text-slate-600 mb-6 text-sm">Preencha seus dados para solicitar o controle administrativo.</p><form onSubmit={handleClaimSubmit} className="space-y-3 text-left"><div><label className="text-xs font-bold text-slate-500 ml-1">Seu Nome</label><input className="w-full border p-3 rounded-xl" required value={claimData.name} onChange={e=>setClaimData({...claimData, name: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">E-mail Corporativo</label><input className="w-full border p-3 rounded-xl" type="email" required value={claimData.email} onChange={e=>setClaimData({...claimData, email: e.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 ml-1">Telefone</label><input className="w-full border p-3 rounded-xl" required value={claimData.phone} onChange={e=>setClaimData({...claimData, phone: e.target.value})}/></div><div><label className="text-xs font-bold text-slate-500 ml-1">Cargo</label><select className="w-full border p-3 rounded-xl bg-white" required value={claimData.job} onChange={e=>setClaimData({...claimData, job: e.target.value})}><option value="">Selecione...</option><option>Proprietário</option><option>Gerente</option><option>Marketing</option><option>Comercial</option></select></div></div><Button type="submit" disabled={claimLoading} className="w-full mt-4">{claimLoading ? 'Enviando...' : 'Enviar Solicitação'}</Button></form><button onClick={() => setShowClaimModal(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-4 underline">Cancelar</button></div></ModalOverlay>, document.body)}
@@ -2271,63 +2269,42 @@ const CheckoutPage = () => {
       }
   };
 
-  const handleConfirm = async (mpTokenId = null) => {
+  const handleConfirm = async (mpPaymentId) => {
     try {
-        const offlinePaymentId = `FRONT_${mpTokenId || 'PIX'}_${Date.now()}`;
+        // Define o ID do pagamento (Se vier da API ou gera local)
+        const finalPaymentId = mpPaymentId || `FRONT_${paymentMethod === 'pix' ? 'PIX' : 'CARD'}_${Date.now()}`;
+
+        const reservationData = {
+          ...bookingData, 
+          total: finalTotal,
+          discount: discount,
+          couponCode: couponCode ? couponCode.toUpperCase() : null,
+          paymentMethod: paymentMethod,
+          
+          paymentId: finalPaymentId, // ID REAL DO MERCADO PAGO OU LOCAL
+          
+          userId: user.uid, 
+          ownerId: bookingData.item.ownerId,
+          createdAt: new Date(), 
+          status: 'confirmed', 
+          guestName: user.displayName || "Usuário", 
+          guestEmail: user.email,
+
+          // CORREÇÃO: Converte undefined para null (obrigatório para o Firebase)
+          parentTicketId: bookingData.parentTicketId || null
+        };
+
+        const docRef = await addDoc(collection(db, "reservations"), reservationData);
         
-        // CASO 1: ADIÇÃO A UM VOUCHER EXISTENTE (Mesmo Código)
-        if (bookingData.parentTicketId) {
-            await updateDoc(doc(db, "reservations", bookingData.parentTicketId), {
-                // Soma as quantidades novas às existentes
-                children: increment(Number(bookingData.children)),
-                pets: increment(Number(bookingData.pets)),
-                freeChildren: increment(Number(bookingData.freeChildren || 0)),
-                total: increment(finalTotal), // Atualiza o valor total pago
-                
-                updatedAt: new Date(),
-                
-                // Salva histórico do pagamento extra dentro do documento
-                additionalPayments: arrayUnion({
-                    id: offlinePaymentId,
-                    amount: finalTotal,
-                    method: paymentMethod,
-                    items: { children: bookingData.children, pets: bookingData.pets },
-                    date: new Date()
-                })
-            });
-            
-            // Notifica usando o ID do voucher original
-            notifyPartner({ ...bookingData, guestName: user.displayName, guestEmail: user.email }, offlinePaymentId);
-            notifyCustomer({ ...bookingData, guestName: user.displayName, guestEmail: user.email }, bookingData.parentTicketId);
-        } 
-        // CASO 2: NOVA RESERVA (Novo Voucher)
-        else {
-            const reservationData = {
-              ...bookingData, 
-              total: finalTotal,
-              discount: discount,
-              couponCode: couponCode ? couponCode.toUpperCase() : null,
-              paymentMethod: paymentMethod,
-              paymentId: offlinePaymentId,
-              userId: user.uid, 
-              ownerId: bookingData.item.ownerId,
-              createdAt: new Date(), 
-              status: 'confirmed', 
-              guestName: user.displayName || "Usuário", 
-              guestEmail: user.email
-            };
-
-            const docRef = await addDoc(collection(db, "reservations"), reservationData);
-            
-            notifyPartner(reservationData, offlinePaymentId);
-            notifyCustomer(reservationData, docRef.id);
-        }
-
+        // --- ENVIA NOTIFICAÇÕES (RESTAURADO) ---
+        notifyPartner(reservationData, finalPaymentId);
+        notifyCustomer(reservationData, docRef.id);
+        
         setProcessing(false);
         setShowSuccess(true);
     } catch (e) {
         console.error("Erro ao salvar reserva:", e);
-        alert("Erro ao confirmar reserva. Tente novamente.");
+        alert("Erro ao confirmar reserva no sistema. Entre em contato com o suporte.");
         setProcessing(false);
     }
   };
@@ -2457,8 +2434,6 @@ const CheckoutPage = () => {
           <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>{setShowLogin(false);}} />,
           document.body
       )}
-      
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
