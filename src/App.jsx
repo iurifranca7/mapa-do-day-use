@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation, useS
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy, arrayUnion } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, onSnapshot, deleteDoc, orderBy, arrayUnion, increment, arrayUnion  } from 'firebase/firestore'; 
 import { initializeApp, getApp } from "firebase/app";
 import { 
   signInWithPopup, 
@@ -1774,10 +1774,20 @@ const DetailsPage = () => {
       navigate('/checkout', { 
           state: { 
               bookingData: { 
-                  item, date, adults, children, pets, total, 
+                  item, 
+                  date, 
+                  adults, 
+                  children, 
+                  pets, 
+                  total, 
                   freeChildren, 
                   selectedSpecial,
-                  priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee } 
+                  priceSnapshot: { adult: currentPrice, child: childPrice, pet: petFee },
+                  
+                  // --- NOVO: Passa o ID do ingresso pai se existir ---
+                  // Isso permite que o Checkout saiba que deve atualizar uma reserva existente
+                  parentTicketId: parentTicket?.id 
+                  // --------------------------------------------------
               } 
           } 
       });
@@ -2265,27 +2275,53 @@ const CheckoutPage = () => {
     try {
         const offlinePaymentId = `FRONT_${mpTokenId || 'PIX'}_${Date.now()}`;
         
-        const reservationData = {
-          ...bookingData, 
-          total: finalTotal,
-          discount: discount,
-          couponCode: couponCode ? couponCode.toUpperCase() : null,
-          paymentMethod: paymentMethod,
-          paymentId: offlinePaymentId, // Salva o ID gerado no front
-          userId: user.uid, 
-          ownerId: bookingData.item.ownerId,
-          createdAt: new Date(), 
-          status: 'confirmed', 
-          guestName: user.displayName || "Usuário", 
-          guestEmail: user.email
-        };
+        // CASO 1: ADIÇÃO A UM VOUCHER EXISTENTE (Mesmo Código)
+        if (bookingData.parentTicketId) {
+            await updateDoc(doc(db, "reservations", bookingData.parentTicketId), {
+                // Soma as quantidades novas às existentes
+                children: increment(Number(bookingData.children)),
+                pets: increment(Number(bookingData.pets)),
+                freeChildren: increment(Number(bookingData.freeChildren || 0)),
+                total: increment(finalTotal), // Atualiza o valor total pago
+                
+                updatedAt: new Date(),
+                
+                // Salva histórico do pagamento extra dentro do documento
+                additionalPayments: arrayUnion({
+                    id: offlinePaymentId,
+                    amount: finalTotal,
+                    method: paymentMethod,
+                    items: { children: bookingData.children, pets: bookingData.pets },
+                    date: new Date()
+                })
+            });
+            
+            // Notifica usando o ID do voucher original
+            notifyPartner({ ...bookingData, guestName: user.displayName, guestEmail: user.email }, offlinePaymentId);
+            notifyCustomer({ ...bookingData, guestName: user.displayName, guestEmail: user.email }, bookingData.parentTicketId);
+        } 
+        // CASO 2: NOVA RESERVA (Novo Voucher)
+        else {
+            const reservationData = {
+              ...bookingData, 
+              total: finalTotal,
+              discount: discount,
+              couponCode: couponCode ? couponCode.toUpperCase() : null,
+              paymentMethod: paymentMethod,
+              paymentId: offlinePaymentId,
+              userId: user.uid, 
+              ownerId: bookingData.item.ownerId,
+              createdAt: new Date(), 
+              status: 'confirmed', 
+              guestName: user.displayName || "Usuário", 
+              guestEmail: user.email
+            };
 
-        const docRef = await addDoc(collection(db, "reservations"), reservationData);
-        
-        // --- ENVIA NOTIFICAÇÕES ---
-        notifyPartner(reservationData, offlinePaymentId);
-        notifyCustomer(reservationData, docRef.id); // <--- NOVO: Envia voucher com o ID da reserva
-        // --------------------------
+            const docRef = await addDoc(collection(db, "reservations"), reservationData);
+            
+            notifyPartner(reservationData, offlinePaymentId);
+            notifyCustomer(reservationData, docRef.id);
+        }
 
         setProcessing(false);
         setShowSuccess(true);
