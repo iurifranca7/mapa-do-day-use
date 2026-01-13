@@ -1531,6 +1531,76 @@ const DetailsPage = () => {
   // State para alertas de validação (quantidade)
   const [showWarning, setShowWarning] = useState(null);
 
+  // --- NOVOS STATES PARA REGRA DE DEPENDÊNCIA ---
+  const [parentTicket, setParentTicket] = useState(null);
+  const [user, setUser] = useState(auth.currentUser);
+
+  // 1. Monitora Auth para pegar usuário logado
+  useEffect(() => {
+      const unsub = onAuthStateChanged(auth, u => setUser(u));
+      return unsub;
+  }, []);
+
+  // 2. Efeito: Verifica se já existe ingresso de adulto para esta data/local
+  useEffect(() => {
+      if (!user || !item || !date) {
+          setParentTicket(null);
+          return;
+      }
+
+      const checkParentTicket = async () => {
+          try {
+              // Busca reservas deste usuário para esta data e local
+              const q = query(
+                  collection(db, "reservations"), 
+                  where("userId", "==", user.uid),
+                  where("date", "==", date),
+                  where("status", "in", ["confirmed", "validated"])
+              );
+              
+              const snap = await getDocs(q);
+              
+              // Filtra localmente para garantir que é o mesmo item e tem adulto
+              const validParent = snap.docs.find(doc => {
+                  const r = doc.data();
+                  // Compatibilidade: Verifica item.id (novo) ou dayuseId (antigo)
+                  const rDayUseId = r.item?.id || r.dayuseId;
+                  return rDayUseId === item.id && Number(r.adults) > 0;
+              });
+
+              if (validParent) {
+                  setParentTicket(validParent.data());
+              } else {
+                  setParentTicket(null);
+              }
+          } catch (error) {
+              console.error("Erro ao verificar vínculo:", error);
+          }
+      };
+
+      checkParentTicket();
+  }, [user, item, date]);
+
+  // Função auxiliar para validar adição de dependentes (usada no JSX)
+  const canAddDependent = () => {
+      return adults > 0 || !!parentTicket;
+  };
+
+  // Função para mostrar erro (usada no JSX)
+  const showDependencyError = (type) => {
+      if (!user) {
+           setShowWarning({ 
+               title: 'Faça Login', 
+               msg: `Para comprar ingresso apenas de ${type}, o sistema precisa identificar se você já possui um ingresso de adulto comprado para esta data.` 
+           });
+      } else {
+           setShowWarning({ 
+               title: 'Ingresso de Adulto Necessário', 
+               msg: `Por regras de segurança, menores e pets só podem entrar acompanhados. Selecione 1 Adulto agora OU, se já comprou o seu, certifique-se de estar logado e com a mesma data selecionada.` 
+           });
+      }
+  };
+
   useEffect(() => {
     const fetchItem = async () => {
       setLoading(true);
@@ -1872,49 +1942,79 @@ const DetailsPage = () => {
                    </div>
 
                    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                     <div className="flex justify-between items-center"><div><span className="text-sm font-medium text-slate-700 block">Adultos</span><span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span></div><div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{const newVal = Math.max(0, adults-1); setAdults(newVal); if(newVal === 0) { setChildren(0); setPets(0); setFreeChildren(0); }}}>-</button><span className="font-bold text-slate-900 w-4 text-center">{adults}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button></div></div>
                      
+                     {/* AVISO DE VÍNCULO ENCONTRADO (NOVO) */}
+                     {parentTicket && adults === 0 && (
+                         <div className="bg-green-100 border border-green-200 text-green-800 text-xs p-3 rounded-xl flex items-start gap-2 mb-2 animate-fade-in">
+                             <CheckCircle size={16} className="mt-0.5 shrink-0"/>
+                             <div>
+                                 <strong>Vínculo Detectado:</strong> Encontramos seu ingresso (Reserva #{parentTicket.paymentId?.slice(-6) || 'ANTIGA'}) para esta data. A compra de dependentes avulsos está liberada.
+                             </div>
+                         </div>
+                     )}
+
+                     {/* Adultos */}
+                     <div className="flex justify-between items-center">
+                         <div>
+                             <span className="text-sm font-medium text-slate-700 block">Adultos</span>
+                             <span className="text-xs text-slate-400 block">{item.adultAgeStart ? `Acima de ${item.adultAgeStart} anos` : 'Ingresso padrão'}</span>
+                             <span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(currentPrice)}</span>
+                         </div>
+                         <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>{
+                                 const newVal = Math.max(0, adults-1);
+                                 setAdults(newVal);
+                                 // Só zera dependentes se NÃO tiver ticket pai validado
+                                 if(newVal === 0 && !parentTicket) { setChildren(0); setPets(0); setFreeChildren(0); }
+                             }}>-</button>
+                             <span className="font-bold text-slate-900 w-4 text-center">{adults}</span>
+                             <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setAdults(adults+1)}>+</button>
+                         </div>
+                     </div>
+                     
+                     {/* Crianças (Lógica Atualizada) */}
                      <div className="flex justify-between items-center">
                          <div><span className="text-sm font-medium text-slate-700 block">Crianças</span><span className="text-xs text-slate-400 block">{item.childAgeStart && item.childAgeEnd ? `${item.childAgeStart} a ${item.childAgeEnd} anos` : 'Meia entrada'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(childPrice)}</span></div>
                          <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
                              <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setChildren(Math.max(0, children-1))}>-</button>
                              <span className="font-bold text-slate-900 w-4 text-center">{children}</span>
-                             <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setChildren(children+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button>
+                             <button 
+                                className={`w-6 h-6 flex items-center justify-center font-bold rounded ${canAddDependent() ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
+                                onClick={() => canAddDependent() ? setChildren(children+1) : showDependencyError('crianças')}
+                             >+</button>
                          </div>
                      </div>
                      
+                     {/* Pets (Lógica Atualizada) */}
                      {showPets && (
                          <div className="flex justify-between items-center">
                              <div><span className="text-sm font-medium text-slate-700 flex items-center gap-1"><PawPrint size={14}/> Pets</span><span className="text-xs text-slate-400 block">{item.petSize || 'Permitido'}</span><span className="text-xs font-bold text-[#0097A8] block mt-0.5">{formatBRL(petFee)}</span></div>
                              <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
                                  <button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold hover:bg-cyan-50 rounded" onClick={()=>setPets(Math.max(0, pets-1))}>-</button>
                                  <span className="font-bold text-slate-900 w-4 text-center">{pets}</span>
-                                 <button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setPets(pets+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para levar pets, é necessário ter pelo menos 1 adulto responsável na reserva.' })}>+</button>
+                                 <button 
+                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${canAddDependent() ? 'text-[#0097A8] hover:bg-cyan-50' : 'text-slate-300 cursor-not-allowed'}`} 
+                                    onClick={() => canAddDependent() ? setPets(pets+1) : showDependencyError('pets')}
+                                 >+</button>
                              </div>
                          </div>
                      )}
                      
+                     {/* Crianças Grátis (Lógica Atualizada) */}
                      {item.trackFreeChildren && (
                          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
                              <div><span className="text-sm font-bold text-green-700 block">Crianças Grátis</span><span className="text-xs text-slate-400">{item.gratuitousness || "Isentas"}</span></div>
                              <div className="flex items-center gap-3 bg-green-50 px-2 py-1 rounded-lg border border-green-100 shadow-sm">
                                  <button className="w-6 h-6 flex items-center justify-center text-green-700 font-bold" onClick={()=>setFreeChildren(Math.max(0, freeChildren-1))}>-</button>
-                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span><button className={`w-6 h-6 flex items-center justify-center font-bold rounded ${adults > 0 ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} onClick={() => adults > 0 ? setFreeChildren(freeChildren+1) : setShowWarning({ title: 'Adicione um Adulto', msg: 'Para selecionar crianças gratuitas, é necessário ter pelo menos 1 adulto responsável.' })}>+</button></div>
+                                 <span className="font-bold text-slate-900 w-4 text-center">{freeChildren}</span>
+                                 <button 
+                                    className={`w-6 h-6 flex items-center justify-center font-bold rounded ${canAddDependent() ? 'text-green-700 hover:bg-green-100' : 'text-green-300 cursor-not-allowed'}`} 
+                                    onClick={() => canAddDependent() ? setFreeChildren(freeChildren+1) : showDependencyError('crianças')}
+                                 >+</button>
+                             </div>
                          </div>
                      )}
                    </div>
-
-                   {item.specialTickets && item.specialTickets.length > 0 && (
-                       <div className="space-y-3 bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                           <p className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-2">Adicionais & Especiais</p>
-                           {item.specialTickets.map((ticket, idx) => (
-                               <div key={idx} className="flex justify-between items-center">
-                                   <div><span className="text-sm font-medium text-slate-700 block">{ticket.name}</span><span className="text-xs font-bold text-[#0097A8]">{formatBRL(ticket.price)}</span></div>
-                                   <div className="flex items-center gap-3 bg-white px-2 py-1 rounded-lg border border-blue-100 shadow-sm"><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, -1)}>-</button><span className="font-bold text-slate-900 w-4 text-center">{selectedSpecial[idx] || 0}</span><button className="w-6 h-6 flex items-center justify-center text-[#0097A8] font-bold" onClick={()=>handleUpdateSpecial(idx, 1)}>+</button></div>
-                               </div>
-                           ))}
-                       </div>
-                   )}
 
                    <div className="pt-4 border-t border-dashed border-slate-200">
                       <div className="flex justify-between items-center mb-6"><span className="text-slate-600 font-medium">Total Estimado</span><span className="text-2xl font-bold text-slate-900">{formatBRL(total)}</span></div>
