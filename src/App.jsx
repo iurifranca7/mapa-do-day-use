@@ -136,26 +136,24 @@ const getYoutubeId = (url) => { if (!url) return null; const regExp = /^.*(youtu
 
 // --- HOOK DE SEO + OPEN GRAPH + CANONICAL (ATUALIZADO) ---
 const useSEO = (title, description, image = null, noIndex = false, canonical = null) => {
-  // Ajuste de compatibilidade: Se o 3º argumento for booleano, trata como noIndex
+  // Ajuste de compatibilidade para chamadas antigas
   if (typeof image === 'boolean') {
       noIndex = image;
       image = null;
   }
 
-  // URL da imagem padrão
-  const defaultImage = `${window.location.origin}/logo.png`; 
+  const defaultImage = `${BASE_URL}/logo.svg`; 
   const finalImage = image || defaultImage;
-  const currentUrl = window.location.href;
-  const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
   
-  // Define a URL canônica: Se não for passada manualmente, usa a URL atual limpa (sem query params)
-  const finalCanonical = canonical || window.location.origin + window.location.pathname;
+  // Constrói a URL canônica usando a BASE_URL fixa
+  const currentPath = window.location.pathname;
+  const finalCanonical = canonical || `${BASE_URL}${currentPath === '/' ? '' : currentPath}`;
+
+  const siteTitle = (title === "Home" || !title) ? "Mapa do Day Use" : title;
 
   useEffect(() => {
-    // 1. Título da Aba
     document.title = siteTitle;
-
-    // Função auxiliar para criar/atualizar meta tags
+    
     const setMeta = (attrName, attrValue, content) => {
         let element = document.querySelector(`meta[${attrName}='${attrValue}']`);
         if (!element) {
@@ -166,11 +164,10 @@ const useSEO = (title, description, image = null, noIndex = false, canonical = n
         element.setAttribute('content', content || "");
     };
 
-    // 2. Meta Tags Padrão
     setMeta('name', 'description', description);
     setMeta('name', 'robots', noIndex ? "noindex, nofollow" : "index, follow");
 
-    // 3. Open Graph (Facebook, WhatsApp, LinkedIn)
+    // Open Graph (Social)
     setMeta('property', 'og:title', siteTitle);
     setMeta('property', 'og:description', description);
     setMeta('property', 'og:image', finalImage);
@@ -179,13 +176,13 @@ const useSEO = (title, description, image = null, noIndex = false, canonical = n
     setMeta('property', 'og:site_name', 'Mapa do Day Use');
     setMeta('property', 'og:locale', 'pt_BR');
 
-    // 4. Twitter Card
+    // Twitter Card
     setMeta('name', 'twitter:card', 'summary_large_image');
     setMeta('name', 'twitter:title', siteTitle);
     setMeta('name', 'twitter:description', description);
     setMeta('name', 'twitter:image', finalImage);
 
-    // 5. Tag Canônica (NOVO)
+    // Tag Canônica (SEO Técnico)
     let linkCanonical = document.querySelector("link[rel='canonical']");
     if (!linkCanonical) {
         linkCanonical = document.createElement("link");
@@ -194,7 +191,7 @@ const useSEO = (title, description, image = null, noIndex = false, canonical = n
     }
     linkCanonical.setAttribute("href", finalCanonical);
 
-  }, [title, description, finalImage, noIndex, currentUrl, siteTitle, finalCanonical]);
+  }, [title, description, finalImage, noIndex, siteTitle, finalCanonical]);
 };
 
 // --- HOOK DE SCHEMA MARKUP (DADOS ESTRUTURADOS) ---
@@ -1198,38 +1195,33 @@ const HomePage = () => {
 
           // 2. Busca Dados Frescos e Otimiza para Cache
           try {
-              // Busca TODOS os itens (ativos e pausados) para popular a vitrine (Seeding)
               const q = query(collection(db, "dayuses"));
               const snap = await getDocs(q);
               const fullData = snap.docs.map(d => ({id: d.id, ...d.data()}));
               
-              // Mapeia apenas o essencial para não estourar o limite (5MB)
               const minifiedData = fullData.map(item => ({
                   id: item.id,
                   name: item.name,
                   city: item.city,
                   state: item.state,
-                  image: item.image, // URL da foto principal
+                  image: item.image,
                   priceAdult: item.priceAdult,
-                  amenities: item.amenities || [], // Necessário para os filtros
+                  amenities: item.amenities || [],
                   meals: item.meals || [],
                   petAllowed: item.petAllowed,
                   paused: item.paused
               }));
 
-              setItems(fullData); // Usa o completo na memória atual para garantir consistência
+              setItems(fullData); 
 
-              // Tenta salvar o leve no cache
               try {
                   localStorage.setItem('dayuses_min_cache', JSON.stringify(minifiedData));
               } catch (quotaError) {
-                  console.warn("Cache cheio (QuotaExceeded), limpando antigo...");
-                  localStorage.clear(); // Limpa tudo para tentar recuperar espaço
+                  console.warn("Cache cheio, limpando antigo...");
+                  localStorage.clear(); 
                   try {
                     localStorage.setItem('dayuses_min_cache', JSON.stringify(minifiedData));
-                  } catch (e) {
-                    console.warn("Não foi possível salvar no cache mesmo após limpeza.");
-                  }
+                  } catch (e) {}
               }
 
           } catch (err) {
@@ -1242,28 +1234,40 @@ const HomePage = () => {
       loadData();
   }, []);
 
-  // Lógica de Filtros por Categoria (Com proteção contra dados inválidos/undefined)
+  // --- HELPER PARA REMOVER ACENTOS ---
+  const normalizeText = (text) => {
+      return text
+        ? text.toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "")
+        : "";
+  };
+
+  // Lógica de Filtros por Categoria
   const filterByAmenity = (keywords) => items.filter(i => 
       Array.isArray(i.amenities) && i.amenities.some(a => keywords.some(k => a.toLowerCase().includes(k)))
   );
   
-  const activeItems = items; // Mostra todos, inclusive pausados, na vitrine (Seeding)
-  // Se quiser esconder pausados nas categorias, use: const activeItems = items.filter(i => !i.paused);
+  const activeItems = items; 
 
   const familyItems = filterByAmenity(['kids', 'infantil', 'playground', 'recreação', 'tobogã', 'monitores']).slice(0, 4);
   const foodItems = activeItems.filter(i => Array.isArray(i.meals) && i.meals.some(m => ['café da manhã', 'almoço', 'jantar', 'buffet'].some(k => m.toLowerCase().includes(k)))).slice(0, 4);
   const petItems = activeItems.filter(i => i.petAllowed).slice(0, 4);
   const heatedPoolItems = filterByAmenity(['aquecida', 'climatizada', 'termal', 'ofurô', 'hidro']).slice(0, 4);
 
-  // Busca Geral
+  // BUSCA GERAL (COM NORMALIZAÇÃO DE TEXTO)
   const searchResults = searchTerm 
-    ? items.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) || (i.city && i.city.toLowerCase().includes(searchTerm.toLowerCase())))
+    ? items.filter(i => {
+        const term = normalizeText(searchTerm);
+        const name = normalizeText(i.name);
+        const city = normalizeText(i.city);
+        // Busca tanto no nome do local quanto na cidade
+        return name.includes(term) || city.includes(term);
+    })
     : [];
 
   return (
     <div className="pb-20 animate-fade-in min-h-screen bg-white">
       
-      {/* HERO SECTION COM TÍTULO E HEADLINE */}
+      {/* HERO SECTION */}
       <div className="relative bg-[#0097A8] text-white pt-24 pb-20 px-4 rounded-b-[3rem] shadow-xl">
           <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-20 mix-blend-overlay"></div>
           <div className="relative z-10 max-w-4xl mx-auto text-center space-y-4">
@@ -1317,7 +1321,7 @@ const HomePage = () => {
         ) : (
             <div className="space-y-16">
                 
-                {/* 1. FAMÍLIA (Ícone Smile) */}
+                {/* 1. FAMÍLIA */}
                 {familyItems.length > 0 && (
                     <section>
                         <div className="flex items-center gap-3 mb-6">
@@ -1337,7 +1341,7 @@ const HomePage = () => {
                     </section>
                 )}
 
-                {/* 2. ALIMENTAÇÃO INCLUSA (Ícone Utensils) */}
+                {/* 2. ALIMENTAÇÃO INCLUSA */}
                 {foodItems.length > 0 && (
                     <section>
                         <div className="flex items-center gap-3 mb-6">
@@ -1357,7 +1361,7 @@ const HomePage = () => {
                     </section>
                 )}
 
-                {/* 3. PET FRIENDLY (Ícone PawPrint) */}
+                {/* 3. PET FRIENDLY */}
                 {petItems.length > 0 && (
                     <section>
                         <div className="flex items-center gap-3 mb-6">
@@ -1377,7 +1381,7 @@ const HomePage = () => {
                     </section>
                 )}
 
-                {/* 4. PISCINA AQUECIDA (Ícone ThermometerSun) */}
+                {/* 4. PISCINA AQUECIDA */}
                 {heatedPoolItems.length > 0 && (
                     <section>
                         <div className="flex items-center gap-3 mb-6">
@@ -1407,6 +1411,13 @@ const HomePage = () => {
                        <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
                    </div>
                </div>
+                
+                {/* CTA FINAL */}
+                <div className="bg-slate-50 rounded-3xl p-8 text-center border border-slate-100 mt-12">
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Não encontrou o que procurava?</h3>
+                    <p className="text-slate-500 mb-6">Use nosso mapa do site para ver todas as cidades disponíveis.</p>
+                    <Button onClick={() => navigate('/mapa-do-site')} variant="outline">Ver Todos os Destinos</Button>
+                </div>
             </div>
         )}
       </div>
