@@ -2655,171 +2655,100 @@ const UserDashboard = () => {
   const [trips, setTrips] = useState([]);
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [user, setUser] = useState(null);
-  
-  // NOVOS ESTADOS PARA MODAIS
-  const [feedback, setFeedback] = useState(null); // { type: 'success'|'error', title: '', msg: '' }
-  const [confirmAction, setConfirmAction] = useState(null); // { id: string } para guardar o ID a cancelar
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, u => {
         if(u) {
            setUser(u);
+           // Usando getDocs conforme sua versão que funcionou
            const q = query(collection(db, "reservations"), where("userId", "==", u.uid));
-           getDocs(q).then(s => setTrips(s.docs.map(d => ({id: d.id, ...d.data()}))));
+           
+           getDocs(q)
+             .then(s => {
+                 // Mapeia e ordena por data (mais recente primeiro)
+                 const data = s.docs.map(d => ({id: d.id, ...d.data()}));
+                 data.sort((a, b) => {
+                     const dateA = a.createdAt?.seconds || a.date;
+                     const dateB = b.createdAt?.seconds || b.date;
+                     return dateA > dateB ? -1 : 1; 
+                 });
+                 setTrips(data);
+             })
+             .catch(err => console.error("Erro ao buscar ingressos:", err))
+             .finally(() => setLoading(false));
+        } else {
+            setLoading(false);
         }
      });
      return unsub;
   }, []);
 
-  // 1. Solicita confirmação (Abre Modal)
-  const requestCancel = (id) => {
-      setConfirmAction({ id });
+  const formatDate = (dateStr) => {
+      if (!dateStr) return '';
+      try { return dateStr.split('-').reverse().join('/'); } catch (e) { return dateStr; }
   };
 
-  // 2. Executa o cancelamento (Ação do Modal)
-  const executeCancel = async () => {
-    if (!confirmAction) return;
-    const { id } = confirmAction;
-    
-    // Captura os dados da reserva para o e-mail antes de excluir da lista visual
-    const tripToCancel = trips.find(t => t.id === id);
-
-    try {
-        await deleteDoc(doc(db, "reservations", id));
-        setTrips(trips.filter(t => t.id !== id));
-        
-        // Envia E-mail de Cancelamento
-        if (tripToCancel) {
-            const emailHtml = `
-             <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
-                 <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
-                     <h1 style="margin: 0; font-size: 24px;">Reserva Cancelada</h1>
-                 </div>
-                 <div style="padding: 20px;">
-                     <p>Olá, <strong>${tripToCancel.guestName || 'Viajante'}</strong>.</p>
-                     <p>Sua reserva foi cancelada conforme solicitado através da plataforma.</p>
-                     
-                     <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                         <h3 style="margin-top: 0; color: #333;">${tripToCancel.itemName}</h3>
-                         <p style="margin: 5px 0;"><strong>📅 Data original:</strong> ${tripToCancel.date?.split('-').reverse().join('/')}</p>
-                         <p style="margin: 5px 0;"><strong>📍 Código:</strong> ${tripToCancel.id?.slice(0, 6).toUpperCase()}</p>
-                     </div>
-
-                     <p style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
-                        <strong>Importante sobre Reembolso:</strong> O estorno de valores pagos depende da política de cancelamento específica deste estabelecimento. Entre em contato diretamente com o local para mais detalhes.
-                     </p>
-                 </div>
-             </div>
-            `;
-            sendEmail(tripToCancel.guestEmail, "Reserva Cancelada - Mapa do Day Use", emailHtml);
-        }
-
-        setFeedback({ 
-            type: 'success', 
-            title: 'Cancelado', 
-            msg: 'Sua reserva foi cancelada. Enviamos um comprovante para seu e-mail.' 
-        });
-
-    } catch (error) {
-        console.error("Erro ao cancelar:", error);
-        setFeedback({ 
-            type: 'error', 
-            title: 'Erro', 
-            msg: 'Não foi possível cancelar a reserva. Tente novamente ou contate o suporte.' 
-        });
-    } finally {
-        setConfirmAction(null); // Fecha o modal de confirmação
-    }
-  };
-
-  const handleLogout = async () => { await signOut(auth); window.location.href = '/'; }
-
-  if (!user) return <div className="text-center py-20 text-slate-400">Carregando...</div>;
+  if (loading) return <div className="text-center py-20 text-slate-400">Carregando ingressos...</div>;
+  if (!user) return <div className="text-center py-20 text-slate-400">Faça login para ver seus ingressos.</div>;
 
   return (
      <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
         <VoucherModal isOpen={!!selectedVoucher} trip={selectedVoucher} onClose={() => setSelectedVoucher(null)} />
         
-        {/* MODAL DE FEEDBACK (Sucesso/Erro) */}
-        {feedback && createPortal(
-            <ModalOverlay onClose={() => setFeedback(null)}>
-                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                        feedback.type === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
-                    }`}>
-                        {feedback.type === 'success' ? <CheckCircle size={32}/> : <AlertCircle size={32}/>}
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-900 mb-2">{feedback.title}</h2>
-                    <p className="text-slate-600 mb-6 text-sm">{feedback.msg}</p>
-                    <Button onClick={() => setFeedback(null)} className="w-full justify-center">Fechar</Button>
-                </div>
-            </ModalOverlay>,
-            document.body
-        )}
-
-        {/* MODAL DE CONFIRMAÇÃO DE CANCELAMENTO */}
-        {confirmAction && createPortal(
-            <ModalOverlay onClose={() => setConfirmAction(null)}>
-                <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                    <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Trash2 size={32}/>
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-900 mb-2">Cancelar Reserva?</h2>
-                    <p className="text-slate-600 mb-6 text-sm">
-                        Tem certeza que deseja cancelar? Essa ação não pode ser desfeita e está sujeita às regras de reembolso do local.
-                    </p>
-                    <div className="flex gap-3">
-                        <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">
-                            Voltar
-                        </Button>
-                        <Button onClick={executeCancel} className="flex-1 justify-center bg-red-500 hover:bg-red-600 text-white border-none shadow-red-200">
-                            Sim, Cancelar
-                        </Button>
-                    </div>
-                </div>
-            </ModalOverlay>,
-            document.body
-        )}
-
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-bold text-slate-900">Meus Ingressos</h1>
         </div>
         
         <div className="space-y-6">
-           {trips.map(t => (
-              <div key={t.id} className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
-                 <div className="flex gap-4 items-center w-full md:w-auto">
-                    <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden shrink-0"><img src={t.itemImage} className="w-full h-full object-cover"/></div>
-                    <div>
-                      <h3 className="font-bold text-lg text-slate-900">{t.itemName}</h3>
-                      <p className="text-sm text-slate-500 flex items-center gap-1 mt-1"><CalendarIcon size={14}/> {t.date}</p>
-                      
-                      <div className="text-xs text-slate-500 mt-2 font-medium flex gap-3 flex-wrap">
-                          <span className="flex items-center gap-1"><User size={12}/> {t.adults} Adultos</span>
-                          {t.children > 0 && <span>• {t.children} Crianças</span>}
-                          {t.pets > 0 && <span className="flex items-center gap-1">• <PawPrint size={12}/> {t.pets}</span>}
-                      </div>
+           {trips.length === 0 ? (
+               <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
+                   <Ticket size={40} className="mx-auto text-slate-300 mb-4"/>
+                   <h3 className="text-xl font-bold text-slate-700 mb-2">Nenhum ingresso ainda</h3>
+                   <p className="text-slate-500 mb-6">Encontre o lugar perfeito para o seu próximo Day Use.</p>
+                   <Button onClick={()=>window.location.href='/'}>Explorar Destinos</Button>
+               </div>
+           ) : (
+               trips.map(t => (
+                  <div key={t.id} className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
+                     <div className="flex gap-4 items-center w-full md:w-auto">
+                        <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden shrink-0">
+                            <img src={t.item?.image || t.itemImage} className="w-full h-full object-cover" alt="Local"/>
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-lg text-slate-900">{t.item?.name || t.itemName}</h3>
+                          <p className="text-sm text-slate-500 flex items-center gap-1 mt-1">
+                              <CalendarIcon size={14}/> {formatDate(t.date)}
+                          </p>
+                          
+                          <div className="text-xs text-slate-500 mt-2 font-medium flex gap-3 flex-wrap">
+                              <span className="flex items-center gap-1"><User size={12}/> {t.adults} Adultos</span>
+                              {t.children > 0 && <span>• {t.children} Crianças</span>}
+                              {t.pets > 0 && <span className="flex items-center gap-1">• <PawPrint size={12}/> {t.pets}</span>}
+                          </div>
 
-                      <div className="mt-3 flex items-center gap-3">
-                          <Badge type={t.status === 'cancelled' ? 'red' : t.status === 'validated' ? 'green' : 'default'}>
-                             {t.status === 'cancelled' ? 'Cancelado' : t.status === 'validated' ? 'Utilizado' : 'Confirmado'}
-                          </Badge>
-                          <span className="font-bold text-slate-900">{formatBRL(t.total)}</span>
-                      </div>
+                          <div className="mt-3 flex items-center gap-3">
+                              <Badge type={t.status === 'cancelled' ? 'red' : t.status === 'validated' ? 'green' : 'default'}>
+                                 {t.status === 'cancelled' ? 'Cancelado' : t.status === 'validated' ? 'Utilizado' : 'Confirmado'}
+                              </Badge>
+                              <span className="font-bold text-slate-900">{formatBRL(t.total)}</span>
+                          </div>
 
-                      <div className="mt-2 text-xs font-mono bg-slate-50 p-1 px-2 rounded w-fit border border-slate-200 text-slate-500">
-                         #{t.id?.slice(0,6).toUpperCase()}
-                      </div>
-                    </div>
-                 </div>
-                 
-                 <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
-                    <Button variant="outline" className="px-4 py-2 h-auto text-xs" onClick={() => setSelectedVoucher(t)}>Ver Voucher</Button>
-                    {t.status !== 'cancelled' && <Button variant="danger" className="px-4 py-2 h-auto text-xs bg-white text-red-500 hover:bg-red-50 border-red-100" onClick={() => requestCancel(t.id)}>Cancelar</Button>}
-                 </div>
-              </div>
-           ))}
-           {trips.length === 0 && <div className="text-center py-20 bg-white rounded-3xl border border-dashed"><p className="text-slate-400">Você ainda não tem reservas.</p></div>}
+                          <div className="mt-2 text-xs font-mono bg-slate-50 p-1 px-2 rounded w-fit border border-slate-200 text-slate-500">
+                             #{t.id?.slice(0,6).toUpperCase()}
+                          </div>
+                        </div>
+                     </div>
+                     
+                     <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
+                        <Button variant="outline" className="px-4 py-2 h-auto text-xs w-full md:w-auto justify-center" onClick={() => setSelectedVoucher(t)}>
+                            {t.status === 'confirmed' ? 'Abrir Voucher' : 'Ver Detalhes'}
+                        </Button>
+                        {/* Botão Cancelar Removido */}
+                     </div>
+                  </div>
+               ))
+           )}
         </div>
      </div>
   );
@@ -2898,33 +2827,109 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
   );
 };
 
-const VoucherModal = ({ isOpen, onClose, trip }) => {
+const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
   if (!isOpen || !trip) return null;
   
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${trip.id}`;
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${trip.id}`;
   const itemData = trip.item || {};
   const placeName = itemData.name || trip.itemName || "Local do Passeio";
   const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
   const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
-  const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : `Cartão de Crédito ${trip.installments ? `(${trip.installments}x)` : '(À vista)'}`;
+  const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : 'Cartão de Crédito';
+
+  // Lógica de Impressão (Abre nova janela limpa)
+  const handlePrint = () => {
+      const printWindow = window.open('', '_blank', 'width=800,height=800');
+      if (!printWindow) { alert("Por favor, permita popups para imprimir."); return; }
+
+      const content = `
+        <html>
+          <head>
+            <title>Voucher - ${placeName}</title>
+            <style>
+              body { font-family: 'Helvetica', sans-serif; padding: 40px; text-align: center; color: #333; }
+              .box { border: 2px dashed #ccc; padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 400px; }
+              .header { background: #0097A8; color: white; padding: 20px; border-radius: 10px 10px 0 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .code { font-size: 32px; font-weight: bold; letter-spacing: 2px; margin: 10px 0; display: block; }
+              .label { font-size: 10px; text-transform: uppercase; color: #666; font-weight: bold; }
+              .row { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding: 10px 0; font-size: 14px; }
+              .total { font-size: 18px; font-weight: bold; color: #0097A8; margin-top: 20px; border-top: 2px solid #eee; padding-top: 10px; }
+              .footer { font-size: 10px; color: #999; margin-top: 40px; }
+              .rules { background: #f9f9f9; padding: 15px; text-align: left; font-size: 11px; margin-top: 20px; border-radius: 8px; border: 1px solid #eee; }
+              img { max-width: 150px; height: auto; }
+            </style>
+          </head>
+          <body>
+            <div style="max-width: 500px; margin: 0 auto; border: 1px solid #ddd; border-radius: 15px; overflow: hidden;">
+                <div class="header">
+                    <h1 style="margin:0; font-size: 20px;">Voucher de Acesso</h1>
+                    <p style="margin:5px 0 0 0; font-size: 12px; opacity: 0.9;">Apresente este documento na portaria</p>
+                </div>
+                <div style="padding: 30px;">
+                    <h2 style="margin: 0 0 5px 0;">${placeName}</h2>
+                    <p style="margin: 0 0 20px 0; font-size: 12px; color: #666;">${address}</p>
+                    
+                    <div class="box">
+                        <img src="${qrCodeUrl}" alt="QR Code" />
+                        <span class="label" style="display:block; margin-top:10px;">Código de Validação</span>
+                        <span class="code">${trip.id.slice(0,6).toUpperCase()}</span>
+                    </div>
+
+                    <div class="row"><span class="label">Data</span> <b>${trip.date.split('-').reverse().join('/')}</b></div>
+                    <div class="row"><span class="label">Titular</span> <b>${trip.guestName}</b></div>
+                    <div class="row"><span class="label">Pagamento</span> <b>${paymentLabel}</b></div>
+                    
+                    <div style="text-align: left; margin-top: 20px;">
+                        <span class="label">Itens Inclusos</span>
+                        <ul style="margin: 5px 0; padding-left: 20px; font-size: 13px;">
+                            <li>Adultos: ${trip.adults}</li>
+                            ${trip.children > 0 ? `<li>Crianças: ${trip.children}</li>` : ''}
+                            ${trip.pets > 0 ? `<li>Pets: ${trip.pets}</li>` : ''}
+                        </ul>
+                    </div>
+
+                    <div class="total">
+                        Total Pago: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(trip.total)}
+                    </div>
+
+                    <div class="rules">
+                        <strong>⚠️ Regras de Acesso e Cancelamento:</strong><br/>
+                        ${itemData.allowFood === false ? '• Proibida entrada de alimentos e bebidas (sujeito a revista).<br/>' : '• Entrada de alimentos liberada.<br/>'}
+                        • Remarcações e cancelamentos devem ser tratados diretamente com o estabelecimento pelos contatos abaixo.
+                    </div>
+
+                    <div style="margin-top: 20px; font-size: 12px;">
+                        ${itemData.localWhatsapp ? `WhatsApp: ${itemData.localWhatsapp} <br/>` : ''}
+                        ${itemData.localPhone ? `Tel: ${itemData.localPhone}` : ''}
+                    </div>
+                </div>
+            </div>
+            <div class="footer">Emitido por Mapa do Day Use em ${new Date().toLocaleString()}</div>
+            <script>window.onload = function() { window.print(); window.close(); }</script>
+          </body>
+        </html>
+      `;
+      
+      printWindow.document.write(content);
+      printWindow.document.close();
+  };
 
   return createPortal(
     <ModalOverlay onClose={onClose}>
-      <div className="flex flex-col w-full bg-white">
+      <div className="flex flex-col w-full bg-white max-h-[90vh] overflow-hidden rounded-3xl md:max-w-md mx-auto">
         
-        {/* Cabeçalho Fixo */}
-        <div className="sticky top-0 z-10 bg-[#0097A8] p-6 text-white text-center shadow-sm">
+        {/* CABEÇALHO */}
+        <div className="bg-[#0097A8] p-6 text-white text-center shadow-sm shrink-0 relative">
             <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/10 rounded-full p-1 transition-colors"><X size={20}/></button>
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3"><Ticket size={24} /></div>
             <h2 className="text-xl font-bold">Voucher de Acesso</h2>
             <p className="text-cyan-100 text-sm">Apresente na portaria</p>
         </div>
-
-        {/* Conteúdo com Scroll */}
+        
         <div className="p-8 text-sm text-slate-700 space-y-6 overflow-y-auto custom-scrollbar">
             
-            {/* QR Code e Status */}
-            <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl">
+            {/* QR CODE & STATUS */}
+            <div className="text-center bg-slate-50 border-2 border-dashed border-slate-300 p-6 rounded-2xl relative">
                 <div className="mb-4">
                     <Badge type={trip.status === 'cancelled' ? 'red' : trip.status === 'validated' ? 'green' : 'default'}>
                         {trip.status === 'cancelled' ? 'Cancelado' : trip.status === 'validated' ? 'Utilizado / Validado' : 'Confirmado'}
@@ -2939,72 +2944,86 @@ const VoucherModal = ({ isOpen, onClose, trip }) => {
                 <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
             </div>
 
-            {/* Informações Principais */}
-            <div className="space-y-4">
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Titular</span><b className="text-slate-900">{trip.guestName}</b></div>
-                <div className="flex justify-between border-b border-slate-100 pb-2"><span className="text-slate-500">Pagamento</span><b className="text-slate-900 capitalize">{paymentLabel}</b></div>
+            {/* DADOS DA RESERVA (FONTE UNIFICADA) */}
+            <div className="space-y-3 border-b border-slate-100 pb-6">
+                <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Local</span><b className="text-slate-900 text-right text-base w-1/2">{placeName}</b></div>
+                <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
+                <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Titular</span><b className="text-slate-900 text-base">{trip.guestName}</b></div>
+                <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Pagamento</span><b className="text-slate-900 text-base capitalize">{paymentLabel}</b></div>
             </div>
 
-            {/* Endereço e Contato */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                <div>
-                    <p className="font-bold text-slate-900 mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#0097A8]"/> {placeName}</p>
-                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{address}</p>
-                    <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="block w-full text-center bg-white border border-slate-200 text-[#0097A8] font-bold py-2 rounded-lg hover:bg-cyan-50 transition-colors text-xs flex items-center justify-center gap-2">
-                        <LinkIcon size={14}/> Abrir no Maps / Waze
-                    </a>
-                </div>
+            {/* ITENS INCLUSOS & TOTAL */}
+            <div className="bg-cyan-50 p-4 rounded-xl border border-cyan-100">
+               <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
+               <ul className="space-y-1 text-sm text-slate-700 font-medium mb-3">
+                 <li className="flex justify-between"><span>Adultos:</span> <b>{trip.adults}</b></li>
+                 {trip.children > 0 && <li className="flex justify-between"><span>Crianças:</span> <b>{trip.children}</b></li>}
+                 {trip.pets > 0 && <li className="flex justify-between"><span>Pets:</span> <b>{trip.pets}</b></li>}
+                 {trip.freeChildren > 0 && <li className="flex justify-between text-green-700 font-bold"><span>Crianças Grátis:</span> <b>{trip.freeChildren}</b></li>}
+                 {trip.selectedSpecial && Object.entries(trip.selectedSpecial).map(([idx, qtd]) => {
+                     const ticketName = trip.item?.specialTickets?.[idx]?.name || "Item Extra";
+                     if(qtd > 0) return <li key={idx} className="flex justify-between text-blue-700"><span>{ticketName}:</span> <b>{qtd}</b></li>;
+                     return null;
+                 })}
+               </ul>
+               <div className="border-t border-cyan-200 pt-2 flex justify-between items-center">
+                   <span className="text-[#0097A8] font-bold text-xs uppercase">Valor Total Pago</span>
+                   <span className="text-xl font-bold text-[#0097A8]">{formatBRL(trip.total)}</span>
+               </div>
+            </div>
 
-                {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
-                    <div className="pt-3 border-t border-slate-200">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fale com o local</p>
-                        <div className="space-y-2">
-                            {itemData.localWhatsapp && (
-                                <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-green-600 hover:underline font-medium">
-                                    <MessageCircle size={16} /> WhatsApp: {itemData.localWhatsapp}
-                                </a>
-                            )}
-                            {itemData.localPhone && (
-                                <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 hover:underline">
-                                    <Phone size={16} /> Tel: {itemData.localPhone}
-                                </a>
-                            )}
-                            {itemData.localEmail && (
-                                <a href={`mailto:${itemData.localEmail}`} className="flex items-center gap-2 text-slate-600 hover:underline">
-                                    <Mail size={16} /> {itemData.localEmail}
-                                </a>
-                            )}
+            {/* ENDEREÇO & MAPA */}
+            <div className="space-y-2">
+                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Como Chegar</p>
+                 <p className="text-sm text-slate-700 font-medium">{address}</p>
+                 <a href={mapsLink} target="_blank" rel="noopener noreferrer" className="text-[#0097A8] text-xs font-bold hover:underline flex items-center gap-1">
+                     <MapPin size={12}/> Abrir no Google Maps
+                 </a>
+            </div>
+
+            {/* REGRAS DE ACESSO (ATUALIZADO E UNIFICADO) */}
+            <div className={`p-4 rounded-xl border text-center ${itemData.allowFood === false ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+                {itemData.allowFood === false ? (
+                    <>
+                        <div className="flex items-center justify-center gap-2 text-red-700 font-bold mb-2">
+                            <Ban size={18}/> 
+                            <span>Proibida entrada de bebidas e alimentos</span>
                         </div>
+                        <p className="text-xs text-red-600/80 leading-relaxed font-medium">
+                            Sujeito a revista de bolsas e mochilas.<br/>
+                            Temos restaurante no local com preços similares ao mercado.
+                        </p>
+                    </>
+                ) : (
+                    <div className="flex items-center justify-center gap-2 text-green-700 font-bold">
+                        <CheckCircle size={18}/> 
+                        <span>Entrada de bebidas e alimentos permitida</span>
                     </div>
                 )}
             </div>
 
-            {/* Resumo Financeiro e Itens */}
-            <div className="bg-cyan-50 p-4 rounded-xl">
-               <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
-               <ul className="space-y-1 text-sm text-slate-700">
-                 <li className="flex justify-between"><span>Adultos:</span> <b>{trip.adults}</b></li>
-                 {trip.children > 0 && <li className="flex justify-between"><span>Crianças:</span> <b>{trip.children}</b></li>}
-                 {trip.pets > 0 && <li className="flex justify-between"><span>Pets:</span> <b>{trip.pets}</b></li>}
-                 
-                 {/* NOVO: Crianças Gratuitas */}
-                 {trip.freeChildren > 0 && (
-                     <li className="flex justify-between text-green-700 font-bold"><span>Crianças Grátis:</span> <b>{trip.freeChildren}</b></li>
-                 )}
+            {/* CONTATO & POLÍTICA */}
+            {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Contato do Local</p>
+                    <div className="space-y-2 mb-4">
+                        {itemData.localWhatsapp && (
+                            <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} className="flex items-center gap-2 text-green-600 font-bold text-xs"><MessageCircle size={14} /> WhatsApp: {itemData.localWhatsapp}</a>
+                        )}
+                        {itemData.localPhone && (
+                            <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 text-xs"><Phone size={14} /> Tel: {itemData.localPhone}</a>
+                        )}
+                    </div>
+                    
+                    {/* AVISO DE REMARCAÇÃO (Abaixo do contato) */}
+                    <div className="pt-3 border-t border-slate-200 text-[10px] text-slate-500 leading-relaxed">
+                        <p className="font-bold mb-1 text-slate-700">Política de Alterações:</p>
+                        <p>Remarcações, cancelamentos e reembolsos devem ser tratados <strong>diretamente com o estabelecimento</strong> através dos contatos acima, sujeitos às regras do local.</p>
+                    </div>
+                </div>
+            )}
 
-                 {/* NOVO: Itens Especiais */}
-                 {trip.selectedSpecial && Object.entries(trip.selectedSpecial).map(([idx, qtd]) => {
-                     const ticketName = trip.item?.specialTickets?.[idx]?.name || "Item Extra";
-                     if(qtd > 0) return <li key={idx} className="flex justify-between text-blue-700"><span>{ticketName}:</span> <b>{qtd}</b></li>
-                     return null;
-                 })}
-                 
-                 <li className="flex justify-between pt-2 mt-2 border-t border-cyan-100 text-[#0097A8] font-bold text-lg"><span>Total Pago</span><span>{formatBRL(trip.total)}</span></li>
-               </ul>
-            </div>
-
-            <Button className="w-full" onClick={() => window.print()}>Imprimir / Salvar PDF</Button>
+            <Button className="w-full" onClick={handlePrint}>Imprimir / Salvar PDF</Button>
         </div>
       </div>
     </ModalOverlay>,
@@ -4720,7 +4739,33 @@ const PartnerNew = () => {
 
            {/* 5. INCLUSÕES E REGRAS */}
            <div className="space-y-4">
-              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">5. O que está incluso?</h3></div>
+              <div className="border-b pb-2 mb-4"><h3 className="font-bold text-lg text-[#0097A8]">5. Regras e Inclusões</h3></div>
+              
+              {/* CHECKBOXES DE SEGURANÇA JURÍDICA (NOVO) */}
+              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 mb-6">
+                  <p className="text-sm font-bold text-yellow-800 mb-3 flex items-center gap-2"><ShieldCheck size={16}/> Regras de Acesso (Segurança)</p>
+                  
+                  <div className="grid md:grid-cols-2 gap-4">
+                      {/* Permite Alimentos? */}
+                      <label className="flex items-center justify-between bg-white p-3 rounded-lg border border-yellow-100 cursor-pointer hover:border-yellow-300 transition-colors">
+                          <span className="text-sm text-slate-700 font-medium">Permite entrar com alimentos/bebidas?</span>
+                          <div className="relative inline-flex items-center cursor-pointer">
+                              <input type="checkbox" className="sr-only peer" checked={formData.allowFood} onChange={e => setFormData({...formData, allowFood: e.target.checked})} />
+                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0097A8]"></div>
+                          </div>
+                      </label>
+
+                      {/* Realiza Revista? */}
+                      <label className="flex items-center justify-between bg-white p-3 rounded-lg border border-yellow-100 cursor-pointer hover:border-yellow-300 transition-colors">
+                          <span className="text-sm text-slate-700 font-medium">Realiza revista na entrada?</span>
+                          <div className="relative inline-flex items-center cursor-pointer">
+                              <input type="checkbox" className="sr-only peer" checked={formData.hasSearch} onChange={e => setFormData({...formData, hasSearch: e.target.checked})} />
+                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0097A8]"></div>
+                          </div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-yellow-700 mt-2">* Essas informações aparecerão no voucher do cliente para evitar conflitos na portaria.</p>
+              </div>              
               <div><label className="text-sm font-bold text-slate-700 block mb-2">Comodidades e Lazer</label><div className="relative mb-2"><Search size={16} className="absolute left-3 top-3 text-slate-400"/><input className="w-full border p-2 pl-9 rounded-lg text-sm bg-slate-50 focus:bg-white transition-colors" placeholder="Buscar comodidade..." value={amenitySearch} onChange={e=>setAmenitySearch(e.target.value)}/></div><div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200 h-60 overflow-y-auto custom-scrollbar">{AMENITIES_LIST.filter(a => a.toLowerCase().includes(amenitySearch.toLowerCase())).map(a => (<label key={a} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedAmenities.includes(a)} onChange={()=>toggleAmenity(a)} className="accent-[#0097A8] w-4 h-4 rounded"/>{a}</label>))}</div></div>
               <div><label className="text-sm font-bold text-slate-700 block mb-2">Alimentação</label><div className="flex flex-wrap gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">{MEALS_LIST.map(m => (<label key={m} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-[#0097A8]"><input type="checkbox" checked={selectedMeals.includes(m)} onChange={()=>toggleMeal(m)} className="accent-[#0097A8] w-4 h-4 rounded"/>{m}</label>))}</div></div>
               <div><label className="text-sm font-bold text-red-600 block mb-1">O que NÃO está incluso?</label><textarea className="w-full border p-3 rounded-xl h-20 bg-red-50/30" placeholder="Ex: Bebidas..." value={formData.notIncludedItems} onChange={e=>setFormData({...formData, notIncludedItems: e.target.value})}/></div>
