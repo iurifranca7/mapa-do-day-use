@@ -3034,9 +3034,9 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
             {hasRulesSnapshot && (
                 <div className={`p-4 rounded-xl border text-center ${trip.item.allowFood === false ? 'bg-red-50 border-red-100 text-red-800' : 'bg-green-50 border-green-100 text-green-800'}`}>
                     {trip.item.allowFood === false ? (
-                        <><strong className="flex items-center justify-center gap-2"><Ban size={16}/> Proibido Alimentos</strong><p className="text-xs mt-1">Sujeito a revista. Restaurante no local.</p></>
+                        <><strong className="flex items-center justify-center gap-2"><Ban size={16}/> Proibido entrada de bebidas e alimentos</strong><p className="text-xs mt-1">Sujeito a revista. Restaurante no local.</p></>
                     ) : (
-                        <strong className="flex items-center justify-center gap-2"><CheckCircle size={16}/> Alimentos Permitidos</strong>
+                        <strong className="flex items-center justify-center gap-2"><CheckCircle size={16}/> Entrada de bebidas e alimentos permitidos</strong>
                     )}
                 </div>
             )}
