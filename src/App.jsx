@@ -1411,13 +1411,6 @@ const HomePage = () => {
                        <button className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-colors shadow-lg">Fazer Quiz Agora</button>
                    </div>
                </div>
-                
-                {/* CTA FINAL */}
-                <div className="bg-slate-50 rounded-3xl p-8 text-center border border-slate-100 mt-12">
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">Não encontrou o que procurava?</h3>
-                    <p className="text-slate-500 mb-6">Use nosso mapa do site para ver todas as cidades disponíveis.</p>
-                    <Button onClick={() => navigate('/mapa-do-site')} variant="outline">Ver Todos os Destinos</Button>
-                </div>
             </div>
         )}
       </div>
@@ -5333,14 +5326,31 @@ const Layout = ({ children }) => {
       <footer className="bg-white border-t border-slate-200 py-12 mt-auto">
          <div className="max-w-7xl mx-auto px-4">
             <div className="grid md:grid-cols-4 gap-8 mb-8">
+               
+               {/* Coluna 1: Marca e Contato */}
                <div className="col-span-1 md:col-span-2">
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
-                     {!logoError ? (<img src="/logo.png?v=2" alt="Mapa" className="h-8 w-auto object-contain" onError={() => setLogoError(true)} />) : (<MapIcon className="h-6 w-6 text-[#0097A8]" />)}
+                     {!logoError ? (
+                        <img 
+                           src="/logo.svg" 
+                           alt="Mapa do Day Use" 
+                           className="h-8 w-auto object-contain" 
+                           onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
+                        />
+                     ) : (
+                        <MapIcon className="h-6 w-6 text-[#0097A8]" />
+                     )}
+                     <span className="hidden sm:inline font-bold text-xl text-slate-800">Mapa do Day Use</span>
                   </div>
-                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">A plataforma completa para você descobrir e reservar experiências incríveis de Day Use perto de você.</p>
-                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm"><Mail size={16} /> contato@mapadodayuse.com</a>
+                  <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
+                     A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
+                  </p>
+                  <a href="mailto:contato@mapadodayuse.com" className="flex items-center gap-2 text-slate-600 hover:text-[#0097A8] transition-colors font-medium text-sm">
+                     <Mail size={16} /> contato@mapadodayuse.com
+                  </a>
                </div>
                
+               {/* Coluna 2: Institucional */}
                <div>
                   <h4 className="font-bold text-slate-900 mb-4">Institucional</h4>
                   <ul className="space-y-3 text-sm text-slate-500">
@@ -5351,47 +5361,57 @@ const Layout = ({ children }) => {
                   </ul>
                </div>
 
+               {/* Coluna 3: Explore e Social */}
                <div>
-                   <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
-                   <ul className="space-y-3 text-sm text-slate-500 mb-6">
-                      <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
-                      <li><button onClick={() => navigate('/quiz')} className="hover:text-[#0097A8] transition-colors">Quiz Ideal 🤖</button></li>
-                      <li><button onClick={() => navigate('/comparativo')} className="hover:text-[#0097A8] transition-colors">Comparador</button></li>
-                   </ul>
-                   <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105">
-                       Seja um Parceiro
-                   </button>
-               </div>
-
-               {/* Coluna 4: Redes Sociais */}
-               <div>
-                  <h4 className="font-bold text-slate-900 mb-4">Siga-nos</h4>
-                  <div className="flex gap-3">
-                     <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
-                        <Instagram size={20} />
+                  <h4 className="font-bold text-slate-900 mb-4">Explore</h4>
+                  <ul className="space-y-3 text-sm text-slate-500 mb-6">
+                     <li><button onClick={() => navigate('/day-use')} className="hover:text-[#0097A8] transition-colors">Blog / Dicas</button></li>
+                     <li><button onClick={() => navigate('/quiz')} className="hover:text-[#0097A8] transition-colors">Quiz Ideal 🤖</button></li>
+                     <li><button onClick={() => navigate('/comparativo')} className="hover:text-[#0097A8] transition-colors">Comparador</button></li>
+                  </ul>
+                  
+                  <div className="flex gap-3 mb-4">
+                     <a href="https://instagram.com/mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2 rounded-full bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-[#E1306C] transition-all border border-slate-100 hover:border-pink-200">
+                        <Instagram size={18} />
                      </a>
                      <a href="https://tiktok.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-gray-100 text-slate-400 hover:text-black transition-all border border-slate-100 hover:border-gray-300">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
                      </a>
                      <a href="https://www.youtube.com/@mapadodayuse" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 transition-all border border-slate-100 hover:border-red-200">
-                        <Youtube size={20} />
+                        <Youtube size={18} />
                      </a>
                   </div>
+
+                  <button onClick={() => navigate('/seja-parceiro')} className="bg-[#0097A8] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-[#007F8F] transition-colors shadow-lg shadow-teal-100 transform hover:scale-105 w-full md:w-auto">
+                      Seja um Parceiro
+                  </button>
                </div>
             </div>
             
-            <div className="border-t border-slate-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-400">
-               <div className="flex flex-col md:flex-row gap-2 md:gap-6 items-center text-center md:text-left">
-                   <p>© 2026 Belo Horizonte, MG. Todos os direitos reservados.</p>
-                   <div className="hidden md:block w-1 h-1 bg-slate-300 rounded-full"></div>
-                   <div className="flex gap-4">
-                       <button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors text-xs">Política de Privacidade</button>
-                       <button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors text-xs">Termos de Uso</button>
+            {/* Rodapé Inferior */}
+            <div className="border-t border-slate-100 pt-8 mt-8">
+               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-xs text-slate-500 mb-4">
+                   <div className="flex flex-col md:flex-row gap-2 md:gap-6">
+                       <p>© 2026 Mapa do Day Use LTDA. Todos os direitos reservados.</p>
+                       <div className="hidden md:block w-1 h-1 bg-slate-300 rounded-full my-auto"></div>
+                       <div className="flex gap-4">
+                           <button onClick={() => navigate('/politica-de-privacidade')} className="hover:text-[#0097A8] transition-colors">Política de Privacidade</button>
+                           <button onClick={() => navigate('/termos-de-uso')} className="hover:text-[#0097A8] transition-colors">Termos de Uso</button>
+                       </div>
                    </div>
+                   <p className="flex items-center gap-1">
+                      Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" rel="noopener noreferrer" className="font-bold text-slate-600 hover:text-[#0097A8] transition-colors">Iuri França</a>
+                   </p>
                </div>
-               <p className="flex items-center gap-1">
-                  Feito com carinho por <a href="https://instagram.com/iurifrancast" target="_blank" rel="noopener noreferrer" className="font-bold text-slate-600 hover:text-[#0097A8] transition-colors">Iuri França</a>
-               </p>
+               
+               {/* Dados da Empresa - Horizontal */}
+               <div className="text-[10px] text-slate-400 flex flex-col md:flex-row gap-1 md:gap-3 flex-wrap border-t border-slate-50 pt-4">
+                   <span>CNPJ: 64.186.316/0001-00</span>
+                   <span className="hidden md:inline">•</span>
+                   <span>Rua Pais Leme, 215, Conj 1713, Pinheiros, São Paulo - SP, 05424-150</span>
+                   <span className="hidden md:inline">•</span>
+                   <span>contato@mapadodayuse.com</span>
+               </div>
             </div>
          </div>
       </footer>
