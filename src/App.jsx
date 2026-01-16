@@ -2828,89 +2828,138 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
 };
 
 const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
+  // State para guardar os dados atualizados do local (Telefone/Endereço podem mudar)
+  const [liveItem, setLiveItem] = useState(null);
+
+  useEffect(() => {
+      if (isOpen && trip?.dayuseId) {
+          getDoc(doc(db, "dayuses", trip.dayuseId))
+            .then(snap => { if (snap.exists()) setLiveItem(snap.data()); })
+            .catch(err => console.error("Erro ao atualizar voucher:", err));
+      }
+  }, [isOpen, trip]);
+
   if (!isOpen || !trip) return null;
   
+  // Mescla dados: Snapshot (Reserva) + Live (Atualizações de contato/endereço)
+  const displayItem = { ...(trip.item || {}), ...(liveItem || {}) };
+  
+  // VERIFICAÇÃO DE LEGADO: Só mostra regras se elas existiam no momento da compra
+  const hasRulesSnapshot = trip.item && typeof trip.item.allowFood === 'boolean';
+
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${trip.id}`;
-  const itemData = trip.item || {};
-  const placeName = itemData.name || trip.itemName || "Local do Passeio";
-  const address = itemData.street ? `${itemData.street}, ${itemData.number} - ${itemData.district || ''}, ${itemData.city} - ${itemData.state}` : "Endereço não disponível";
+  const placeName = displayItem.name || trip.itemName || "Local do Passeio";
+  const address = displayItem.street ? `${displayItem.street}, ${displayItem.number} - ${displayItem.district || ''}, ${displayItem.city} - ${displayItem.state}` : "Endereço não disponível";
   const mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName + " " + address)}`;
   const paymentLabel = trip.paymentMethod === 'pix' ? 'Pix (À vista)' : 'Cartão de Crédito';
 
-  // Lógica de Impressão (Abre nova janela limpa)
+  // HTML para Impressão (Janela Limpa)
   const handlePrint = () => {
       const printWindow = window.open('', '_blank', 'width=800,height=800');
       if (!printWindow) { alert("Por favor, permita popups para imprimir."); return; }
 
-      const content = `
+      // HTML Condicional das Regras para Impressão
+      const rulesHtml = hasRulesSnapshot ? (
+          trip.item.allowFood === false ? `
+            <div class="box-rules box-red">
+                <strong>🚫 Proibida entrada de bebidas e alimentos</strong><br/>
+                <span style="font-size: 11px; opacity: 0.9;">
+                    Sujeito a revista de bolsas e mochilas.<br/>
+                    Temos restaurante no local com preços compatíveis.
+                </span>
+            </div>
+          ` : `
+            <div class="box-rules box-green">
+                <strong>✅ Entrada de bebidas e alimentos permitida</strong>
+            </div>
+          `
+      ) : ''; 
+
+      const htmlContent = `
         <html>
           <head>
             <title>Voucher - ${placeName}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-              body { font-family: 'Helvetica', sans-serif; padding: 40px; text-align: center; color: #333; }
-              .box { border: 2px dashed #ccc; padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 400px; }
-              .header { background: #0097A8; color: white; padding: 20px; border-radius: 10px 10px 0 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              .code { font-size: 32px; font-weight: bold; letter-spacing: 2px; margin: 10px 0; display: block; }
-              .label { font-size: 10px; text-transform: uppercase; color: #666; font-weight: bold; }
-              .row { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding: 10px 0; font-size: 14px; }
-              .total { font-size: 18px; font-weight: bold; color: #0097A8; margin-top: 20px; border-top: 2px solid #eee; padding-top: 10px; }
-              .footer { font-size: 10px; color: #999; margin-top: 40px; }
-              .rules { background: #f9f9f9; padding: 15px; text-align: left; font-size: 11px; margin-top: 20px; border-radius: 8px; border: 1px solid #eee; }
-              img { max-width: 150px; height: auto; }
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; color: #333; margin: 0; background: #fff; }
+              .container { max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; }
+              .header { background-color: #0097A8; color: white; padding: 24px; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .header h1 { margin: 0; font-size: 20px; text-transform: uppercase; letter-spacing: 1px; }
+              .header p { margin: 5px 0 0; font-size: 12px; opacity: 0.9; }
+              .content { padding: 30px; }
+              .qr-container { text-align: center; margin-bottom: 30px; padding: 20px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; -webkit-print-color-adjust: exact; }
+              .qr-code { width: 160px; height: 160px; border: 4px solid white; border-radius: 8px; }
+              .code-text { font-size: 28px; font-weight: 800; color: #0f172a; margin: 10px 0 0; letter-spacing: 2px; font-family: monospace; }
+              .label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; letter-spacing: 0.5px; }
+              .info-row { display: flex; justify-content: space-between; border-bottom: 1px solid #f1f5f9; padding: 12px 0; font-size: 14px; }
+              .info-value { font-weight: bold; color: #1e293b; text-align: right; }
+              .box-rules { padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; font-size: 13px; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .box-red { background-color: #fef2f2; border: 1px solid #fee2e2; color: #991b1b; }
+              .box-green { background-color: #f0fdf4; border: 1px solid #dcfce7; color: #166534; }
+              .contact-box { background-color: #f8fafc; padding: 15px; border-radius: 8px; font-size: 12px; color: #64748b; margin-top: 20px; }
+              .footer { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 30px; }
+              .no-print { text-align: center; margin-bottom: 20px; }
+              .btn { background: #0097A8; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; }
+              @media print { .no-print { display: none; } }
             </style>
           </head>
           <body>
-            <div style="max-width: 500px; margin: 0 auto; border: 1px solid #ddd; border-radius: 15px; overflow: hidden;">
+            <div class="no-print">
+                <button onclick="window.print()" class="btn">Imprimir / Salvar PDF</button>
+            </div>
+            <div class="container">
                 <div class="header">
-                    <h1 style="margin:0; font-size: 20px;">Voucher de Acesso</h1>
-                    <p style="margin:5px 0 0 0; font-size: 12px; opacity: 0.9;">Apresente este documento na portaria</p>
+                    <h1>Voucher de Acesso</h1>
+                    <p>Apresente este documento na portaria</p>
                 </div>
-                <div style="padding: 30px;">
-                    <h2 style="margin: 0 0 5px 0;">${placeName}</h2>
-                    <p style="margin: 0 0 20px 0; font-size: 12px; color: #666;">${address}</p>
-                    
-                    <div class="box">
-                        <img src="${qrCodeUrl}" alt="QR Code" />
-                        <span class="label" style="display:block; margin-top:10px;">Código de Validação</span>
-                        <span class="code">${trip.id.slice(0,6).toUpperCase()}</span>
+                <div class="content">
+                    <div style="margin-bottom: 20px;">
+                        <h2 style="margin: 0 0 5px 0; font-size: 18px; color: #0f172a;">${placeName}</h2>
+                        <p style="margin: 0; font-size: 12px; color: #64748b;">${address}</p>
                     </div>
 
-                    <div class="row"><span class="label">Data</span> <b>${trip.date.split('-').reverse().join('/')}</b></div>
-                    <div class="row"><span class="label">Titular</span> <b>${trip.guestName}</b></div>
-                    <div class="row"><span class="label">Pagamento</span> <b>${paymentLabel}</b></div>
-                    
-                    <div style="text-align: left; margin-top: 20px;">
-                        <span class="label">Itens Inclusos</span>
-                        <ul style="margin: 5px 0; padding-left: 20px; font-size: 13px;">
-                            <li>Adultos: ${trip.adults}</li>
-                            ${trip.children > 0 ? `<li>Crianças: ${trip.children}</li>` : ''}
-                            ${trip.pets > 0 ? `<li>Pets: ${trip.pets}</li>` : ''}
+                    <div class="qr-container">
+                        <img src="${qrCodeUrl}" class="qr-code" />
+                        <div class="code-text">${trip.id.slice(0,6).toUpperCase()}</div>
+                        <div class="label" style="margin-top: 5px;">Código de Validação</div>
+                    </div>
+
+                    <div class="info-row"><span class="label">Data</span> <span class="info-value">${trip.date?.split('-').reverse().join('/')}</span></div>
+                    <div class="info-row"><span class="label">Titular</span> <span class="info-value">${trip.guestName}</span></div>
+                    <div class="info-row"><span class="label">Pagamento</span> <span class="info-value">${paymentLabel}</span></div>
+                    <div class="info-row" style="border: none;"><span class="label">Total Pago</span> <span class="info-value" style="color: #0097A8; font-size: 16px;">${formatBRL(trip.total)}</span></div>
+
+                    <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; margin-top: 10px; border: 1px solid #e0f2fe;">
+                        <div class="label" style="color: #0369a1; margin-bottom: 8px;">Itens Inclusos</div>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #334155;">
+                            <li>${trip.adults} Adultos</li>
+                            ${trip.children > 0 ? `<li>${trip.children} Crianças</li>` : ''}
+                            ${trip.pets > 0 ? `<li>${trip.pets} Pets</li>` : ''}
+                            ${trip.freeChildren > 0 ? `<li>${trip.freeChildren} Crianças Grátis</li>` : ''}
+                            ${trip.selectedSpecial ? Object.entries(trip.selectedSpecial).map(([idx, qtd]) => {
+                                const name = trip.item?.specialTickets?.[idx]?.name || "Extra";
+                                return qtd > 0 ? `<li>${qtd}x ${name}</li>` : '';
+                            }).join('') : ''}
                         </ul>
                     </div>
 
-                    <div class="total">
-                        Total Pago: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(trip.total)}
-                    </div>
+                    ${rulesHtml}
 
-                    <div class="rules">
-                        <strong>⚠️ Regras de Acesso e Cancelamento:</strong><br/>
-                        ${itemData.allowFood === false ? '• Proibida entrada de alimentos e bebidas (sujeito a revista).<br/>' : '• Entrada de alimentos liberada.<br/>'}
-                        • Remarcações e cancelamentos devem ser tratados diretamente com o estabelecimento pelos contatos abaixo.
-                    </div>
-
-                    <div style="margin-top: 20px; font-size: 12px;">
-                        ${itemData.localWhatsapp ? `WhatsApp: ${itemData.localWhatsapp} <br/>` : ''}
-                        ${itemData.localPhone ? `Tel: ${itemData.localPhone}` : ''}
+                    <div class="contact-box">
+                        <strong>Fale com o estabelecimento:</strong><br/>
+                        ${displayItem.localWhatsapp ? `WhatsApp: ${displayItem.localWhatsapp}<br/>` : ''}
+                        ${displayItem.localPhone ? `Tel: ${displayItem.localPhone}<br/>` : ''}
+                        <br/>
+                        <em>* Cancelamentos e remarcações devem ser tratados diretamente com o local.</em>
                     </div>
                 </div>
             </div>
-            <div class="footer">Emitido por Mapa do Day Use em ${new Date().toLocaleString()}</div>
-            <script>window.onload = function() { window.print(); window.close(); }</script>
+            <div class="footer">Emitido por <strong>Mapa do Day Use</strong> em ${new Date().toLocaleDateString()}</div>
           </body>
         </html>
       `;
-      
-      printWindow.document.write(content);
+
+      printWindow.document.write(htmlContent);
       printWindow.document.close();
   };
 
@@ -2944,7 +2993,7 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
                 <p className="text-3xl font-mono font-black text-slate-900 tracking-wider select-all">{trip.id?.slice(0,6).toUpperCase()}</p>
             </div>
 
-            {/* DADOS DA RESERVA (FONTE UNIFICADA) */}
+            {/* DADOS DA RESERVA (RESTAURADO) */}
             <div className="space-y-3 border-b border-slate-100 pb-6">
                 <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Local</span><b className="text-slate-900 text-right text-base w-1/2">{placeName}</b></div>
                 <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Data</span><b className="text-slate-900 text-lg">{trip.date?.split('-').reverse().join('/')}</b></div>
@@ -2952,7 +3001,7 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
                 <div className="flex justify-between items-center"><span className="text-slate-500 font-medium">Pagamento</span><b className="text-slate-900 text-base capitalize">{paymentLabel}</b></div>
             </div>
 
-            {/* ITENS INCLUSOS & TOTAL */}
+            {/* ITENS INCLUSOS & TOTAL (RESTAURADO) */}
             <div className="bg-cyan-50 p-4 rounded-xl border border-cyan-100">
                <p className="text-[#0097A8] text-xs uppercase font-bold mb-2 flex items-center gap-1"><Info size={12}/> Itens do Pacote</p>
                <ul className="space-y-1 text-sm text-slate-700 font-medium mb-3">
@@ -2972,7 +3021,7 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
                </div>
             </div>
 
-            {/* ENDEREÇO & MAPA */}
+            {/* ENDEREÇO & MAPA (RESTAURADO) */}
             <div className="space-y-2">
                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Como Chegar</p>
                  <p className="text-sm text-slate-700 font-medium">{address}</p>
@@ -2981,41 +3030,30 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
                  </a>
             </div>
 
-            {/* REGRAS DE ACESSO (ATUALIZADO E UNIFICADO) */}
-            <div className={`p-4 rounded-xl border text-center ${itemData.allowFood === false ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
-                {itemData.allowFood === false ? (
-                    <>
-                        <div className="flex items-center justify-center gap-2 text-red-700 font-bold mb-2">
-                            <Ban size={18}/> 
-                            <span>Proibida entrada de bebidas e alimentos</span>
-                        </div>
-                        <p className="text-xs text-red-600/80 leading-relaxed font-medium">
-                            Sujeito a revista de bolsas e mochilas.<br/>
-                            Temos restaurante no local com preços similares ao mercado.
-                        </p>
-                    </>
-                ) : (
-                    <div className="flex items-center justify-center gap-2 text-green-700 font-bold">
-                        <CheckCircle size={18}/> 
-                        <span>Entrada de bebidas e alimentos permitida</span>
-                    </div>
-                )}
-            </div>
+            {/* REGRAS DE ACESSO (VISUAL NA TELA - SÓ SE NÃO FOR LEGADO) */}
+            {hasRulesSnapshot && (
+                <div className={`p-4 rounded-xl border text-center ${trip.item.allowFood === false ? 'bg-red-50 border-red-100 text-red-800' : 'bg-green-50 border-green-100 text-green-800'}`}>
+                    {trip.item.allowFood === false ? (
+                        <><strong className="flex items-center justify-center gap-2"><Ban size={16}/> Proibido Alimentos</strong><p className="text-xs mt-1">Sujeito a revista. Restaurante no local.</p></>
+                    ) : (
+                        <strong className="flex items-center justify-center gap-2"><CheckCircle size={16}/> Alimentos Permitidos</strong>
+                    )}
+                </div>
+            )}
 
-            {/* CONTATO & POLÍTICA */}
-            {(itemData.localWhatsapp || itemData.localPhone || itemData.localEmail) && (
+            {/* CONTATO & POLÍTICA (RESTAURADO) */}
+            {(displayItem.localWhatsapp || displayItem.localPhone || displayItem.localEmail) && (
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Contato do Local</p>
                     <div className="space-y-2 mb-4">
-                        {itemData.localWhatsapp && (
-                            <a href={`https://wa.me/55${itemData.localWhatsapp.replace(/\D/g, '')}`} className="flex items-center gap-2 text-green-600 font-bold text-xs"><MessageCircle size={14} /> WhatsApp: {itemData.localWhatsapp}</a>
+                        {displayItem.localWhatsapp && (
+                            <a href={`https://wa.me/55${displayItem.localWhatsapp.replace(/\D/g, '')}`} className="flex items-center gap-2 text-green-600 font-bold text-xs"><MessageCircle size={14} /> WhatsApp: {displayItem.localWhatsapp}</a>
                         )}
-                        {itemData.localPhone && (
-                            <a href={`tel:${itemData.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 text-xs"><Phone size={14} /> Tel: {itemData.localPhone}</a>
+                        {displayItem.localPhone && (
+                            <a href={`tel:${displayItem.localPhone.replace(/\D/g, '')}`} className="flex items-center gap-2 text-slate-600 text-xs"><Phone size={14} /> Tel: {displayItem.localPhone}</a>
                         )}
                     </div>
                     
-                    {/* AVISO DE REMARCAÇÃO (Abaixo do contato) */}
                     <div className="pt-3 border-t border-slate-200 text-[10px] text-slate-500 leading-relaxed">
                         <p className="font-bold mb-1 text-slate-700">Política de Alterações:</p>
                         <p>Remarcações, cancelamentos e reembolsos devem ser tratados <strong>diretamente com o estabelecimento</strong> através dos contatos acima, sujeitos às regras do local.</p>
@@ -3023,7 +3061,7 @@ const VoucherModal = ({ isOpen, onClose, trip, isPartnerView = false }) => {
                 </div>
             )}
 
-            <Button className="w-full" onClick={handlePrint}>Imprimir / Salvar PDF</Button>
+            <Button className="w-full" onClick={handlePrint}>Visualizar para Imprimir</Button>
         </div>
       </div>
     </ModalOverlay>,
