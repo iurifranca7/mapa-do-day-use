@@ -142,7 +142,7 @@ const useSEO = (title, description, image = null, noIndex = false, canonical = n
       image = null;
   }
 
-  const defaultImage = `${BASE_URL}/logo.svg`; 
+  const defaultImage = `${BASE_URL}/logo.png`; 
   const finalImage = image || defaultImage;
   
   // Constrói a URL canônica usando a BASE_URL fixa
@@ -1156,7 +1156,7 @@ const HomePage = () => {
         "@type": "Organization",
         "name": "Mapa do Day Use",
         "url": "https://mapadodayuse.com",
-        "logo": "https://mapadodayuse.com/logo.svg",
+        "logo": "https://mapadodayuse.com/logo.png",
         "contactPoint": {
           "@type": "ContactPoint",
           "email": "contato@mapadodayuse.com",
@@ -5332,7 +5332,7 @@ const Layout = ({ children }) => {
                   <div className="flex items-center gap-2 mb-4 cursor-pointer" onClick={()=>navigate('/')}>
                      {!logoError ? (
                         <img 
-                           src="/logo.svg" 
+                           src="/logo.png" 
                            alt="Mapa do Day Use" 
                            className="h-8 w-auto object-contain" 
                            onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
