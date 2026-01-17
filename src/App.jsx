@@ -4985,45 +4985,114 @@ const PartnerRegisterPage = () => {
 
 const CookieConsent = () => {
   const [isVisible, setIsVisible] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  
+  const [preferences, setPreferences] = useState({
+      necessary: true,
+      marketing: false, 
+      analytics: false 
+  });
+
+  // Função para enviar o sinal ao GTM (Google Tag Manager)
+  const updateGtmConsent = (prefs) => {
+      if (window.gtag) {
+          window.gtag('consent', 'update', {
+              'analytics_storage': prefs.analytics ? 'granted' : 'denied',
+              'ad_storage': prefs.marketing ? 'granted' : 'denied',
+              'ad_user_data': prefs.marketing ? 'granted' : 'denied',
+              'ad_personalization': prefs.marketing ? 'granted' : 'denied'
+          });
+          
+          // Dispara evento para tags que não são do Google (ex: Meta Pixel configurado no GTM)
+          if (prefs.marketing || prefs.analytics) {
+              window.dataLayer.push({ event: 'cookie_consent_update' });
+          }
+      }
+  };
 
   useEffect(() => {
-    // Verifica se já aceitou anteriormente
-    const consent = localStorage.getItem('mapadodayuse_consent');
-    if (!consent) {
-      setIsVisible(true);
+    const savedConsent = localStorage.getItem('mapadodayuse_consent_v2');
+    
+    if (savedConsent) {
+        const parsed = JSON.parse(savedConsent);
+        setPreferences(parsed);
+        updateGtmConsent(parsed); // Aplica o consentimento salvo ao carregar
+    } else {
+        setIsVisible(true);
     }
   }, []);
 
-  const handleAccept = async () => {
-    setIsVisible(false);
-    localStorage.setItem('mapadodayuse_consent', 'true'); // Salva no navegador para não mostrar de novo
-    
-    // REGISTRO DE AUDITORIA: Salva o aceite no Firebase para segurança jurídica
-    try {
-      await addDoc(collection(db, "consents"), {
-        acceptedAt: new Date(),
-        userAgent: navigator.userAgent, // Identifica o dispositivo/navegador
-        screenSize: `${window.screen.width}x${window.screen.height}`,
-        type: 'cookie_policy_accepted'
-      });
-    } catch (e) {
-      console.error("Erro ao registrar consentimento:", e);
-    }
+  const saveConsent = async (finalPrefs) => {
+      localStorage.setItem('mapadodayuse_consent_v2', JSON.stringify(finalPrefs));
+      
+      // Atualiza o GTM imediatamente
+      updateGtmConsent(finalPrefs);
+      
+      setIsVisible(false);
+
+      try {
+          await addDoc(collection(db, "cookie_consents"), {
+              acceptedAt: new Date(),
+              preferences: finalPrefs,
+              userAgent: navigator.userAgent,
+              screenSize: `${window.screen.width}x${window.screen.height}`,
+              type: 'consent_update'
+          });
+      } catch (e) { console.warn("Log LGPD não salvo."); }
   };
+
+  const handleAcceptAll = () => saveConsent({ necessary: true, marketing: true, analytics: true });
+  const handleRejectAll = () => saveConsent({ necessary: true, marketing: false, analytics: false });
+  const handleSavePreferences = () => saveConsent(preferences);
 
   if (!isVisible) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 w-[90%] md:w-96 bg-white p-5 rounded-2xl shadow-2xl border border-slate-100 z-[10000] animate-fade-in flex flex-col gap-4">
-       <div className="flex items-start gap-3">
-          <Info className="text-[#0097A8] shrink-0 mt-1" size={20} />
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Utilizamos cookies para melhorar sua experiência. Ao continuar navegando, você concorda com nossa <span className="text-[#0097A8] font-bold cursor-pointer hover:underline" onClick={()=>window.location.href='/politica-de-privacidade'}>Política de Privacidade</span> e <span className="text-[#0097A8] font-bold cursor-pointer hover:underline" onClick={()=>window.location.href='/termos-de-uso'}>Termos de Uso</span>.
-          </p>
-       </div>
-       <div className="flex gap-2">
-          <Button className="w-full py-2 text-xs h-9" onClick={handleAccept}>Concordar e Continuar</Button>
-       </div>
+    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 w-[95%] md:w-[400px] bg-white p-6 rounded-2xl shadow-2xl border border-slate-200 z-[10000] animate-fade-in flex flex-col gap-4">
+       
+       {!showDetails ? (
+           <>
+               <div className="flex items-start gap-3">
+                  <div className="bg-cyan-50 p-2 rounded-full text-[#0097A8]"><Lock size={20} /></div>
+                  <div>
+                      <h4 className="font-bold text-slate-800 text-sm mb-1">Sua privacidade importa</h4>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Usamos cookies para melhorar sua experiência. Você pode aceitar todos ou ajustar suas preferências conforme a <span className="text-[#0097A8] font-bold cursor-pointer hover:underline" onClick={()=>window.location.href='/politica-de-privacidade'}>Política de Privacidade</span>.
+                      </p>
+                  </div>
+               </div>
+               <div className="flex flex-col gap-2 mt-2">
+                  <Button className="w-full py-2 text-xs h-9 shadow-md" onClick={handleAcceptAll}>Aceitar Tudo</Button>
+                  <div className="flex gap-2">
+                      <button onClick={handleRejectAll} className="flex-1 py-2 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 border border-slate-200 transition-colors">Recusar</button>
+                      <button onClick={() => setShowDetails(true)} className="flex-1 py-2 rounded-lg text-xs font-bold text-[#0097A8] hover:bg-cyan-50 border border-cyan-100 transition-colors">Gerenciar</button>
+                  </div>
+               </div>
+           </>
+       ) : (
+           <>
+               <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                   <h4 className="font-bold text-slate-800 text-sm">Preferências de Cookies</h4>
+                   <button onClick={() => setShowDetails(false)} className="text-slate-400 hover:text-slate-600"><X size={16}/></button>
+               </div>
+               
+               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+                   <div className="flex justify-between items-center">
+                       <div><p className="text-xs font-bold text-slate-700">Essenciais</p><p className="text-[10px] text-slate-400">Login, Carrinho (Sempre Ativo).</p></div>
+                       <div className="w-10 h-5 bg-slate-300 rounded-full relative opacity-50 cursor-not-allowed"><div className="w-4 h-4 bg-white rounded-full absolute top-0.5 right-0.5 border border-slate-300"></div></div>
+                   </div>
+                   <div className="flex justify-between items-center">
+                       <div><p className="text-xs font-bold text-slate-700">Marketing</p><p className="text-[10px] text-slate-400">Meta Pixel, TikTok, Ads.</p></div>
+                       <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" className="sr-only peer" checked={preferences.marketing} onChange={e => setPreferences({...preferences, marketing: e.target.checked})} /><div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0097A8]"></div></label>
+                   </div>
+                   <div className="flex justify-between items-center">
+                       <div><p className="text-xs font-bold text-slate-700">Analíticos</p><p className="text-[10px] text-slate-400">Google Analytics, Clarity.</p></div>
+                       <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" className="sr-only peer" checked={preferences.analytics} onChange={e => setPreferences({...preferences, analytics: e.target.checked})} /><div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0097A8]"></div></label>
+                   </div>
+               </div>
+               <Button className="w-full py-2 text-xs h-9 mt-2" onClick={handleSavePreferences}>Salvar Preferências</Button>
+           </>
+       )}
     </div>
   );
 };

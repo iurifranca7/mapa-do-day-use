@@ -8,6 +8,27 @@
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
+    <!-- 1. GOOGLE CONSENT MODE V2 (Configuração Inicial) -->
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      
+      // Define padrão como NEGADO para tudo
+      gtag('consent', 'default', {
+        'ad_storage': 'denied',
+        'ad_user_data': 'denied',
+        'ad_personalization': 'denied',
+        'analytics_storage': 'denied',
+        'personalization_storage': 'denied',
+        'functionality_storage': 'granted', // Essenciais
+        'security_storage': 'granted',
+        'wait_for_update': 500
+      });
+      
+      gtag('js', new Date());
+      gtag('config', 'G-J585RRVR40');
+    </script>
+
   <!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -49,13 +70,6 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     
   </head>
   <body>
-    <!-- Meta Pixel NoScript (Movido para o Body para corrigir erro de validação) -->
-    <noscript>
-      <img height="1" width="1" style="display:none"
-      src="https://www.facebook.com/tr?id=1524512348663953&ev=PageView&noscript=1"
-      />
-    </noscript>
-
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
