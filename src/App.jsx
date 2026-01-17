@@ -5569,44 +5569,72 @@ const Layout = ({ children }) => {
 
       <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
+           {/* Logo */}
            <div className="flex items-center gap-2 cursor-pointer" onClick={()=>navigate('/')}>
               {!logoError ? (
                  <img 
-                    src="/logo.png?v=2" 
+                    src="/logo.png?v=2" // Removido ?v=2 para manter simples, adicione se precisar de cache bust
                     alt="Mapa do Day Use" 
-                    className="h-10 w-auto object-contain" 
+                    className="h-8 md:h-10 w-auto object-contain" 
                     onError={(e) => { e.currentTarget.style.display = 'none'; setLogoError(true); }} 
                  />
               ) : (
-                 <MapIcon className="h-8 w-8 text-[#0097A8]" />
+                 <MapIcon className="h-6 w-6 md:h-8 md:w-8 text-[#0097A8]" />
               )}
            </div>
            
            <div className="flex items-center gap-2 md:gap-4">
               {!user ? (
                  <>
-                   <button onClick={()=>{navigate('/partner-register')}} className="text-xs md:text-sm font-bold text-slate-500 hover:text-[#0097A8] mr-2">Seja parceiro</button>
-                   <Button variant="ghost" onClick={()=>setShowLogin(true)} className="font-bold px-3 md:px-4">Entrar</Button>
+                   <button onClick={()=>{navigate('/partner-register')}} className="text-xs md:text-sm font-bold text-slate-500 hover:text-[#0097A8] mr-1 md:mr-2">Seja parceiro</button>
+                   <Button variant="ghost" onClick={()=>setShowLogin(true)} className="font-bold px-3 md:px-4 text-xs md:text-sm">Entrar</Button>
                  </>
               ) : (
                  <div className="flex gap-2 md:gap-4 items-center">
-                    {user.role === 'partner' && <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm">Painel</Button>}
-                    {user.role === 'staff' && <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm">Portaria</Button>}
-                    {user.role === 'admin' && <Button variant="ghost" onClick={()=>navigate('/admin')} className="px-2 md:px-4 text-xs md:text-sm">Admin</Button>}
-                    {user.role === 'user' && (<Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="hidden md:flex">Meus Ingressos</Button>)}
+                    {/* Botões de Acesso Rápido - AGORA VISÍVEIS NO MOBILE */}
+                    {user.role === 'partner' && (
+                        <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
+                            Painel
+                        </Button>
+                    )}
                     
+                    {user.role === 'staff' && (
+                        <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
+                            Portaria
+                        </Button>
+                    )}
+                    
+                    {user.role === 'admin' && (
+                        <Button variant="ghost" onClick={()=>navigate('/admin')} className="px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
+                            Admin
+                        </Button>
+                    )}
+                    
+                    {user.role === 'user' && (
+                        <Button variant="ghost" onClick={()=>navigate('/minhas-viagens')} className="px-2 md:px-4 text-[10px] md:text-sm font-bold whitespace-nowrap flex items-center gap-1">
+                            <Ticket size={14} className="md:hidden"/> {/* Ícone no mobile para chamar atenção */}
+                            <span className="hidden xs:inline">Meus Ingressos</span> {/* Texto visível em telas > 320px */}
+                            <span className="xs:hidden">Meus Ingressos</span> {/* Texto curto para telas muito pequenas */}
+                        </Button>
+                    )}
+                    
+                    {/* Avatar */}
                     <div 
-                        className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform cursor-pointer overflow-hidden" 
+                        className="w-8 h-8 md:w-10 md:h-10 bg-cyan-100 rounded-full flex items-center justify-center font-bold text-[#0097A8] border-2 border-white shadow-sm hover:scale-105 transition-transform cursor-pointer overflow-hidden shrink-0" 
                         title={user.email}
                         onClick={()=>navigate('/profile')}
                     >
                         {user.photoURL ? (
                             <img src={user.photoURL} className="w-full h-full object-cover" alt="Perfil" />
                         ) : (
-                            user.email ? user.email[0].toUpperCase() : <User size={20}/>
+                            user.email ? user.email[0].toUpperCase() : <User size={18} className="md:w-5 md:h-5"/>
                         )}
                     </div>
-                    <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Sair"><LogOut size={20}/></button>
+                    
+                    {/* Logout */}
+                    <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-1 md:p-2 rounded-full hover:bg-red-50 shrink-0" title="Sair">
+                        <LogOut size={18} className="md:w-5 md:h-5"/>
+                    </button>
                  </div>
               )}
            </div>
