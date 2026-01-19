@@ -1913,7 +1913,6 @@ const DetailsPage = () => {
                    {/* Comodidades */}
                    {item.amenities && item.amenities.length > 0 && (
                        <div className="mb-6">
-                           <p className="text-sm font-bold text-slate-700 mb-2">Comodidades:</p>
                            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4">
                                {item.amenities.flatMap(a => a.includes(',') ? a.split(',') : a).map(a => a.trim()).filter(a => a !== "").map((a, idx) => (
                                    <div key={`${a}-${idx}`} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-1.5 h-1.5 rounded-full bg-[#0097A8] shrink-0"></div> <span className="capitalize">{a}</span></div>
@@ -1927,6 +1926,44 @@ const DetailsPage = () => {
                        <div className="text-sm font-bold text-orange-800 mb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Alimentação (Pensão)</div>
                        {item.meals && item.meals.length > 0 ? (<div className="flex flex-wrap gap-2">{item.meals.map(m => (<span key={m} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-700 border border-orange-200">{m}</span>))}</div>) : (<p className="text-sm text-slate-500 italic">Este estabelecimento não oferece serviço de alimentação incluso.</p>)}
                    </div>
+
+                   {/* Regras de Acesso (Unificadas) */}
+                       {item.allowFood !== undefined && (
+                           <div className={`p-4 rounded-2xl border flex items-start gap-3 ${item.allowFood ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                               {item.allowFood ? (
+                                   <CheckCircle size={24} className="text-green-600 mt-0.5 shrink-0"/>
+                               ) : (
+                                   <Ban size={24} className="text-red-600 mt-0.5 shrink-0"/>
+                               )}
+                               
+                               <div>
+                                   <h4 className={`font-bold text-sm mb-1 ${item.allowFood ? 'text-green-800' : 'text-red-800'}`}>
+                                       {item.allowFood ? "Entrada de alimentos e bebidas permitida" : "Proibido entrar com alimentos e bebidas"}
+                                   </h4>
+                                   
+                                   <div className={`text-xs leading-relaxed opacity-90 ${item.allowFood ? 'text-green-700' : 'text-red-700'}`}>
+                                       {item.allowFood 
+                                           ? "Você pode levar seus próprios itens de consumo." 
+                                           : (
+                                               <>
+                                                   {/* Mostra mensagem de restaurante SÓ se tiver na lista de comodidades */}
+                                                   {item.amenities?.some(a => a.toLowerCase().includes('restaurante') || a.toLowerCase().includes('bar') || a.toLowerCase().includes('quiosque')) && (
+                                                       <span>O local possui restaurante e/ou bar disponíveis para consumo. </span>
+                                                   )}
+                                                   
+                                                   {/* Aviso de Revista integrado ao texto de proibição */}
+                                                   {item.hasSearch && (
+                                                       <span className="block mt-1 font-bold">
+                                                           ⚠️ Sujeito a revista de bolsas e mochilas na portaria.
+                                                       </span>
+                                                   )}
+                                               </>
+                                           )
+                                       }
+                                   </div>
+                               </div>
+                           </div>
+                       )}
 
                    {/* Outros Inclusos */}
                    {item.includedItems && (<div><p className="text-sm font-bold text-slate-700 mb-2">Outros itens inclusos:</p><p className="text-slate-600 text-sm whitespace-pre-line bg-green-50 p-4 rounded-xl border border-green-100">{item.includedItems}</p></div>)}
