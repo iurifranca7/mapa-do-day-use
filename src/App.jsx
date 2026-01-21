@@ -500,45 +500,63 @@ const SimpleCalendar = ({ availableDays = [], onDateSelect, selectedDate, prices
   );
 };
 
-// --- LOGIN/CADASTRO ---
+// -----------------------------------------------------------------------------
+// LOGIN MODAL (ATUALIZADO COM NOME E SOBRENOME)
+// -----------------------------------------------------------------------------
 const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRoleSelection = false, closeOnSuccess = true, initialMode = 'login', customTitle, customSubtitle }) => {
   if (!isOpen) return null;
 
   const [view, setView] = useState(initialMode); 
   const [role, setRole] = useState(initialRole);
   const [loading, setLoading] = useState(false);
-  
   const [feedback, setFeedback] = useState(null); 
 
+  // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // NOVOS CAMPOS
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   
-  // NOVO: Guarda o usuário criado para usar no botão de sucesso
   const [registeredUser, setRegisteredUser] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
         setFeedback(null);
         setView(initialMode); setRole(initialRole);
-        setEmail(''); setPassword(''); setRegisteredUser(null);
+        setEmail(''); setPassword(''); 
+        setFirstName(''); setLastName(''); // Limpa nomes
+        setRegisteredUser(null);
     }
   }, [isOpen, initialMode, initialRole]);
 
-  const ensureProfile = async (u) => {
+  const actionCodeSettings = {
+    url: 'https://mapadodayuse.com/minhas-viagens',
+    handleCodeInApp: true,
+  };
+
+  // Helper para garantir que o usuário exista no Firestore
+  // Agora aceita um 'specificName' para forçar o nome digitado no cadastro
+  const ensureProfile = async (u, specificName = null) => {
     const ref = doc(db, "users", u.uid);
     const snap = await getDoc(ref);
     let userRole = role; 
-    if (snap.exists()) { userRole = snap.data().role || 'user'; } 
-    else { 
+    
+    // Prioriza o nome específico (do form), depois o do Auth, depois o e-mail
+    const finalName = specificName || u.displayName || u.email?.split('@')[0] || "Usuário";
+
+    if (snap.exists()) { 
+        userRole = snap.data().role || 'user'; 
+    } else { 
         await setDoc(ref, { 
             email: u.email || "", 
-            name: u.displayName || u.email?.split('@')[0] || "Usuário", 
+            name: finalName,
             role: role, 
             photoURL: u.photoURL || "",
             createdAt: new Date() 
         }); 
     }
-    return { ...u, role: userRole };
+    return { ...u, role: userRole, displayName: finalName };
   };
 
   const handleSocialLogin = async (provider) => {
@@ -560,43 +578,57 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleEmailAuth = async (e) => {
     e.preventDefault(); setLoading(true); setFeedback(null);
     try {
-        let res;
         if (view === 'register') {
-            // ... (bloco de registro mantido igual) ...
-            res = await createUserWithEmailAndPassword(auth, email, password);
+            // Validação de Nome
+            if (!firstName.trim() || !lastName.trim()) {
+                throw new Error("Por favor, preencha seu Nome e Sobrenome.");
+            }
+            const fullName = `${firstName.trim()} ${lastName.trim()}`;
+
+            // 1. Cria Conta
+            const res = await createUserWithEmailAndPassword(auth, email, password);
+            
+            // 2. Atualiza Nome no Auth Profile
+            await updateProfile(res.user, { displayName: fullName });
+
+            // 3. Envia E-mail
             try { await sendEmailVerification(res.user, actionCodeSettings); } catch(e){}
-            await ensureProfile(res.user);
+            
+            // 4. Salva no Banco com o Nome Correto
+            const userWithRole = await ensureProfile(res.user, fullName);
+            
+            setRegisteredUser(userWithRole);
             setView('email_sent');
             setLoading(false);
             return;
         } else {
-            res = await signInWithEmailAndPassword(auth, email, password);
+            const res = await signInWithEmailAndPassword(auth, email, password);
+            const userWithRole = await ensureProfile(res.user);
+            onSuccess(userWithRole);
+            if (closeOnSuccess) onClose();
         }
-        const userWithRole = await ensureProfile(res.user);
-        onSuccess(userWithRole);
-        if (closeOnSuccess) onClose();
     } catch (err) {
         console.error(err);
         let title = "Atenção";
         let msg = "Erro desconhecido.";
         
-        if (err.code === 'auth/email-already-in-use') {
+        if (err.message === "Por favor, preencha seu Nome e Sobrenome.") {
+            msg = err.message;
+        }
+        else if (err.code === 'auth/email-already-in-use') {
             msg = "Este e-mail já possui cadastro. Tente fazer login.";
-            if (view === 'register') setView('login'); // Troca pra login se já existe
+            if (view === 'register') setView('login');
         }
         else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
             if (view === 'login') {
                 title = "Conta não encontrada";
-                msg = "Não encontramos uma conta com este e-mail. Por favor, preencha seus dados para criar um cadastro.";
-                // MÁGICA: Muda para a tela de registro automaticamente para a pessoa só confirmar a senha
-                setView('register'); 
+                msg = "Não encontramos uma conta. Criamos um cadastro para você?";
+                setView('register');
             } else {
-                msg = "E-mail ou senha inválidos.";
+                msg = "E-mail ou senha incorretos.";
             }
         }
-        else {
-            msg = "Erro: " + err.code;
-        }
+        else msg = "Erro: " + err.code;
         
         setFeedback({ type: 'error', title, msg });
     } finally { setLoading(false); }
@@ -605,10 +637,10 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   const handleForgot = async (e) => {
       e.preventDefault(); setLoading(true); setFeedback(null);
       try {
-          await sendPasswordResetEmail(auth, email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
-          setFeedback({ type: 'success', title: 'Link Enviado', msg: `Se o e-mail ${email} estiver cadastrado, você receberá um link.` });
+          await sendPasswordResetEmail(auth, email, actionCodeSettings);
+          setFeedback({ type: 'success', title: 'Link Enviado', msg: `Se o e-mail existir, você receberá um link.` });
       } catch (err) { 
-          setFeedback({ type: 'error', title: 'Erro', msg: "Não foi possível enviar o e-mail." });
+          setFeedback({ type: 'error', title: 'Erro', msg: "Não foi possível enviar." });
       } finally { setLoading(false); }
   };
 
@@ -622,7 +654,6 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   return (
     <ModalOverlay onClose={onClose}>
       <div className="bg-white w-full rounded-2xl shadow-xl overflow-hidden relative animate-fade-in">
-        
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
             <button onClick={onClose} className="p-1 rounded-full hover:bg-slate-100 transition-colors"><X size={18} className="text-slate-800"/></button>
             <h2 className="font-bold text-slate-800 text-base">{getTitle()}</h2>
@@ -630,36 +661,14 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         </div>
 
         <div className="p-6">
-            
             {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
 
-            {/* TELA DE SUCESSO DE CADASTRO */}
+            {/* SUCESSO CADASTRO */}
             {view === 'email_sent' ? (
                 <div className="text-center py-6 space-y-4">
-                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2">
-                        <Mail size={32}/>
-                    </div>
-                    <div>
-                        <h3 className="text-lg font-bold text-slate-800">Conta Criada!</h3>
-                        <p className="text-slate-600 text-sm mt-2">
-                            Enviamos um link de confirmação para <strong>{email}</strong>.
-                            <br/>Por favor, confirme seu e-mail para ativar todos os recursos.
-                        </p>
-                    </div>
-                    {/* BOTÃO CORRIGIDO: Redireciona para o destino correto */}
-                    <Button 
-                        onClick={() => { 
-                            if (registeredUser) {
-                                onSuccess(registeredUser); // Redireciona para o destino (Painel ou Ingressos)
-                                if (closeOnSuccess) onClose();
-                            } else {
-                                setView('login'); 
-                            }
-                        }} 
-                        className="w-full mt-4"
-                    >
-                        {role === 'partner' ? 'Ir para o Painel' : 'Fazer Login'}
-                    </Button>
+                    <div className="w-16 h-16 bg-teal-50 text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-2"><Mail size={32}/></div>
+                    <div><h3 className="text-lg font-bold text-slate-800">Conta Criada!</h3><p className="text-slate-600 text-sm mt-2">Enviamos um link para <strong>{email}</strong>.</p></div>
+                    <Button onClick={() => { if (registeredUser) { onSuccess(registeredUser); if (closeOnSuccess) onClose(); } else { setView('login'); } }} className="w-full mt-4">{role === 'partner' ? 'Ir para o Painel' : 'Fazer Login'}</Button>
                 </div>
             ) : (
                 <>
@@ -672,9 +681,16 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
                     {['login','register'].includes(view) && (
                         <form onSubmit={handleEmailAuth} className="space-y-4">
-                            {view === 'register' && role === 'partner' && (
-                                <p className="text-sm text-slate-500 -mt-2 mb-2">Adicione seu e-mail e crie uma senha para se cadastrar</p>
+                            {view === 'register' && role === 'partner' && <p className="text-sm text-slate-500 -mt-2 mb-2">Preencha seus dados para se cadastrar</p>}
+                            
+                            {/* CAMPOS DE NOME (SÓ NO REGISTRO) */}
+                            {view === 'register' && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Nome" value={firstName} onChange={e=>setFirstName(e.target.value)} required />
+                                    <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Sobrenome" value={lastName} onChange={e=>setLastName(e.target.value)} required />
+                                </div>
                             )}
+
                             <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
                             <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} required />
                             <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Processando...' : (view === 'login' ? 'Entrar' : 'Cadastrar')}</Button>
@@ -683,7 +699,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
                     {view === 'forgot' && (
                         <form onSubmit={handleForgot} className="space-y-4">
-                            <p className="text-sm text-slate-600">Insira seu e-mail para receber o link de redefinição.</p>
+                            <p className="text-sm text-slate-600">Insira seu e-mail para recuperar.</p>
                             <input className="w-full p-3 border border-slate-300 rounded-xl outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required/>
                             <Button type="submit" className="w-full" disabled={loading}>Enviar link</Button>
                             <p className="text-center text-xs font-bold underline cursor-pointer mt-4" onClick={()=>setView('login')}>Voltar</p>
@@ -694,24 +710,12 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         <>
                             <div className="flex items-center my-6"><div className="flex-grow border-t border-slate-200"></div><span className="mx-3 text-xs text-slate-400">ou entre com</span><div className="flex-grow border-t border-slate-200"></div></div>
                             <div className="space-y-3">
-                                <button onClick={() => handleSocialLogin(googleProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-slate-50 transition-all font-semibold text-slate-600 text-sm">
-                                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" /> Continuar com Google
-                                </button>
-                                <button onClick={() => handleSocialLogin(facebookProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-[#1877F2] hover:text-white hover:border-[#1877F2] transition-all font-semibold text-slate-600 text-sm group">
-                                    <Facebook size={20} className="text-[#1877F2] group-hover:text-white transition-colors" fill="currentColor" /> Continuar com Facebook
-                                </button>
+                                <button onClick={() => handleSocialLogin(googleProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-slate-50 transition-all font-semibold text-slate-600 text-sm"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" /> Continuar com Google</button>
+                                <button onClick={() => handleSocialLogin(facebookProvider)} className="w-full border-2 border-slate-100 rounded-xl py-2.5 flex items-center justify-center gap-3 hover:bg-[#1877F2] hover:text-white hover:border-[#1877F2] transition-all font-semibold text-slate-600 text-sm group"><Facebook size={20} className="text-[#1877F2] group-hover:text-white transition-colors" fill="currentColor" /> Continuar com Facebook</button>
                             </div>
-                            {view === 'login' ? (
-                                <div className="mt-4 text-center">
-                                    <span className="text-xs text-slate-500 hover:underline cursor-pointer mr-4" onClick={()=>setView('forgot')}>Esqueceu a senha?</span>
-                                    <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('register'); setError('');}}>Cadastre-se</span>
-                                </div>
-                            ) : (
-                                <div className="mt-4 text-center">
-                                    <span className="text-xs text-slate-500">Já tem conta? </span>
-                                    <span className="text-xs font-bold text-slate-800 hover:underline cursor-pointer" onClick={()=>{setView('login'); setError('');}}>Entrar</span>
-                                </div>
-                            )}
+                            <div className="mt-4 text-center text-xs text-slate-500">
+                                {view==='login' ? <><span onClick={()=>setView('forgot')} className="cursor-pointer hover:underline mr-4">Esqueci a senha</span> <span onClick={()=>{setView('register'); setFeedback(null)}} className="cursor-pointer font-bold text-[#0097A8]">Criar conta</span></> : <span onClick={()=>{setView('login'); setFeedback(null)}} className="cursor-pointer font-bold text-[#0097A8]">Já tenho conta</span>}
+                            </div>
                         </>
                     )}
                 </>
