@@ -3452,38 +3452,50 @@ const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
 const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, items = [] }) => {
     if (!isOpen) return null;
 
-    // Filtra e ordena
+    // Filtra e ordena (Mais recentes primeiro)
     const monthRes = reservations.filter(r => 
         r.createdAt && 
         new Date(r.createdAt.seconds * 1000).getMonth() === monthIndex && 
         r.status === 'confirmed'
     ).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
 
-    // Formata Moeda
+    // Helper de formatação BRL
     const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-    // --- LÓGICA DE CÁLCULO ---
     // --- LÓGICA DE CÁLCULO POR LINHA ---
     const calculateRow = (res) => {
         const item = items.find(i => i.id === res.dayuseId);
         
-        // 1. Descobrir Cupom e Bruto
+        // 1. Identificar Cupom e Valores
         let couponPercent = 0;
         let couponCode = "-";
+        
+        // Tenta achar o cupom nos dados do item (Snapshot atual)
         if (res.couponCode && item?.coupons) {
              const c = item.coupons.find(cp => cp.code === res.couponCode);
              if (c) {
                  couponPercent = c.percentage;
                  couponCode = c.code;
              }
+        } 
+        // Fallback: Se não achar no item atual, tenta inferir pelo desconto salvo na reserva (se houver campo discount)
+        else if (res.discount > 0 && res.total > 0) {
+             // Lógica de fallback caso a estrutura de cupons tenha mudado
+             const impliedGross = res.total + res.discount;
+             couponPercent = (res.discount / impliedGross) * 100;
+             couponCode = res.couponCode || "DESCONTO";
         }
 
-        const paid = res.total || 0; // Valor Pago
-        // Engenharia reversa para achar o bruto
+        const paid = res.total || 0; // O que o cliente pagou efetivamente
+        
+        // Engenharia reversa para achar o Valor Original (Bruto)
+        // Se pagou 90 com 10% off -> Original = 90 / 0.9 = 100
         const gross = couponPercent > 0 ? paid / (1 - (couponPercent/100)) : paid;
+        
+        // Valor do Cupom (Dinheiro)
         const discountVal = gross - paid;
 
-        // 2. Definir Taxa
+        // 2. Definir Taxa da Plataforma (Promoção de Data)
         const resDate = res.createdAt.toDate ? res.createdAt.toDate() : new Date(res.createdAt);
         let refDate = new Date();
         if (item) {
@@ -3493,50 +3505,76 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                 refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
             }
         }
+        
         const diffDays = Math.ceil(Math.abs(resDate - refDate) / (1000 * 60 * 60 * 24));
+        
+        // Regra: <= 30 dias = 10%, > 30 dias = 12%
         const isPromo = diffDays <= 30;
         const rate = isPromo ? 0.10 : 0.12;
 
-        // 3. Calcular Taxa sobre o BRUTO
+        // 3. Calcular Taxa Adm (Sobre o Valor Original/Bruto)
         const fee = gross * rate;
 
-        // 4. Líquido (Pago - Taxa) OU (Bruto - Desconto - Taxa) -> Dá na mesma
+        // 4. Líquido = O que entrou (Pago) - O que saiu (Taxa)
         const net = paid - fee;
 
-        return { gross, paid, discountVal, fee, net, isPromo, rate, couponCode, couponPercent };
+        return { 
+            gross,        // Valor Original
+            paid,         // Valor Pago
+            discountVal,  // Valor Cupom
+            fee,          // Valor Taxa
+            net,          // Valor Líquido
+            isPromo, 
+            rate, 
+            couponCode, 
+            couponPercent 
+        };
     };
 
-    // Totais
+    // Totais para o Rodapé do Modal
     const totals = monthRes.reduce((acc, curr) => {
-        const { gross, fee, net } = calculateRow(curr);
-        return { gross: acc.gross + gross, fee: acc.fee + fee, net: acc.net + net };
-    }, { gross: 0, fee: 0, net: 0 });
+        const calc = calculateRow(curr);
+        return { 
+            gross: acc.gross + calc.gross, // Total Original
+            paid: acc.paid + calc.paid,    // Total Pago (Entrada Real)
+            fee: acc.fee + calc.fee,       // Total Taxas
+            net: acc.net + calc.net        // Total Líquido
+        };
+    }, { gross: 0, paid: 0, fee: 0, net: 0 });
 
-    // --- FUNÇÃO EXPORTAR CSV ---
+    // --- FUNÇÃO EXPORTAR CSV (ESTRUTURA SOLICITADA) ---
     const handleExportCSV = () => {
-        // Cabeçalho expandido
-        let csvContent = "Data;Cliente;Cupom;% Cupom;Valor Original (Bruto);Desconto Cupom;Valor Pago;Taxa Adm %;Valor Taxa;Valor Líquido\n";
+        // Colunas exatas conforme solicitado
+        const header = "Data da compra;Hora da compra;ID da transação;Nome e sobrenome;Valor original;Cupom;% do cupom;Valor cupom;Valor pago;Taxa admin %;Valor taxa;Valor liquido\n";
+        
+        let csvContent = header;
 
         monthRes.forEach(res => {
             const calc = calculateRow(res);
-            const date = new Date(res.createdAt.seconds * 1000);
+            const dateObj = new Date(res.createdAt.seconds * 1000);
             
+            // Tratamento de dados para o CSV (Excel PT-BR usa vírgula decimal)
+            const fmtNum = (n) => n.toFixed(2).replace('.', ',');
+
             const row = [
-                date.toLocaleDateString('pt-BR'),
-                `"${res.guestName}"`,
-                calc.couponCode,
-                calc.couponPercent > 0 ? `${calc.couponPercent}%` : '-',
-                calc.gross.toFixed(2).replace('.', ','),   // Valor Original
-                calc.discountVal.toFixed(2).replace('.', ','), // Quanto descontou
-                calc.paid.toFixed(2).replace('.', ','),    // Quanto o cliente pagou
-                calc.isPromo ? '10%' : '12%',
-                calc.fee.toFixed(2).replace('.', ','),     // Taxa (sobre o bruto)
-                calc.net.toFixed(2).replace('.', ',')      // Liquido final
+                dateObj.toLocaleDateString('pt-BR'),           // Data (dd/mm/aaaa)
+                dateObj.toLocaleTimeString('pt-BR'),           // Hora (hh:mm:ss)
+                res.id,                                        // ID Transação
+                `"${res.guestName}"`,                          // Nome
+                fmtNum(calc.gross),                            // Valor original (bruto)
+                calc.couponCode,                               // Nome do cupom
+                calc.couponPercent > 0 ? fmtNum(calc.couponPercent) + '%' : '-', // % do cupom
+                calc.couponPercent > 0 ? fmtNum(calc.discountVal) : '0,00',      // Valor cupom
+                fmtNum(calc.paid),                             // Valor pago
+                (calc.rate * 100).toFixed(0) + '%',            // Taxa admin %
+                fmtNum(calc.fee),                              // Valor taxa
+                fmtNum(calc.net)                               // Valor liquido
             ].join(';');
 
             csvContent += row + "\n";
         });
 
+        // Download com BOM para acentuação correta no Excel
         const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
@@ -3550,7 +3588,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
 
     return (
         <div className="fixed inset-0 z-[9999] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white md:rounded-3xl rounded-t-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="bg-white md:rounded-3xl rounded-t-3xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
                 
                 {/* Cabeçalho */}
                 <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50/50 gap-4">
@@ -3568,7 +3606,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                             disabled={monthRes.length === 0}
                             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Download size={16}/> Baixar Excel
+                            <Download size={16}/> Baixar Planilha
                         </button>
                         <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
                             <X size={20} className="text-slate-500"/>
@@ -3576,7 +3614,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                     </div>
                 </div>
 
-                {/* Conteúdo com Scroll */}
+                {/* Conteúdo (Tabela/Cards) */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50 md:bg-white">
                     {monthRes.length === 0 ? (
                         <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-2xl bg-white">
@@ -3584,15 +3622,16 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                         </div>
                     ) : (
                         <>
-                            {/* --- VISÃO DESKTOP (TABELA) --- */}
+                            {/* --- TABELA DESKTOP --- */}
                             <table className="hidden md:table w-full text-left border-collapse">
                                 <thead>
-                                    <tr className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
-                                        <th className="pb-3 pl-2">Data</th>
-                                        <th className="pb-3">Cliente / ID</th>
-                                        <th className="pb-3">Método</th>
-                                        <th className="pb-3 text-right">Valor Pago</th>
-                                        <th className="pb-3 text-right">Taxas</th>
+                                    <tr className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                                        <th className="pb-3 pl-2">Data/ID</th>
+                                        <th className="pb-3">Cliente</th>
+                                        <th className="pb-3 text-right">Original</th>
+                                        <th className="pb-3 text-right">Cupom</th>
+                                        <th className="pb-3 text-right">Pago</th>
+                                        <th className="pb-3 text-right">Taxa</th>
                                         <th className="pb-3 text-right pr-2">Líquido</th>
                                     </tr>
                                 </thead>
@@ -3601,51 +3640,62 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                         const calc = calculateRow(res);
                                         return (
                                             <tr key={res.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                                                <td className="py-3 pl-2 font-mono text-xs text-slate-500">
-                                                    {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}
-                                                    <span className="block text-[10px] opacity-70">
-                                                        {new Date(res.createdAt.seconds * 1000).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}
-                                                    </span>
-                                                </td>
-                                                <td className="py-3">
-                                                    <div className="font-bold text-slate-800 line-clamp-1">{res.guestName}</div>
+                                                <td className="py-3 pl-2">
+                                                    <div className="font-mono text-xs text-slate-500">{new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}</div>
                                                     <div className="text-[10px] text-slate-400 font-mono">#{res.id.slice(0,6).toUpperCase()}</div>
                                                 </td>
                                                 <td className="py-3">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                                                        res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
-                                                    }`}>
-                                                        {res.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
-                                                    </span>
+                                                    <div className="font-bold text-slate-800 line-clamp-1">{res.guestName}</div>
+                                                    <span className={`text-[9px] px-1 rounded border uppercase ${res.paymentMethod==='pix'?'bg-teal-50 border-teal-100 text-teal-700':'bg-blue-50 border-blue-100 text-blue-700'}`}>{res.paymentMethod}</span>
                                                 </td>
-                                                <td className="py-3 text-right font-medium">
+                                                
+                                                {/* Coluna Valor Original */}
+                                                <td className="py-3 text-right font-medium text-slate-400">
                                                     {formatBRL(calc.gross)}
-                                                    {/* VISUALIZAÇÃO DO CUPOM NO DESKTOP */}
-                                                    {res.couponCode && (
-                                                        <div className="flex items-center justify-end gap-1 text-[10px] text-purple-600 font-bold mt-0.5">
-                                                            <Tag size={10}/> {res.couponCode.toUpperCase()}
-                                                        </div>
-                                                    )}
                                                 </td>
+
+                                                {/* Coluna Cupom */}
+                                                <td className="py-3 text-right">
+                                                    {calc.discountVal > 0 ? (
+                                                        <>
+                                                            <div className="text-purple-600 font-bold text-xs">- {formatBRL(calc.discountVal)}</div>
+                                                            <div className="text-[9px] text-purple-400 flex justify-end items-center gap-1">
+                                                                <Tag size={8}/> {calc.couponCode} ({calc.couponPercent}%)
+                                                            </div>
+                                                        </>
+                                                    ) : <span className="text-slate-300">-</span>}
+                                                </td>
+
+                                                {/* Coluna Pago */}
+                                                <td className="py-3 text-right font-bold text-slate-700">
+                                                    {formatBRL(calc.paid)}
+                                                </td>
+
+                                                {/* Coluna Taxa */}
                                                 <td className="py-3 text-right">
                                                     <div className="text-red-500 font-medium text-xs">- {formatBRL(calc.fee)}</div>
-                                                    <span className={`text-[9px] px-1.5 rounded font-bold uppercase inline-block ${calc.isPromo ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                        {calc.isPromo ? 'Promo 10%' : 'Taxa 12%'}
+                                                    <span className={`text-[9px] px-1 rounded font-bold uppercase ${calc.isPromo ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {calc.rate * 100}%
                                                     </span>
                                                 </td>
-                                                <td className="py-3 text-right pr-2 text-green-700 font-bold">{formatBRL(calc.net)}</td>
+
+                                                {/* Coluna Líquido */}
+                                                <td className="py-3 text-right pr-2 text-green-700 font-bold">
+                                                    {formatBRL(calc.net)}
+                                                </td>
                                             </tr>
                                         );
                                     })}
                                 </tbody>
                             </table>
 
-                            {/* --- VISÃO MOBILE (CARDS) --- */}
+                            {/* --- MOBILE CARDS --- */}
                             <div className="md:hidden space-y-3">
                                 {monthRes.map((res) => {
                                     const calc = calculateRow(res);
                                     return (
                                         <div key={res.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                                            {/* Header do Card */}
                                             <div className="flex justify-between items-start mb-3 border-b border-slate-50 pb-2">
                                                 <div>
                                                     <p className="font-bold text-slate-800 text-sm">{res.guestName}</p>
@@ -3656,40 +3706,41 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
                                                     res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
                                                 }`}>
-                                                    {res.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
+                                                    {res.paymentMethod}
                                                 </span>
                                             </div>
                                             
-                                            <div className="grid grid-cols-3 gap-2 text-center">
-                                                <div className="bg-slate-50 p-2 rounded-lg">
-                                                    <p className="text-[10px] text-slate-500 uppercase font-bold">Valor Pago</p>
-                                                    <p className="text-sm font-bold text-slate-700">{formatBRL(calc.gross)}</p>
+                                            {/* Grid de Valores */}
+                                            <div className="space-y-2">
+                                                {/* Linha Original + Cupom */}
+                                                <div className="flex justify-between text-xs text-slate-500">
+                                                    <span>Valor Original:</span>
+                                                    <span>{formatBRL(calc.gross)}</span>
                                                 </div>
-                                                <div className="bg-red-50 p-2 rounded-lg relative overflow-hidden">
-                                                    <p className="text-[10px] text-red-400 uppercase font-bold">Taxa</p>
-                                                    <p className="text-sm font-bold text-red-500">{formatBRL(calc.fee)}</p>
-                                                    {calc.isPromo && (
-                                                        <div className="absolute top-0 right-0 w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
-                                                    )}
-                                                </div>
-                                                <div className="bg-green-50 p-2 rounded-lg border border-green-100">
-                                                    <p className="text-[10px] text-green-600 uppercase font-bold">Líquido</p>
-                                                    <p className="text-sm font-bold text-green-700">{formatBRL(calc.net)}</p>
-                                                </div>
-                                            </div>
-                                            
-                                            {/* RODAPÉ DO CARD: CUPOM E PROMO */}
-                                            <div className="mt-2 flex flex-col gap-1">
-                                                {res.couponCode && (
-                                                    <div className="text-[10px] text-purple-700 bg-purple-50 px-2 py-1 rounded flex items-center justify-center gap-1 font-bold border border-purple-100">
-                                                        <Tag size={12}/> Cupom Aplicado: {res.couponCode.toUpperCase()}
+                                                {calc.discountVal > 0 && (
+                                                    <div className="flex justify-between text-xs text-purple-600 font-medium">
+                                                        <span className="flex items-center gap-1"><Tag size={10}/> Cupom ({calc.couponCode}):</span>
+                                                        <span>- {formatBRL(calc.discountVal)}</span>
                                                     </div>
                                                 )}
-                                                {calc.isPromo && (
-                                                    <p className="text-[10px] text-amber-600 text-center font-bold bg-amber-50 py-1 rounded border border-amber-100">
-                                                        ⚡ Taxa Promocional 10%
-                                                    </p>
-                                                )}
+                                                
+                                                <div className="border-t border-slate-50 my-1"></div>
+
+                                                {/* Linha Pago + Taxa */}
+                                                <div className="flex justify-between text-sm font-bold text-slate-700">
+                                                    <span>Valor Pago:</span>
+                                                    <span>{formatBRL(calc.paid)}</span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-red-500 font-medium bg-red-50 px-2 py-1 rounded">
+                                                    <span>Taxa ({calc.rate*100}%):</span>
+                                                    <span>- {formatBRL(calc.fee)}</span>
+                                                </div>
+
+                                                {/* Linha Líquido */}
+                                                <div className="flex justify-between text-sm font-bold text-green-700 bg-green-50 px-2 py-2 rounded mt-1 border border-green-100">
+                                                    <span>Líquido a Receber:</span>
+                                                    <span>{formatBRL(calc.net)}</span>
+                                                </div>
                                             </div>
                                         </div>
                                     );
@@ -3701,17 +3752,21 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
 
                 {/* Rodapé com Totais */}
                 <div className="p-4 md:p-6 bg-white md:bg-slate-50 border-t border-slate-200">
-                    <div className="grid grid-cols-3 gap-2 md:flex md:justify-end md:gap-8">
-                        <div className="text-center md:text-right">
-                            <p className="text-[10px] md:text-xs text-slate-500 font-bold uppercase">Total Pago</p>
-                            <p className="text-sm md:text-xl font-bold text-slate-800">{formatBRL(totals.gross)}</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 text-right">
+                        <div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">Original</p>
+                            <p className="text-sm md:text-lg font-bold text-slate-500">{formatBRL(totals.gross)}</p>
                         </div>
-                        <div className="text-center md:text-right">
-                            <p className="text-[10px] md:text-xs text-red-500 font-bold uppercase">Total Taxas</p>
-                            <p className="text-sm md:text-xl font-bold text-red-500">- {formatBRL(totals.fee)}</p>
+                        <div>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase">Pago (Entrada)</p>
+                            <p className="text-sm md:text-lg font-bold text-slate-800">{formatBRL(totals.paid)}</p>
                         </div>
-                        <div className="text-center md:text-right bg-green-50 md:bg-transparent rounded-lg py-1 md:py-0">
-                            <p className="text-[10px] md:text-xs text-green-700 font-bold uppercase">Total Líquido</p>
+                        <div>
+                            <p className="text-[10px] text-red-400 font-bold uppercase">Taxas</p>
+                            <p className="text-sm md:text-lg font-bold text-red-500">- {formatBRL(totals.fee)}</p>
+                        </div>
+                        <div className="bg-green-50 rounded-lg p-1 md:bg-transparent md:p-0">
+                            <p className="text-[10px] text-green-600 font-bold uppercase">Líquido</p>
                             <p className="text-sm md:text-2xl font-bold text-green-700">{formatBRL(totals.net)}</p>
                         </div>
                     </div>
