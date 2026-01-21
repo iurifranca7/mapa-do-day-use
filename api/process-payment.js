@@ -2,7 +2,7 @@ import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
 // ==================================================================
-// 1. INICIALIZAÇÃO DO FIREBASE (Segura e Reutilizável)
+// 1. INICIALIZAÇÃO DO FIREBASE
 // ==================================================================
 const initFirebase = () => {
     if (!admin || !admin.apps) {
@@ -45,7 +45,6 @@ const initFirebase = () => {
 
     try {
         admin.initializeApp({ credential });
-        console.log("✅ Firebase Admin inicializado.");
     } catch (e) {
         if (!e.message.includes('already exists')) {
              throw e;
@@ -59,7 +58,7 @@ const initFirebase = () => {
 // 2. FUNÇÃO PRINCIPAL (HANDLER)
 // ==================================================================
 export default async function handler(req, res) {
-  // Configuração de CORS
+  // Configuração CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -72,17 +71,17 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails } = req.body;
 
-    // --- VALIDAÇÕES INICIAIS ---
+    // --- A. VALIDAÇÕES INICIAIS ---
     if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
 
-    // Busca dados do Day Use
+    // Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
     const dayUseSnap = await dayUseRef.get();
     
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
-    // Busca dados do Parceiro (Dono do Day Use)
+    // Busca Parceiro (Dono)
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
@@ -92,7 +91,7 @@ export default async function handler(req, res) {
     
     const partnerAccessToken = ownerSnap.data().mp_access_token;
 
-    // --- CÁLCULO DO PREÇO ---
+    // --- B. CÁLCULO DO PREÇO TOTAL ---
     const dateParts = bookingDetails.date.split('-'); 
     const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12, 0, 0); 
     const dayOfWeek = dateObj.getDay();
@@ -101,7 +100,7 @@ export default async function handler(req, res) {
     let priceChild = Number(item.priceChild || 0);
     let pricePet = Number(item.petFee || 0);
 
-    // Ajuste de preço por dia da semana
+    // Ajuste por dia da semana
     if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
         const dayConfig = item.weeklyPrices[dayOfWeek];
         if (typeof dayConfig === 'object') {
@@ -133,34 +132,59 @@ export default async function handler(req, res) {
     if (calculatedTotal <= 0) throw new Error("Valor total inválido.");
 
     // ==================================================================
-    // 3. LÓGICA FINANCEIRA (SPLIT E COMISSÃO)
+    // C. LÓGICA DE DATA (PROMOÇÃO 30 DIAS)
     // ==================================================================
+    let refDate = null;
+
+    // Prioridade 1: Data de Ativação (Gravada pelo Frontend ao clicar em "Reativar" ou "Criar")
+    if (item.firstActivationDate) {
+        // Suporte para Timestamp do Firestore ou Date string padrão
+        refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
+    } 
+    // Prioridade 2: Fallback para Data de Criação (Itens antigos ativos que nunca pausaram)
+    else if (item.createdAt) {
+        refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+    } else {
+        refDate = new Date(); // Fallback final (Hoje)
+    }
+
+    const today = new Date();
+    const diffTime = Math.abs(today - refDate);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+
+    // REGRA: 
+    // <= 30 dias: Parceiro recebe 90% (Marketplace ~10%)
+    // > 30 dias: Parceiro recebe 88% (Marketplace ~12%)
+    let PERCENTUAL_PARCEIRO = 0.88; 
     
-    // Configuração das Taxas
+    if (diffDays <= 30) {
+        PERCENTUAL_PARCEIRO = 0.90; 
+    }
+
+    // ==================================================================
+    // D. LÓGICA FINANCEIRA (SPLIT E TAXAS)
+    // ==================================================================
     const TAXA_PIX = 0.0099; // 0.99%
     const TAXA_CARTAO = 0.0398; // 3.98% (D+30)
-    const PERCENTUAL_PARCEIRO = 0.90; // Parceiro recebe 90% LÍQUIDO da venda bruta
 
-    // Identifica meio de pagamento
     const isPix = payment_method_id === 'pix';
     const currentMpFeeRate = isPix ? TAXA_PIX : TAXA_CARTAO;
 
-    // Cálculos
-    // Ex: Venda 100. Taxa MP 3.98. Parceiro deve receber 90.
-    // Comissão = 100 - 3.98 - 90 = 6.02
-    const mpFeeAmount = calculatedTotal * currentMpFeeRate;
-    const partnerNetShare = calculatedTotal * PERCENTUAL_PARCEIRO;
+    // Cálculo dos valores absolutos
+    const mpFeeAmount = calculatedTotal * currentMpFeeRate;       // Quanto o MP cobra
+    const partnerNetShare = calculatedTotal * PERCENTUAL_PARCEIRO; // Quanto o parceiro TEM que receber
 
+    // A comissão do marketplace é o que sobra depois de pagar o MP e garantir o líquido do parceiro
     let commission = calculatedTotal - mpFeeAmount - partnerNetShare;
 
-    // Segurança matemática
+    // Segurança matemática (evitar negativo)
     if (commission < 0) commission = 0;
     commission = Math.round(commission * 100) / 100;
     
     const transactionAmount = Number(calculatedTotal.toFixed(2));
 
     // ==================================================================
-    // 4. PROCESSAMENTO NO MERCADO PAGO
+    // E. PROCESSAMENTO NO MERCADO PAGO
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
@@ -169,7 +193,7 @@ export default async function handler(req, res) {
       transaction_amount: transactionAmount,
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: commission, // Sua comissão já descontando a taxa do MP
+      application_fee: commission, // Sua comissão calculada
       payer: {
         email: payer.email,
         first_name: payer.first_name,
@@ -178,30 +202,27 @@ export default async function handler(req, res) {
       }
     };
 
+    // Configuração para Cartão
     if (!isPix) {
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
       // Sem 'payer_costs', o juros de parcelamento vai para o Comprador (padrão MP)
     }
 
-    console.log(`💳 Iniciando Transação. 
-      Total: R$${transactionAmount} 
-      Método: ${payment_method_id}
-      Comissão Marketplace: R$${commission}`);
+    console.log(`💳 Processando. Dias ativo: ${diffDays}. Share Parceiro: ${(PERCENTUAL_PARCEIRO*100).toFixed(0)}%. 
+      Total: R$${transactionAmount}, AppFee: R$${commission}`);
     
     const result = await payment.create({ body: paymentBody });
 
     // ==================================================================
-    // 5. TRAVA DE SEGURANÇA (VALIDAÇÃO DE STATUS)
+    // F. TRAVA DE SEGURANÇA (VALIDAÇÃO DE STATUS)
     // ==================================================================
-    
-    // Status aceitáveis para confirmar/reservar
     const statusValidos = ['approved', 'in_process', 'pending'];
 
+    // Se o pagamento for recusado (ex: cartão sem saldo, fraude, etc), retornamos ERRO 402
     if (!statusValidos.includes(result.status)) {
         console.warn(`❌ Pagamento Recusado. Status: ${result.status} | Detalhe: ${result.status_detail}`);
         
-        // Retorna ERRO 402 para o Frontend não prosseguir com a reserva
         return res.status(402).json({
             error: 'Pagamento recusado',
             status: result.status,
@@ -211,11 +232,10 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // 6. RETORNO DE SUCESSO
+    // G. RETORNO DE SUCESSO
     // ==================================================================
     return res.status(200).json({
-      // .toString() evita o erro "replace is not a function" no frontend
-      id: result.id.toString(), 
+      id: result.id.toString(), // Convertido para String (Correção do bug .replace)
       status: result.status,
       detail: result.status_detail,
       point_of_interaction: result.point_of_interaction, // Necessário para Pix (QR Code)
@@ -233,7 +253,7 @@ export default async function handler(req, res) {
   }
 }
 
-// Helper para mensagens amigáveis ao usuário
+// Helper para traduzir erros do MP
 function traduzirErroMP(statusDetail) {
     const erros = {
         'cc_rejected_bad_filled_card_number': 'Verifique o número do cartão.',

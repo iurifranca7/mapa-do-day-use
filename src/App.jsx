@@ -3795,29 +3795,61 @@ const PartnerDashboard = () => {
   const handleEditEmailClick = () => { setFeedback({ type: 'warning', title: 'Alteração de E-mail', msg: 'Para garantir a segurança, não é possível alterar o e-mail diretamente. Remova o usuário e crie um novo.' }); };
 
   const executeAction = async () => {
-      if (!confirmAction) return;
-      const { type, payload } = confirmAction;
+  if (!confirmAction) return;
+  const { type, payload } = confirmAction;
 
-      try {
-          if (type === 'pause_ad' || type === 'resume_ad') {
-               await updateDoc(doc(db, "dayuses", payload.id), { paused: type === 'pause_ad' });
-               setFeedback({ type: 'success', title: 'Sucesso', msg: `Anúncio ${type === 'pause_ad' ? 'pausado' : 'reativado'}.` });
-          }
-          else if (type === 'delete_staff') {
-               await deleteDoc(doc(db, "users", payload));
-               setFeedback({ type: 'success', title: 'Removido', msg: 'Acesso revogado.' });
-          }
-          else if (type === 'reset_staff_pass') {
-               await sendPasswordResetEmail(auth, payload.email);
-               if (payload.requestId) await updateDoc(doc(db, "requests", payload.requestId), { status: 'completed' });
-               setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Link enviado.' });
-          }
-      } catch (error) {
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível completar a ação.' });
-      } finally {
-          setConfirmAction(null);
+  try {
+    if (type === "pause_ad" || type === "resume_ad") {
+      const isResuming = type === "resume_ad";
+
+      // Prepara a atualização
+      const updates = { paused: !isResuming };
+
+      // A MÁGICA ESTÁ AQUI:
+      // Se estou reativando (resume_ad) E o item NÃO tem 'firstActivationDate' ainda...
+      // ...eu gravo a data de AGORA. Isso vale para itens novos E itens velhos que estavam pausados.
+      if (isResuming && !payload.firstActivationDate) {
+        updates.firstActivationDate = new Date();
       }
-  };
+
+      await updateDoc(doc(db, "dayuses", payload.id), updates);
+
+      setFeedback({
+        type: "success",
+        title: "Sucesso",
+        msg: `Anúncio ${type === "pause_ad" ? "pausado" : "reativado"}.`,
+      });
+    } // ... (resto do código igual: delete_staff, reset_staff_pass) ...
+    else if (type === "delete_staff") {
+      await deleteDoc(doc(db, "users", payload));
+      setFeedback({
+        type: "success",
+        title: "Removido",
+        msg: "Acesso revogado.",
+      });
+    } else if (type === "reset_staff_pass") {
+      await sendPasswordResetEmail(auth, payload.email);
+      if (payload.requestId)
+        await updateDoc(doc(db, "requests", payload.requestId), {
+          status: "completed",
+        });
+      setFeedback({
+        type: "success",
+        title: "E-mail Enviado",
+        msg: "Link enviado.",
+      });
+    }
+  } catch (error) {
+    console.error(error);
+    setFeedback({
+      type: "error",
+      title: "Erro",
+      msg: "Não foi possível completar a ação.",
+    });
+  } finally {
+    setConfirmAction(null);
+  }
+};
 
   // --- GESTÃO DE RESERVAS (ESTORNO/REAGENDAMENTO) ---
   const handleManageSubmit = async () => {
@@ -4375,7 +4407,7 @@ const PartnerDashboard = () => {
                      <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
                      <div className="space-y-1 mb-4">
                         <div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas:</span><span className="font-bold">{formatBRL(totalBalance)}</span></div>
-                        <div className="flex justify-between text-xs text-red-400"><span>Plataforma (15%):</span><span>- {formatBRL(platformFee)}</span></div>
+                        <div className="flex justify-between text-xs text-red-400"><span>Plataforma (12%):</span><span>- {formatBRL(platformFee)}</span></div>
                         <div className="flex justify-between text-xs text-orange-400"><span>Mercado Pago (Var.):</span><span>- {formatBRL(estimatedMPFees)}</span></div>
                      </div>
                  </div>
@@ -5700,7 +5732,6 @@ const Layout = ({ children }) => {
                      ) : (
                         <MapIcon className="h-6 w-6 text-[#0097A8]" />
                      )}
-                     <span className="hidden sm:inline font-bold text-xl text-slate-800">Mapa do Day Use</span>
                   </div>
                   <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">
                      A plataforma completa para descobrir e reservar experiências incríveis de Day Use perto de você.
