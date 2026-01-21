@@ -2467,7 +2467,8 @@ const CheckoutPage = () => {
     }
   };
 
-  const processCardPayment = async () => {
+  // --- LÓGICA PRINCIPAL DE PAGAMENTO ---
+  const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
 
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
@@ -2479,9 +2480,39 @@ const CheckoutPage = () => {
      const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
-     // Payload completo
-     const paymentPayload = {
-        transactionAmount: Number(finalTotal.toFixed(2)),
+     try {
+       // ---------------------------------------------------------
+       // 1. CRIA A RESERVA "WAITING_PAYMENT" NO FIRESTORE PRIMEIRO
+       // ---------------------------------------------------------
+       // Isso garante que temos um ID para salvar o pagamento e 
+       // permite que o Webhook funcione mesmo se o usuário fechar a tela.
+       const reservationData = {
+         ...bookingData, 
+         total: Number(finalTotal.toFixed(2)),
+         discount: discount,
+         couponCode: couponCode ? couponCode.toUpperCase() : null,
+         paymentMethod: paymentMethod,
+         
+         status: 'waiting_payment', // Status inicial seguro
+         
+         userId: user.uid, 
+         ownerId: bookingData.item.ownerId,
+         createdAt: new Date(), 
+         guestName: user.displayName || "Usuário", 
+         guestEmail: user.email,
+         parentTicketId: bookingData.parentTicketId || null,
+         mpStatus: 'pending'
+       };
+
+       const docRef = await addDoc(collection(db, "reservations"), reservationData);
+       const reservationId = docRef.id;
+       setCurrentReservationId(reservationId);
+
+       // ---------------------------------------------------------
+       // 2. PREPARA DADOS PARA API
+       // ---------------------------------------------------------
+       const paymentPayload = {
+        token: null, // Será preenchido se for cartão
         transaction_amount: Number(finalTotal.toFixed(2)),
         payment_method_id: paymentMethod === 'pix' ? 'pix' : getPaymentMethodId(cardNumber),
         installments: Number(installments),
@@ -2500,69 +2531,76 @@ const CheckoutPage = () => {
             pets: Number(bookingData.pets),
             selectedSpecial: bookingData.selectedSpecial,
             couponCode: couponCode ? couponCode.toUpperCase() : null
-        }
-     };
+        },
+        reservationId: reservationId // !!! ENVIAMOS O ID QUE ACABAMOS DE CRIAR !!!
+       };
 
-     try {
-       // 1. Tokenização do Cartão
+       // Se for cartão, gera o token antes
        if (paymentMethod === 'card') {
-           if (!window.mpInstance) { alert("Sistema de pagamento indisponível."); setProcessing(false); return; }
+           if (!window.mpInstance) throw new Error("Sistema de pagamento indisponível.");
            
            const [month, year] = cardExpiry.split('/');
-           if (!month || !year || cardNumber.length < 13 || !cardCvv) { alert("Verifique os dados do cartão."); setProcessing(false); return; }
+           if (!month || !year || cardNumber.length < 13 || !cardCvv) throw new Error("Verifique os dados do cartão.");
 
            const tokenObj = await window.mpInstance.createCardToken({
-              cardNumber: cardNumber.replace(/\s/g, ''),
-              cardholderName: cardName,
-              cardExpirationMonth: month,
-              cardExpirationYear: '20' + year,
-              securityCode: cardCvv,
-              identification: { type: 'CPF', number: cleanDoc }
+             cardNumber: cardNumber.replace(/\s/g, ''),
+             cardholderName: cardName,
+             cardExpirationMonth: month,
+             cardExpirationYear: '20' + year,
+             securityCode: cardCvv,
+             identification: { type: 'CPF', number: cleanDoc }
            });
            
            paymentPayload.token = tokenObj.id; 
        }
 
-       // 2. Chamada à API
+       // ---------------------------------------------------------
+       // 3. CHAMA A API DE PAGAMENTO
+       // ---------------------------------------------------------
        const response = await fetch("/api/process-payment", { 
-          method: "POST", 
-          headers: { "Content-Type":"application/json" }, 
-          body: JSON.stringify(paymentPayload) 
+         method: "POST", 
+         headers: { "Content-Type":"application/json" }, 
+         body: JSON.stringify(paymentPayload) 
        });
 
        const result = await response.json();
 
-       if (response.ok) {
-           if (paymentMethod === 'pix') {
-               // Sucesso Pix (Dados Reais)
-               if (result.point_of_interaction?.transaction_data) {
-                   setPixData(result.point_of_interaction.transaction_data);
-                   setCreatedPaymentId(result.id);
-                   setProcessing(false);
-                   setShowPixModal(true);
-               } else {
-                   throw new Error("QR Code não gerado pelo Mercado Pago.");
-               }
+       if (!response.ok) {
+           // Se falhar o pagamento, marcamos a reserva como falha para não ficar pendente pra sempre
+           await updateDoc(doc(db, "reservations", reservationId), { status: 'failed_payment' });
+           
+           if (response.status === 402) {
+               alert(`Pagamento Recusado: ${result.message || 'Verifique os dados do cartão.'}`);
            } else {
-               // Sucesso Cartão
-               if (result.status === 'approved' || result.status === 'in_process') {
-                   handleConfirm(result.id);
-               } else {
-                   alert(`Pagamento recusado. Status: ${result.detail || result.status}`);
-                   setProcessing(false);
-               }
+               alert(`Erro: ${result.message || 'Erro ao processar pagamento.'}`);
+           }
+           setProcessing(false);
+           return;
+       }
+
+       // ---------------------------------------------------------
+       // 4. SUCESSO! TRATA PIX OU CARTÃO
+       // ---------------------------------------------------------
+       if (paymentMethod === 'pix') {
+           if (result.point_of_interaction?.transaction_data) {
+               setPixData(result.point_of_interaction.transaction_data);
+               setShowPixModal(true); // Abre modal com QR Code
+               // Nota: A reserva já está criada e vinculada no backend.
+               // O Webhook cuidará de aprovar quando o Pix cair.
+           } else {
+               throw new Error("QR Code não gerado.");
            }
        } else {
-           console.error("Erro API:", result);
-           let msg = result.message || "Erro desconhecido";
-           if (msg.includes("application_fee")) msg = "Erro de configuração de comissão no servidor.";
-           alert(msg);
-           setProcessing(false);
+           // Cartão Aprovado
+           // O Backend já atualizou o status para 'confirmed' via ID que enviamos
+           setShowSuccess(true);
        }
+
+       setProcessing(false);
 
      } catch (err) {
         console.error("Erro Crítico:", err);
-        alert("Ocorreu um erro de comunicação com o servidor de pagamento.");
+        alert(err.message || "Ocorreu um erro de comunicação com o servidor.");
         setProcessing(false);
      }
   };
@@ -4659,7 +4697,108 @@ const PartnerDashboard = () => {
                
                <OccupancyCalendar reservations={reservations} selectedDate={filterDate} onDateSelect={setFilterDate} />
 
-               <div className="space-y-4">{dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">Nenhum viajante agendado.</p> : dailyGuests.map(r => (<div key={r.id} className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4"><div className="flex-1"><p className="font-bold text-lg text-slate-900">{r.guestName}</p><p className="text-sm text-slate-500 font-mono">#{r.id.slice(0,6).toUpperCase()} • {r.itemName}</p><div className="flex gap-2 mt-2 text-xs text-slate-600 flex-wrap">{r.adults > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.adults} Adultos</span>}{r.children > 0 && <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">{r.children} Crianças</span>}{r.status === 'cancelled' && <span className="bg-red-100 text-red-700 px-2 py-1 rounded font-bold">CANCELADO</span>}{r.status === 'refunded_partial' && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold">ESTORNO PARCIAL</span>}</div></div><div className="flex items-center gap-2">{r.status === 'confirmed' && (<Button variant="outline" className="h-full py-2 px-3 rounded-xl border-slate-200 text-slate-600 hover:bg-slate-50" onClick={() => { setManageRes(r); setRescheduleDate(r.date); }}><Edit size={16}/></Button>)}{r.status === 'validated' ? <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100"><CheckCircle size={18}/> Validado</div> : r.status === 'confirmed' && <div className="flex gap-2"><input id={`code-${r.id}`} className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider" placeholder="CÓDIGO" maxLength={6}/><Button onClick={()=>handleValidate(r.id, document.getElementById(`code-${r.id}`).value)} className="h-full py-2 shadow-none">Validar</Button></div>}<Button variant="outline" className="h-full py-2 px-3 rounded-xl" onClick={()=>setSelectedRes(r)}><Info size={18}/></Button></div></div>))}</div>
+<div className="space-y-4">
+  {dailyGuests.length === 0 ? (
+    <p className="text-center text-slate-400 py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+      Nenhum viajante agendado.
+    </p>
+  ) : (
+    dailyGuests.map((r) => (
+      <div
+        key={r.id}
+        className="flex flex-col md:flex-row justify-between items-center p-4 bg-white hover:shadow-md transition-shadow rounded-xl border border-slate-200 gap-4"
+      >
+        <div className="flex-1">
+          <p className="font-bold text-lg text-slate-900">{r.guestName}</p>
+          <p className="text-sm text-slate-500 font-mono">
+            #{r.id.slice(0, 6).toUpperCase()} • {r.itemName}
+          </p>
+          <div className="flex gap-2 mt-2 text-xs text-slate-600 flex-wrap">
+            {r.adults > 0 && (
+              <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">
+                {r.adults} Adultos
+              </span>
+            )}
+            {r.children > 0 && (
+              <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 font-medium">
+                {r.children} Crianças
+              </span>
+            )}
+            {r.status === "cancelled" && (
+              <span className="bg-red-100 text-red-700 px-2 py-1 rounded font-bold">
+                CANCELADO
+              </span>
+            )}
+            {/* NOVO: STATUS DE CHARGEBACK (DISPUTA) */}
+    {(r.status === 'chargeback') && 
+        <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded border border-purple-200 font-bold flex items-center gap-1">
+            <AlertTriangle size={10}/> CONTESTADO
+        </span>
+    }
+
+    {/* NOVO: STATUS DE PENDENTE (PIX AGUARDANDO) */}
+    {(r.status === 'pending' || r.status === 'waiting_payment') && 
+        <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded border border-yellow-200 font-bold">AGUARDANDO PAGTO</span>
+    }
+    
+    {/* NOVO: STATUS ESTORNADO */}
+    {(r.status === 'refunded') && 
+        <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200 font-bold">REEMBOLSADO</span>
+    }
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {r.status === "confirmed" && (
+            <Button
+              variant="outline"
+              className="h-full py-2 px-3 rounded-xl border-slate-200 text-slate-600 hover:bg-slate-50"
+              onClick={() => {
+                setManageRes(r);
+                setRescheduleDate(r.date);
+              }}
+            >
+              <Edit size={16} />
+            </Button>
+          )}
+          {r.status === "validated" ? (
+            <div className="px-4 py-2 bg-green-50 text-green-700 font-bold rounded-xl flex items-center gap-2 border border-green-100">
+              <CheckCircle size={18} /> Validado
+            </div>
+          ) : (
+            r.status === "confirmed" && (
+              <div className="flex gap-2">
+                <input
+                  id={`code-${r.id}`}
+                  className="border p-2 rounded-xl w-24 text-center uppercase font-bold text-slate-700 tracking-wider"
+                  placeholder="CÓDIGO"
+                  maxLength={6}
+                />
+                <Button
+                  onClick={() =>
+                    handleValidate(
+                      r.id,
+                      document.getElementById(`code-${r.id}`).value
+                    )
+                  }
+                  className="h-full py-2 shadow-none"
+                >
+                  Validar
+                </Button>
+              </div>
+            )
+          )}
+          <Button
+            variant="outline"
+            className="h-full py-2 px-3 rounded-xl"
+            onClick={() => setSelectedRes(r)}
+          >
+            <Info size={18} />
+          </Button>
+        </div>
+      </div>
+    ))
+  )}
+</div>;
              </div>
              
              <div><h2 className="text-xl font-bold mb-6 text-slate-900">Meus Anúncios</h2><div className="grid md:grid-cols-2 gap-6">{items.map(i => (<div key={i.id} className={`bg-white p-4 border rounded-2xl flex gap-4 items-center shadow-sm hover:shadow-md transition-shadow relative ${i.paused ? 'opacity-75 bg-slate-50 border-slate-200' : 'border-slate-100'}`}>{i.paused && (<div className="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded-full border border-red-200">PAUSADO</div>)}<img src={i.image} className={`w-24 h-24 rounded-xl object-cover bg-slate-200 ${i.paused ? 'grayscale' : ''}`}/><div className="flex-1"><h4 className="font-bold text-lg text-slate-900 leading-tight">{i.name}</h4><p className="text-sm text-slate-500 mb-2">{i.city}</p><p className="text-sm font-bold text-[#0097A8] bg-cyan-50 w-fit px-2 py-1 rounded-lg">{formatBRL(i.priceAdult)}</p></div><div className="flex flex-col gap-2"><Button variant="outline" className="px-3 h-8 text-xs" onClick={()=>navigate(`/partner/edit/${i.id}`)}><Edit size={14}/> Editar</Button><button onClick={() => confirmTogglePause(i)} className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-colors flex items-center justify-center gap-1 ${i.paused ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>{i.paused ? <><CheckCircle size={12}/> Reativar</> : <><Ban size={12}/> Pausar</>}</button></div></div>))}</div></div>

@@ -58,6 +58,7 @@ const initFirebase = () => {
 // 2. FUNÇÃO PRINCIPAL (HANDLER)
 // ==================================================================
 export default async function handler(req, res) {
+  // Headers de CORS e Métodos
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -70,15 +71,17 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails } = req.body;
 
-    // --- A. VALIDAÇÕES ---
+    // --- A. VALIDAÇÕES E BUSCAS ---
     if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
 
+    // Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
     const dayUseSnap = await dayUseRef.get();
     
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
+    // Busca Token do Parceiro
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
@@ -88,7 +91,7 @@ export default async function handler(req, res) {
     
     const partnerAccessToken = ownerSnap.data().mp_access_token;
 
-    // --- B. CÁLCULO DO PREÇO BRUTO (Sem descontos) ---
+    // --- B. CÁLCULO DO PREÇO BRUTO (Valor Original dos Ingressos) ---
     const dateParts = bookingDetails.date.split('-'); 
     const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12, 0, 0); 
     const dayOfWeek = dateObj.getDay();
@@ -107,13 +110,13 @@ export default async function handler(req, res) {
         } else if (!isNaN(dayConfig)) priceAdult = Number(dayConfig);
     }
 
-    // 1. Valor BRUTO Total (Soma dos itens)
+    // 1. Soma total BRUTA (Sem descontos)
     let calculatedGrossTotal = 
         (Number(bookingDetails.adults) * priceAdult) + 
         (Number(bookingDetails.children) * priceChild) + 
         (Number(bookingDetails.pets) * pricePet);
 
-    // Ingressos especiais
+    // Adicionais / Especiais
     if (bookingDetails.selectedSpecial && item.specialTickets) {
         Object.entries(bookingDetails.selectedSpecial).forEach(([idx, qtd]) => {
             const ticket = item.specialTickets[idx];
@@ -123,17 +126,18 @@ export default async function handler(req, res) {
 
     if (calculatedGrossTotal <= 0) throw new Error("Valor total inválido.");
 
-    // 2. Aplicação do Cupom (Define quanto o cliente PAGA)
-    let transactionAmount = calculatedGrossTotal; // Começa igual
+    // 2. Aplicação do Cupom (Calcula quanto o cliente vai PAGAR)
+    let transactionAmount = calculatedGrossTotal; 
+    
     if (bookingDetails.couponCode && item.coupons) {
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
         if (coupon) {
-            // Desconto é aplicado sobre o valor que o cliente vai pagar
+            // O desconto reduz o valor transacionado
             transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
         }
     }
     
-    // Arredonda valor final a cobrar
+    // Arredonda valor final a cobrar do cliente
     transactionAmount = Number(transactionAmount.toFixed(2));
 
     // ==================================================================
@@ -141,9 +145,12 @@ export default async function handler(req, res) {
     // ==================================================================
     let refDate = null;
 
+    // Prioridade 1: Data de Ativação (Gravada ao clicar em "Reativar/Criar")
     if (item.firstActivationDate) {
         refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
-    } else if (item.createdAt) {
+    } 
+    // Prioridade 2: Fallback para Data de Criação (Itens antigos ativos)
+    else if (item.createdAt) {
         refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
     } else {
         refDate = new Date();
@@ -153,14 +160,14 @@ export default async function handler(req, res) {
     const diffTime = Math.abs(today - refDate);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
-    // Definição da Taxa da Plataforma (10% ou 12%)
-    let PLATFORM_RATE = 0.12; // 12% Padrão
+    // Definição da Taxa da Plataforma
+    let PLATFORM_RATE = 0.12; // 12% Padrão (> 30 dias)
     if (diffDays <= 30) {
-        PLATFORM_RATE = 0.10; // 10% Promo
+        PLATFORM_RATE = 0.10; // 10% Promo (<= 30 dias)
     }
 
     // ==================================================================
-    // D. LÓGICA FINANCEIRA (TAXA SOBRE BRUTO)
+    // D. LÓGICA FINANCEIRA (TAXA SOBRE BRUTO + SPLIT)
     // ==================================================================
     const TAXA_PIX = 0.0099; // 0.99%
     const TAXA_CARTAO = 0.0398; // 3.98%
@@ -168,15 +175,15 @@ export default async function handler(req, res) {
     const isPix = payment_method_id === 'pix';
     const currentMpFeeRate = isPix ? TAXA_PIX : TAXA_CARTAO;
 
-    // 1. Quanto a Plataforma quer ganhar? (Taxa % sobre o BRUTO)
+    // 1. Quanto a Plataforma quer ganhar? (Taxa % sobre o BRUTO TOTAL)
+    // O parceiro paga a taxa sobre o valor cheio, absorvendo o custo do cupom.
     const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
 
-    // 2. Quanto o Mercado Pago vai cobrar? (Taxa % sobre o que o cliente PAGOU)
+    // 2. Quanto o Mercado Pago vai cobrar de custo? (Taxa % sobre o que foi PAGO)
     const mpFeeCost = transactionAmount * currentMpFeeRate;
 
-    // 3. Cálculo do Split (Application Fee)
-    // A plataforma recebe sua parte bruta, mas "paga" o custo do MP de dentro dela
-    // para garantir que o parceiro não pague o MP duas vezes (já está incluso nos 10%/12%).
+    // 3. Cálculo da Application Fee (Sua Comissão Líquida no MP)
+    // Application Fee = Sua Parte Bruta - Custo que o MP vai morder do Parceiro
     let commission = platformGrossRevenue - mpFeeCost;
 
     // Segurança matemática
@@ -184,16 +191,23 @@ export default async function handler(req, res) {
     commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // E. PROCESSAMENTO MP
+    // E. PROCESSAMENTO MP (COM WEBHOOK)
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
 
+    // Defina a URL base do seu site para o Webhook
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://mapadodayuse.com';
+
     const paymentBody = {
-      transaction_amount: transactionAmount, // Cliente paga o valor com desconto
+      transaction_amount: transactionAmount, // Valor com desconto (Real a pagar)
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: commission, // Sua comissão ajustada
+      application_fee: commission, // Sua comissão calculada
+      
+      // CRÍTICO: Avisar o MP onde notificar mudanças de status
+      notification_url: `${baseUrl}/api/webhooks/mercadopago`,
+      
       payer: {
         email: payer.email,
         first_name: payer.first_name,
@@ -207,18 +221,39 @@ export default async function handler(req, res) {
       paymentBody.installments = Number(installments);
     }
 
-    console.log(`💳 Processando. Bruto: R$${calculatedGrossTotal}. Pago: R$${transactionAmount}`);
-    console.log(`📊 Taxa: ${(PLATFORM_RATE*100).toFixed(0)}%. Meta App: R$${platformGrossRevenue.toFixed(2)}. Custo MP: R$${mpFeeCost.toFixed(2)}. App Fee Final: R$${commission.toFixed(2)}`);
+    console.log(`💳 Processando MP. 
+      Bruto: R$${calculatedGrossTotal} 
+      Pago: R$${transactionAmount}
+      Taxa App: ${(PLATFORM_RATE*100).toFixed(0)}% (R$${platformGrossRevenue.toFixed(2)})
+      Custo MP: R$${mpFeeCost.toFixed(2)}
+      App Fee Final: R$${commission.toFixed(2)}`);
     
     const result = await payment.create({ body: paymentBody });
 
     // ==================================================================
-    // F. VALIDAÇÃO DE STATUS
+    // H. VINCULAR PAGAMENTO À RESERVA (CRÍTICO PARA WEBHOOK)
+    // ==================================================================
+    // Se o frontend mandou o ID da reserva que ele criou previamente
+    if (req.body.reservationId) {
+        const resId = req.body.reservationId;
+        console.log(`🔗 Vinculando Pagamento ${result.id} à Reserva ${resId}`);
+        
+        await db.collection('reservations').doc(resId).update({
+            paymentId: result.id.toString(), // Salva o ID do MP na reserva
+            paymentMethod: payment_method_id,
+            status: result.status === 'approved' ? 'confirmed' : 'pending', // Atualiza status
+            mpStatus: result.status,
+            updatedAt: new Date()
+        });
+    }
+
+    // ==================================================================
+    // F. VALIDAÇÃO IMEDIATA (CARTÃO RECUSADO)
     // ==================================================================
     const statusValidos = ['approved', 'in_process', 'pending'];
 
     if (!statusValidos.includes(result.status)) {
-        console.warn(`❌ Pagamento Recusado: ${result.status}`);
+        console.warn(`❌ Pagamento Recusado: ${result.status} | ${result.status_detail}`);
         return res.status(402).json({
             error: 'Pagamento recusado',
             status: result.status,
@@ -227,11 +262,14 @@ export default async function handler(req, res) {
         });
     }
 
+    // ==================================================================
+    // G. SUCESSO
+    // ==================================================================
     return res.status(200).json({
-      id: result.id.toString(), 
+      id: result.id.toString(), // Convertido para string para evitar erro no frontend
       status: result.status,
       detail: result.status_detail,
-      point_of_interaction: result.point_of_interaction,
+      point_of_interaction: result.point_of_interaction, // Necessário para QR Code Pix
       charged_amount: transactionAmount
     });
 
@@ -245,6 +283,7 @@ export default async function handler(req, res) {
   }
 }
 
+// Helper para mensagens amigáveis de erro
 function traduzirErroMP(statusDetail) {
     const erros = {
         'cc_rejected_bad_filled_card_number': 'Verifique o número do cartão.',
