@@ -58,7 +58,6 @@ const initFirebase = () => {
 // 2. FUNÇÃO PRINCIPAL (HANDLER)
 // ==================================================================
 export default async function handler(req, res) {
-  // Configuração CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -71,27 +70,25 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails } = req.body;
 
-    // --- A. VALIDAÇÕES INICIAIS ---
+    // --- A. VALIDAÇÕES ---
     if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
 
-    // Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
     const dayUseSnap = await dayUseRef.get();
     
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
-    // Busca Parceiro (Dono)
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
     if (!ownerSnap.exists || !ownerSnap.data().mp_access_token) {
-        throw new Error("O estabelecimento não configurou o recebimento de pagamentos (Token MP ausente).");
+        throw new Error("O estabelecimento não configurou o recebimento de pagamentos.");
     }
     
     const partnerAccessToken = ownerSnap.data().mp_access_token;
 
-    // --- B. CÁLCULO DO PREÇO TOTAL ---
+    // --- B. CÁLCULO DO PREÇO BRUTO (Sem descontos) ---
     const dateParts = bookingDetails.date.split('-'); 
     const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12, 0, 0); 
     const dayOfWeek = dateObj.getDay();
@@ -110,7 +107,8 @@ export default async function handler(req, res) {
         } else if (!isNaN(dayConfig)) priceAdult = Number(dayConfig);
     }
 
-    let calculatedTotal = 
+    // 1. Valor BRUTO Total (Soma dos itens)
+    let calculatedGrossTotal = 
         (Number(bookingDetails.adults) * priceAdult) + 
         (Number(bookingDetails.children) * priceChild) + 
         (Number(bookingDetails.pets) * pricePet);
@@ -119,81 +117,83 @@ export default async function handler(req, res) {
     if (bookingDetails.selectedSpecial && item.specialTickets) {
         Object.entries(bookingDetails.selectedSpecial).forEach(([idx, qtd]) => {
             const ticket = item.specialTickets[idx];
-            if (ticket && qtd > 0) calculatedTotal += (Number(ticket.price) * Number(qtd));
+            if (ticket && qtd > 0) calculatedGrossTotal += (Number(ticket.price) * Number(qtd));
         });
     }
 
-    // Cupons
+    if (calculatedGrossTotal <= 0) throw new Error("Valor total inválido.");
+
+    // 2. Aplicação do Cupom (Define quanto o cliente PAGA)
+    let transactionAmount = calculatedGrossTotal; // Começa igual
     if (bookingDetails.couponCode && item.coupons) {
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
-        if (coupon) calculatedTotal -= (calculatedTotal * coupon.percentage / 100);
+        if (coupon) {
+            // Desconto é aplicado sobre o valor que o cliente vai pagar
+            transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
+        }
     }
     
-    if (calculatedTotal <= 0) throw new Error("Valor total inválido.");
+    // Arredonda valor final a cobrar
+    transactionAmount = Number(transactionAmount.toFixed(2));
 
     // ==================================================================
     // C. LÓGICA DE DATA (PROMOÇÃO 30 DIAS)
     // ==================================================================
     let refDate = null;
 
-    // Prioridade 1: Data de Ativação (Gravada pelo Frontend ao clicar em "Reativar" ou "Criar")
     if (item.firstActivationDate) {
-        // Suporte para Timestamp do Firestore ou Date string padrão
         refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
-    } 
-    // Prioridade 2: Fallback para Data de Criação (Itens antigos ativos que nunca pausaram)
-    else if (item.createdAt) {
+    } else if (item.createdAt) {
         refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
     } else {
-        refDate = new Date(); // Fallback final (Hoje)
+        refDate = new Date();
     }
 
     const today = new Date();
     const diffTime = Math.abs(today - refDate);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
-    // REGRA: 
-    // <= 30 dias: Parceiro recebe 90% (Marketplace ~10%)
-    // > 30 dias: Parceiro recebe 88% (Marketplace ~12%)
-    let PERCENTUAL_PARCEIRO = 0.88; 
-    
+    // Definição da Taxa da Plataforma (10% ou 12%)
+    let PLATFORM_RATE = 0.12; // 12% Padrão
     if (diffDays <= 30) {
-        PERCENTUAL_PARCEIRO = 0.90; 
+        PLATFORM_RATE = 0.10; // 10% Promo
     }
 
     // ==================================================================
-    // D. LÓGICA FINANCEIRA (SPLIT E TAXAS)
+    // D. LÓGICA FINANCEIRA (TAXA SOBRE BRUTO)
     // ==================================================================
     const TAXA_PIX = 0.0099; // 0.99%
-    const TAXA_CARTAO = 0.0398; // 3.98% (D+30)
+    const TAXA_CARTAO = 0.0398; // 3.98%
 
     const isPix = payment_method_id === 'pix';
     const currentMpFeeRate = isPix ? TAXA_PIX : TAXA_CARTAO;
 
-    // Cálculo dos valores absolutos
-    const mpFeeAmount = calculatedTotal * currentMpFeeRate;       // Quanto o MP cobra
-    const partnerNetShare = calculatedTotal * PERCENTUAL_PARCEIRO; // Quanto o parceiro TEM que receber
+    // 1. Quanto a Plataforma quer ganhar? (Taxa % sobre o BRUTO)
+    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
 
-    // A comissão do marketplace é o que sobra depois de pagar o MP e garantir o líquido do parceiro
-    let commission = calculatedTotal - mpFeeAmount - partnerNetShare;
+    // 2. Quanto o Mercado Pago vai cobrar? (Taxa % sobre o que o cliente PAGOU)
+    const mpFeeCost = transactionAmount * currentMpFeeRate;
 
-    // Segurança matemática (evitar negativo)
+    // 3. Cálculo do Split (Application Fee)
+    // A plataforma recebe sua parte bruta, mas "paga" o custo do MP de dentro dela
+    // para garantir que o parceiro não pague o MP duas vezes (já está incluso nos 10%/12%).
+    let commission = platformGrossRevenue - mpFeeCost;
+
+    // Segurança matemática
     if (commission < 0) commission = 0;
     commission = Math.round(commission * 100) / 100;
-    
-    const transactionAmount = Number(calculatedTotal.toFixed(2));
 
     // ==================================================================
-    // E. PROCESSAMENTO NO MERCADO PAGO
+    // E. PROCESSAMENTO MP
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
 
     const paymentBody = {
-      transaction_amount: transactionAmount,
+      transaction_amount: transactionAmount, // Cliente paga o valor com desconto
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: commission, // Sua comissão calculada
+      application_fee: commission, // Sua comissão ajustada
       payer: {
         email: payer.email,
         first_name: payer.first_name,
@@ -202,27 +202,23 @@ export default async function handler(req, res) {
       }
     };
 
-    // Configuração para Cartão
     if (!isPix) {
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
-      // Sem 'payer_costs', o juros de parcelamento vai para o Comprador (padrão MP)
     }
 
-    console.log(`💳 Processando. Dias ativo: ${diffDays}. Share Parceiro: ${(PERCENTUAL_PARCEIRO*100).toFixed(0)}%. 
-      Total: R$${transactionAmount}, AppFee: R$${commission}`);
+    console.log(`💳 Processando. Bruto: R$${calculatedGrossTotal}. Pago: R$${transactionAmount}`);
+    console.log(`📊 Taxa: ${(PLATFORM_RATE*100).toFixed(0)}%. Meta App: R$${platformGrossRevenue.toFixed(2)}. Custo MP: R$${mpFeeCost.toFixed(2)}. App Fee Final: R$${commission.toFixed(2)}`);
     
     const result = await payment.create({ body: paymentBody });
 
     // ==================================================================
-    // F. TRAVA DE SEGURANÇA (VALIDAÇÃO DE STATUS)
+    // F. VALIDAÇÃO DE STATUS
     // ==================================================================
     const statusValidos = ['approved', 'in_process', 'pending'];
 
-    // Se o pagamento for recusado (ex: cartão sem saldo, fraude, etc), retornamos ERRO 402
     if (!statusValidos.includes(result.status)) {
-        console.warn(`❌ Pagamento Recusado. Status: ${result.status} | Detalhe: ${result.status_detail}`);
-        
+        console.warn(`❌ Pagamento Recusado: ${result.status}`);
         return res.status(402).json({
             error: 'Pagamento recusado',
             status: result.status,
@@ -231,20 +227,16 @@ export default async function handler(req, res) {
         });
     }
 
-    // ==================================================================
-    // G. RETORNO DE SUCESSO
-    // ==================================================================
     return res.status(200).json({
-      id: result.id.toString(), // Convertido para String (Correção do bug .replace)
+      id: result.id.toString(), 
       status: result.status,
       detail: result.status_detail,
-      point_of_interaction: result.point_of_interaction, // Necessário para Pix (QR Code)
+      point_of_interaction: result.point_of_interaction,
       charged_amount: transactionAmount
     });
 
   } catch (error) {
     console.error("Erro Backend (Payment):", error);
-    
     return res.status(500).json({ 
         error: 'Erro no processamento', 
         message: error.message || "Erro desconhecido",
@@ -253,7 +245,6 @@ export default async function handler(req, res) {
   }
 }
 
-// Helper para traduzir erros do MP
 function traduzirErroMP(statusDetail) {
     const erros = {
         'cc_rejected_bad_filled_card_number': 'Verifique o número do cartão.',

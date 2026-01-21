@@ -34,7 +34,7 @@ import {
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
-  Eye, Archive, ExternalLink, RefreshCcw
+  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -3410,201 +3410,277 @@ const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
   );
 };
 
-const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex }) => {
-  const [reconciledData, setReconciledData] = useState({});
-  const [loadingMap, setLoadingMap] = useState({});
+// Componente Modal Financeiro Detalhado
+const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, items = [] }) => {
+    if (!isOpen) return null;
 
-  if (!isOpen) return null;
+    // Filtra e ordena
+    const monthRes = reservations.filter(r => 
+        r.createdAt && 
+        new Date(r.createdAt.seconds * 1000).getMonth() === monthIndex && 
+        r.status === 'confirmed'
+    ).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
 
-  const data = reservations.filter(r => 
-      r.createdAt && 
-      new Date(r.createdAt.seconds * 1000).getMonth() === monthIndex && 
-      (r.status === 'confirmed' || r.status === 'validated')
-  ).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
+    // Formata Moeda
+    const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-  const calculateMpFee = (amount, method) => {
-      // Taxas estimadas: Pix 0.99%, Cartão 4.98%
-      if (method === 'pix') return amount * 0.0099; 
-      return amount * 0.0498; 
-  };
-
-  const totalGross = data.reduce((acc, r) => acc + (r.total || 0), 0);
-  const totalDiscounts = data.reduce((acc, r) => acc + (r.discount || 0), 0);
-  const totalPlatformFee = totalGross * 0.15; // 15%
-  const totalMpFee = data.reduce((acc, r) => acc + calculateMpFee(r.total || 0, r.paymentMethod), 0);
-  const totalNet = totalGross - totalPlatformFee - totalMpFee;
-
-  const monthName = new Date(new Date().getFullYear(), monthIndex).toLocaleString('pt-BR', { month: 'long' });
-
-  const handleExport = () => {
-      // Cabeçalhos Completos (Sem abreviações)
-      const headers = [
-          "Data da Venda", 
-          "ID da Reserva", 
-          "Nome do Cliente", 
-          "Método de Pagamento", 
-          "Valor Pago (R$)", 
-          "Desconto de Cupom (R$)",
-          "Comissão da Plataforma (15%)", 
-          "Taxa do Mercado Pago (Estimada)", 
-          "Valor Líquido a Receber (R$)"
-      ];
-
-      const rows = data.map(r => {
-          const pago = r.total || 0; // Valor que o cliente pagou efetivamente
-          const desconto = r.discount || 0;
-          const plat = pago * 0.15;
-          const mp = calculateMpFee(pago, r.paymentMethod);
-          const liq = pago - plat - mp;
-          
-          return [
-              new Date(r.createdAt.seconds * 1000).toLocaleDateString('pt-BR'),
-              r.id.slice(0,8).toUpperCase(),
-              r.guestName,
-              r.paymentMethod === 'pix' ? 'Pix' : 'Cartão de Crédito',
-              pago.toFixed(2).replace('.', ','),
-              desconto.toFixed(2).replace('.', ','),
-              plat.toFixed(2).replace('.', ','),
-              mp.toFixed(2).replace('.', ','),
-              liq.toFixed(2).replace('.', ',')
-          ];
-      });
-
-      const csvContent = "data:text/csv;charset=utf-8," 
-          + "\uFEFF" 
-          + headers.join(";") + "\n" 
-          + rows.map(e => e.join(";")).join("\n");
-
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `extrato_dayuse_${monthName}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-  };
-
-  const handleRefresh = () => { setReconciledData({}); setLoadingMap({}); };
-
-  // CORREÇÃO UX: max-w-7xl para ficar bem largo e confortável no desktop
-  return (
-    <ModalOverlay onClose={onClose} className="w-[95vw] max-w-7xl h-[90vh] flex flex-col">
+    // --- LÓGICA DE CÁLCULO ---
+    // --- LÓGICA DE CÁLCULO POR LINHA ---
+    const calculateRow = (res) => {
+        const item = items.find(i => i.id === res.dayuseId);
         
-        {/* Header Fixo */}
-        <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50 gap-4 shrink-0">
-            <div>
-                <h2 className="text-xl md:text-2xl font-bold text-slate-900 flex items-center gap-2">
-                    <FileText className="text-[#0097A8]"/> Extrato Financeiro Detalhado
-                </h2>
-                <p className="text-sm text-slate-500 capitalize">Período: {monthName}</p>
-            </div>
-            <div className="flex gap-3">
-                <button 
-                    onClick={handleRefresh}
-                    className="p-2.5 hover:bg-slate-200 rounded-xl transition-colors text-slate-500 border border-slate-200 bg-white shadow-sm"
-                    title="Atualizar Dados"
-                >
-                    <RefreshCcw size={18}/>
-                </button>
-                <Button onClick={handleExport} variant="outline" className="h-11 text-sm px-4 shadow-sm border-slate-300">
-                    <Download size={18} className="mr-2"/> Exportar Excel
-                </Button>
-                <button onClick={onClose} className="p-2.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-full transition-colors">
-                    <X size={24}/>
-                </button>
-            </div>
-        </div>
+        // 1. Descobrir Cupom e Bruto
+        let couponPercent = 0;
+        let couponCode = "-";
+        if (res.couponCode && item?.coupons) {
+             const c = item.coupons.find(cp => cp.code === res.couponCode);
+             if (c) {
+                 couponPercent = c.percentage;
+                 couponCode = c.code;
+             }
+        }
 
-        {/* Resumo do Mês (Grid Largo) */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-6 bg-white border-b border-slate-100 shrink-0">
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Pago</p>
-                <p className="text-xl font-bold text-slate-800">{formatBRL(totalGross)}</p>
-            </div>
-            <div className="p-4 bg-yellow-50 rounded-2xl border border-yellow-100">
-                <p className="text-[10px] uppercase font-bold text-yellow-600 tracking-wider">Descontos (Cupons)</p>
-                <p className="text-xl font-bold text-yellow-700">-{formatBRL(totalDiscounts)}</p>
-            </div>
-            <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
-                <p className="text-[10px] uppercase font-bold text-red-400 tracking-wider">Plataforma (15%)</p>
-                <p className="text-xl font-bold text-red-600">-{formatBRL(totalPlatformFee)}</p>
-            </div>
-            <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
-                <p className="text-[10px] uppercase font-bold text-orange-400 tracking-wider">Taxas Mercado Pago</p>
-                <p className="text-xl font-bold text-orange-600">-{formatBRL(totalMpFee)}</p>
-            </div>
-            <div className="p-4 bg-green-50 rounded-2xl border border-green-200 col-span-2 md:col-span-1 shadow-sm">
-                <p className="text-[10px] uppercase font-bold text-green-600 tracking-wider">Líquido a Receber</p>
-                <p className="text-2xl font-bold text-green-700">{formatBRL(totalNet)}</p>
-            </div>
-        </div>
+        const paid = res.total || 0; // Valor Pago
+        // Engenharia reversa para achar o bruto
+        const gross = couponPercent > 0 ? paid / (1 - (couponPercent/100)) : paid;
+        const discountVal = gross - paid;
 
-        {/* Tabela de Transações */}
-        <div className="flex-1 overflow-auto bg-slate-50">
-            <div className="min-w-[1000px]"> {/* Garante que não espreme no horizontal */}
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-100 text-slate-500 font-bold text-xs uppercase sticky top-0 z-10 shadow-sm">
-                        <tr>
-                            <th className="p-5 whitespace-nowrap">Data / Hora</th>
-                            <th className="p-5 whitespace-nowrap">Reserva</th>
-                            <th className="p-5 whitespace-nowrap">Cliente</th>
-                            <th className="p-5 text-center whitespace-nowrap">Método</th>
-                            <th className="p-5 text-right whitespace-nowrap bg-slate-50">Valor Pago</th>
-                            <th className="p-5 text-right text-yellow-600 whitespace-nowrap">Desconto</th>
-                            <th className="p-5 text-right text-red-400 whitespace-nowrap">Taxas (Site+MP)</th>
-                            <th className="p-5 text-right text-green-600 whitespace-nowrap bg-green-50">Líquido</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                        {data.length === 0 ? (
-                            <tr><td colSpan="8" className="p-12 text-center text-slate-400">Nenhuma movimentação confirmada neste período.</td></tr>
-                        ) : data.map(r => {
-                            const pago = r.total || 0;
-                            const desconto = r.discount || 0;
-                            const plat = pago * 0.15;
-                            const mp = calculateMpFee(pago, r.paymentMethod);
-                            const totalTaxas = plat + mp;
-                            const liquido = pago - totalTaxas;
+        // 2. Definir Taxa
+        const resDate = res.createdAt.toDate ? res.createdAt.toDate() : new Date(res.createdAt);
+        let refDate = new Date();
+        if (item) {
+            if (item.firstActivationDate) {
+                refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
+            } else if (item.createdAt) {
+                refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+            }
+        }
+        const diffDays = Math.ceil(Math.abs(resDate - refDate) / (1000 * 60 * 60 * 24));
+        const isPromo = diffDays <= 30;
+        const rate = isPromo ? 0.10 : 0.12;
 
-                            return (
-                                <tr key={r.id} className="hover:bg-slate-50 transition-colors group">
-                                    <td className="p-5 text-slate-500 whitespace-nowrap">
-                                        <div className="font-medium">{new Date(r.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}</div>
-                                        <div className="text-[10px] opacity-70">{new Date(r.createdAt.seconds * 1000).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</div>
-                                    </td>
-                                    <td className="p-5">
-                                        <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded text-slate-600 border border-slate-200">#{r.id.slice(0,6).toUpperCase()}</span>
-                                    </td>
-                                    <td className="p-5 font-medium text-slate-700 truncate max-w-[180px]" title={r.guestName}>{r.guestName}</td>
-                                    <td className="p-5 text-center">
-                                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${r.paymentMethod === 'pix' ? 'bg-teal-100 text-teal-700' : 'bg-blue-100 text-blue-700'}`}>
-                                            {r.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
-                                        </span>
-                                    </td>
-                                    <td className="p-5 text-right font-bold text-slate-700 bg-slate-50/50">{formatBRL(pago)}</td>
-                                    <td className="p-5 text-right text-yellow-600 text-xs">{desconto > 0 ? `-${formatBRL(desconto)}` : '-'}</td>
-                                    <td className="p-5 text-right text-red-500 text-xs">
-                                        <div className="flex flex-col items-end">
-                                            <span className="font-bold">-{formatBRL(totalTaxas)}</span>
-                                            <span className="text-[9px] opacity-60 hidden group-hover:block transition-opacity">Site: {formatBRL(plat)}</span>
-                                            <span className="text-[9px] opacity-60 hidden group-hover:block transition-opacity">MP: {formatBRL(mp)}</span>
+        // 3. Calcular Taxa sobre o BRUTO
+        const fee = gross * rate;
+
+        // 4. Líquido (Pago - Taxa) OU (Bruto - Desconto - Taxa) -> Dá na mesma
+        const net = paid - fee;
+
+        return { gross, paid, discountVal, fee, net, isPromo, rate, couponCode, couponPercent };
+    };
+
+    // Totais
+    const totals = monthRes.reduce((acc, curr) => {
+        const { gross, fee, net } = calculateRow(curr);
+        return { gross: acc.gross + gross, fee: acc.fee + fee, net: acc.net + net };
+    }, { gross: 0, fee: 0, net: 0 });
+
+    // --- FUNÇÃO EXPORTAR CSV ---
+    const handleExportCSV = () => {
+        // Cabeçalho expandido
+        let csvContent = "Data;Cliente;Cupom;% Cupom;Valor Original (Bruto);Desconto Cupom;Valor Pago;Taxa Adm %;Valor Taxa;Valor Líquido\n";
+
+        monthRes.forEach(res => {
+            const calc = calculateRow(res);
+            const date = new Date(res.createdAt.seconds * 1000);
+            
+            const row = [
+                date.toLocaleDateString('pt-BR'),
+                `"${res.guestName}"`,
+                calc.couponCode,
+                calc.couponPercent > 0 ? `${calc.couponPercent}%` : '-',
+                calc.gross.toFixed(2).replace('.', ','),   // Valor Original
+                calc.discountVal.toFixed(2).replace('.', ','), // Quanto descontou
+                calc.paid.toFixed(2).replace('.', ','),    // Quanto o cliente pagou
+                calc.isPromo ? '10%' : '12%',
+                calc.fee.toFixed(2).replace('.', ','),     // Taxa (sobre o bruto)
+                calc.net.toFixed(2).replace('.', ',')      // Liquido final
+            ].join(';');
+
+            csvContent += row + "\n";
+        });
+
+        const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `extrato_detalhado_mes_${monthIndex + 1}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[9999] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white md:rounded-3xl rounded-t-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+                
+                {/* Cabeçalho */}
+                <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50/50 gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <FileText className="text-[#0097A8]"/> Extrato Financeiro
+                        </h2>
+                        <p className="text-xs md:text-sm text-slate-500">
+                            Conciliação de vendas • {monthRes.length} transações
+                        </p>
+                    </div>
+                    <div className="flex gap-2 w-full md:w-auto">
+                        <button 
+                            onClick={handleExportCSV} 
+                            disabled={monthRes.length === 0}
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Download size={16}/> Baixar Excel
+                        </button>
+                        <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
+                            <X size={20} className="text-slate-500"/>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Conteúdo com Scroll */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50 md:bg-white">
+                    {monthRes.length === 0 ? (
+                        <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-2xl bg-white">
+                            <p>Nenhuma venda confirmada neste mês.</p>
+                        </div>
+                    ) : (
+                        <>
+                            {/* --- VISÃO DESKTOP (TABELA) --- */}
+                            <table className="hidden md:table w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                                        <th className="pb-3 pl-2">Data</th>
+                                        <th className="pb-3">Cliente / ID</th>
+                                        <th className="pb-3">Método</th>
+                                        <th className="pb-3 text-right">Valor Pago</th>
+                                        <th className="pb-3 text-right">Taxas</th>
+                                        <th className="pb-3 text-right pr-2">Líquido</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-sm text-slate-600">
+                                    {monthRes.map((res) => {
+                                        const calc = calculateRow(res);
+                                        return (
+                                            <tr key={res.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                                <td className="py-3 pl-2 font-mono text-xs text-slate-500">
+                                                    {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}
+                                                    <span className="block text-[10px] opacity-70">
+                                                        {new Date(res.createdAt.seconds * 1000).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3">
+                                                    <div className="font-bold text-slate-800 line-clamp-1">{res.guestName}</div>
+                                                    <div className="text-[10px] text-slate-400 font-mono">#{res.id.slice(0,6).toUpperCase()}</div>
+                                                </td>
+                                                <td className="py-3">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                                                        res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+                                                    }`}>
+                                                        {res.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3 text-right font-medium">
+                                                    {formatBRL(calc.gross)}
+                                                    {/* VISUALIZAÇÃO DO CUPOM NO DESKTOP */}
+                                                    {res.couponCode && (
+                                                        <div className="flex items-center justify-end gap-1 text-[10px] text-purple-600 font-bold mt-0.5">
+                                                            <Tag size={10}/> {res.couponCode.toUpperCase()}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className="py-3 text-right">
+                                                    <div className="text-red-500 font-medium text-xs">- {formatBRL(calc.fee)}</div>
+                                                    <span className={`text-[9px] px-1.5 rounded font-bold uppercase inline-block ${calc.isPromo ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {calc.isPromo ? 'Promo 10%' : 'Taxa 12%'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3 text-right pr-2 text-green-700 font-bold">{formatBRL(calc.net)}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+
+                            {/* --- VISÃO MOBILE (CARDS) --- */}
+                            <div className="md:hidden space-y-3">
+                                {monthRes.map((res) => {
+                                    const calc = calculateRow(res);
+                                    return (
+                                        <div key={res.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                                            <div className="flex justify-between items-start mb-3 border-b border-slate-50 pb-2">
+                                                <div>
+                                                    <p className="font-bold text-slate-800 text-sm">{res.guestName}</p>
+                                                    <p className="text-[10px] text-slate-400 font-mono">
+                                                        {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')} • #{res.id.slice(0,6).toUpperCase()}
+                                                    </p>
+                                                </div>
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                                                    res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+                                                }`}>
+                                                    {res.paymentMethod === 'pix' ? 'Pix' : 'Cartão'}
+                                                </span>
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-3 gap-2 text-center">
+                                                <div className="bg-slate-50 p-2 rounded-lg">
+                                                    <p className="text-[10px] text-slate-500 uppercase font-bold">Valor Pago</p>
+                                                    <p className="text-sm font-bold text-slate-700">{formatBRL(calc.gross)}</p>
+                                                </div>
+                                                <div className="bg-red-50 p-2 rounded-lg relative overflow-hidden">
+                                                    <p className="text-[10px] text-red-400 uppercase font-bold">Taxa</p>
+                                                    <p className="text-sm font-bold text-red-500">{formatBRL(calc.fee)}</p>
+                                                    {calc.isPromo && (
+                                                        <div className="absolute top-0 right-0 w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
+                                                    )}
+                                                </div>
+                                                <div className="bg-green-50 p-2 rounded-lg border border-green-100">
+                                                    <p className="text-[10px] text-green-600 uppercase font-bold">Líquido</p>
+                                                    <p className="text-sm font-bold text-green-700">{formatBRL(calc.net)}</p>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* RODAPÉ DO CARD: CUPOM E PROMO */}
+                                            <div className="mt-2 flex flex-col gap-1">
+                                                {res.couponCode && (
+                                                    <div className="text-[10px] text-purple-700 bg-purple-50 px-2 py-1 rounded flex items-center justify-center gap-1 font-bold border border-purple-100">
+                                                        <Tag size={12}/> Cupom Aplicado: {res.couponCode.toUpperCase()}
+                                                    </div>
+                                                )}
+                                                {calc.isPromo && (
+                                                    <p className="text-[10px] text-amber-600 text-center font-bold bg-amber-50 py-1 rounded border border-amber-100">
+                                                        ⚡ Taxa Promocional 10%
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
-                                    </td>
-                                    <td className="p-5 text-right font-bold text-green-600 bg-green-50/30">{formatBRL(liquido)}</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                                    );
+                                })}
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {/* Rodapé com Totais */}
+                <div className="p-4 md:p-6 bg-white md:bg-slate-50 border-t border-slate-200">
+                    <div className="grid grid-cols-3 gap-2 md:flex md:justify-end md:gap-8">
+                        <div className="text-center md:text-right">
+                            <p className="text-[10px] md:text-xs text-slate-500 font-bold uppercase">Total Pago</p>
+                            <p className="text-sm md:text-xl font-bold text-slate-800">{formatBRL(totals.gross)}</p>
+                        </div>
+                        <div className="text-center md:text-right">
+                            <p className="text-[10px] md:text-xs text-red-500 font-bold uppercase">Total Taxas</p>
+                            <p className="text-sm md:text-xl font-bold text-red-500">- {formatBRL(totals.fee)}</p>
+                        </div>
+                        <div className="text-center md:text-right bg-green-50 md:bg-transparent rounded-lg py-1 md:py-0">
+                            <p className="text-[10px] md:text-xs text-green-700 font-bold uppercase">Total Líquido</p>
+                            <p className="text-sm md:text-2xl font-bold text-green-700">{formatBRL(totals.net)}</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-
-        {/* Footer Disclaimer */}
-        <div className="p-4 bg-slate-50 text-[10px] text-slate-400 text-center border-t border-slate-200 shrink-0">
-            * Valores líquidos são estimativas baseadas nas taxas contratuais (15% Plataforma + ~4.99% MP). O valor final creditado pode variar centavos devido a regras de arredondamento e prazos do Mercado Pago.
-        </div>
-    </ModalOverlay>
-  );
+    );
 };
 
 // -----------------------------------------------------------------------------
@@ -4030,27 +4106,98 @@ const PartnerDashboard = () => {
       }
   };
 
-  // Cálculos Financeiros
-  const financialRes = reservations.filter(r => r.createdAt && new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && r.status === 'confirmed');
+// --- CÁLCULOS FINANCEIROS INTELIGENTES ---
   
-  const totalBalance = financialRes.reduce((acc, c) => acc + (c.total || 0), 0);
-  const platformFee = totalBalance * 0.15;
-  const estimatedMPFees = financialRes.reduce((acc, r) => {
-      if (r.paymentMethod === 'pix') return acc + ((r.total || 0) * 0.0099); // 0.99%
-      return acc + ((r.total || 0) * 0.0498); // 4.98%
-  }, 0);
-  const netBalance = totalBalance - platformFee - estimatedMPFees;
-  
-  const pixTotal = financialRes.filter(r => r.paymentMethod === 'pix').reduce((acc, c) => acc + (c.total || 0), 0);
-  const cardTotal = totalBalance - pixTotal; 
-  
-  // --- CÁLCULOS DE CUPONS (ESTAVA FALTANDO ISSO) ---
-  const couponRes = financialRes.filter(r => r.couponCode); // Reservas com cupom no mês
-  
-  // 1. Receita total gerada por cupons
+  // 1. Determina datas da Promoção (Baseado no primeiro item ativado)
+  // Assume que a "entrada" do parceiro conta a partir da primeira ativação de qualquer day use
+  const firstActiveItem = items.find(i => i.firstActivationDate) || items[0];
+  let promoStartDate = null;
+  let promoEndDate = null;
+
+  if (firstActiveItem) {
+      // Pega data de ativação ou criação como fallback
+      const rawDate = firstActiveItem.firstActivationDate || firstActiveItem.createdAt;
+      promoStartDate = rawDate && rawDate.toDate ? rawDate.toDate() : new Date(rawDate || Date.now());
+      
+      // Calcula data final (Data + 30 dias)
+      promoEndDate = new Date(promoStartDate);
+      promoEndDate.setDate(promoEndDate.getDate() + 30);
+  }
+
+  // 2. Filtra reservas do mês selecionado
+  const financialRes = reservations.filter(r => 
+      r.createdAt && 
+      new Date(r.createdAt.seconds * 1000).getMonth() === filterMonth && 
+      r.status === 'confirmed'
+  );
+
+  // 3. Calcula Totais e Taxas por Item
+  const financialSummary = financialRes.reduce((acc, r) => {
+      // 1. Descobrir porcentagem do Cupom (se houver)
+      let couponPercent = 0;
+      if (r.couponCode) {
+          const item = items.find(i => i.id === r.dayuseId);
+          const coupon = item?.coupons?.find(c => c.code === r.couponCode);
+          if (coupon) couponPercent = coupon.percentage;
+      }
+
+      // 2. Engenharia Reversa: Descobrir o Valor Bruto Original
+      // Ex: Se pagou 95 e o cupom era 5% -> Bruto = 95 / 0.95 = 100
+      const valorPago = r.total || 0;
+      const valorBruto = couponPercent > 0 ? valorPago / (1 - (couponPercent/100)) : valorPago;
+      const valorDescontoCupom = valorBruto - valorPago;
+
+      // 3. Calcular Taxa da Plataforma sobre o BRUTO
+      let taxaPercentual = 0.12; // Padrão
+      if (promoStartDate) {
+          const resDate = r.createdAt.toDate ? r.createdAt.toDate() : new Date(r.createdAt);
+          const diffDays = Math.ceil(Math.abs(resDate - promoStartDate) / (1000 * 60 * 60 * 24));
+          if (diffDays <= 30) taxaPercentual = 0.10;
+      }
+
+      const valorTaxa = valorBruto * taxaPercentual;
+
+      // 4. Líquido Final = Bruto - Taxa - Cupom
+      // (Matematicamente igual a: ValorPago - ValorTaxa)
+      const valorLiquido = valorBruto - valorTaxa - valorDescontoCupom;
+
+      return {
+          paid: acc.paid + valorPago,          // O que entrou no caixa (MP)
+          gross: acc.gross + valorBruto,       // Valor dos produtos sem desconto
+          fees: acc.fees + valorTaxa,          // Taxa sobre o bruto
+          coupons: acc.coupons + valorDescontoCupom, // Custo dos cupons
+          net: acc.net + valorLiquido,         // O que sobra pro parceiro
+          
+          pixTotal: r.paymentMethod === 'pix' ? acc.pixTotal + valorPago : acc.pixTotal,
+          cardTotal: r.paymentMethod !== 'pix' ? acc.cardTotal + valorPago : acc.cardTotal,
+          hasPromo: acc.hasPromo || taxaPercentual === 0.10,
+          hasStandard: acc.hasStandard || taxaPercentual === 0.12
+      };
+  }, { paid: 0, gross: 0, fees: 0, coupons: 0, net: 0, pixTotal: 0, cardTotal: 0, hasPromo: false, hasStandard: false });
+
+  // Definição do Rótulo
+  let taxLabel = "12%";
+  let showPromoBanner = false;
+  if (financialSummary.hasPromo && financialSummary.hasStandard) { taxLabel = "Mista (10%/12%)"; showPromoBanner = true; }
+  else if (financialSummary.hasPromo) { taxLabel = "Promo 10%"; showPromoBanner = true; }
+  else { taxLabel = "Padrão 12%"; showPromoBanner = false; }
+
+  // Variáveis para o JSX
+  const totalBalance = financialSummary.paid; // Exibimos o Valor Pago como entrada principal
+  const totalGross = financialSummary.gross;  // Novo: Valor Bruto (para referência)
+  const totalFees = financialSummary.fees;
+  const totalCoupons = financialSummary.coupons;
+  const netBalance = financialSummary.net;
+
+  const pixTotal = financialSummary.pixTotal;
+  const cardTotal = financialSummary.cardTotal;
+
+  // Formatação de data simples (DD/MM)
+  const formatDateSimple = (d) => d ? d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'}) : '';
+
+  // Cupons (Lógica mantida)
+  const couponRes = financialRes.filter(r => r.couponCode);
   const totalCouponRevenue = couponRes.reduce((acc, r) => acc + (r.total || 0), 0);
-  
-  // 2. Detalhamento por cupom
   const couponBreakdown = couponRes.reduce((acc, r) => {
       const code = r.couponCode;
       if (!acc[code]) acc[code] = { count: 0, revenue: 0 };
@@ -4401,29 +4548,66 @@ const PartnerDashboard = () => {
            </div>
            
            <div className="grid md:grid-cols-3 gap-6">
-              {/* CARD 1: Detalhamento */}
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between">
-                 <div>
-                     <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
-                     <div className="space-y-1 mb-4">
-                        <div className="flex justify-between text-sm text-slate-600"><span>Vendas Brutas:</span><span className="font-bold">{formatBRL(totalBalance)}</span></div>
-                        <div className="flex justify-between text-xs text-red-400"><span>Plataforma (12%):</span><span>- {formatBRL(platformFee)}</span></div>
-                        <div className="flex justify-between text-xs text-orange-400"><span>Mercado Pago (Var.):</span><span>- {formatBRL(estimatedMPFees)}</span></div>
+
+              {/* CARD 1: Financeiro Detalhado (Cupom + Taxa) */}
+<div className="bg-white rounded-2xl border border-slate-200 flex flex-col justify-between overflow-hidden shadow-sm">
+   
+   <div className="p-6 pb-2">
+       <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Resumo do Mês</p>
+       
+       {/* Valor Pago (Entrada Real) */}
+       <div className="flex justify-between items-end mb-4">
+          <div>
+              <span className="text-sm text-slate-600 block">Vendas (Faturamento)</span>
+              {totalCoupons > 0 && <span className="text-[10px] text-slate-400">Bruto Original: {formatBRL(totalGross)}</span>}
+          </div>
+          <span className="font-bold text-slate-800 text-lg">{formatBRL(totalBalance)}</span>
+       </div>
+       
+       <div className="space-y-2">
+           {/* Linha Vermelha: TAXAS (Sobre o Bruto) */}
+           <div className="flex justify-between items-center text-xs text-red-600 bg-red-50 px-2 py-1.5 rounded-lg border border-red-100">
+              <span className="flex items-center gap-1 font-medium">
+                 Taxa {taxLabel} (S/ Bruto)
+                 <div className="group relative">
+                     <Info size={12} className="text-red-400 cursor-help"/>
+                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-slate-800 text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
+                         A taxa é calculada sobre o valor original da venda (R$ {formatBRL(totalGross)}), antes dos descontos.
                      </div>
                  </div>
-                 <div className="pt-3 border-t border-slate-200">
-                     <div className="flex items-center gap-1 mb-1">
-                         <p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p>
-                         <div className="group relative">
-                             <Info size={12} className="text-green-600 cursor-help"/>
-                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-black text-white text-[10px] p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                 Baseado em Pix (0,99%) e Cartão (4,98%). Consulte o extrato oficial no app do Mercado Pago para valores exatos.
-                             </div>
-                         </div>
-                     </div>
-                     <p className="text-3xl font-bold text-green-700">{formatBRL(netBalance)}</p>
-                 </div>
-              </div>
+              </span>
+              <span className="font-bold">- {formatBRL(totalFees)}</span>
+           </div>
+
+           {/* Linha Roxa: CUPONS (Se houver) */}
+           {totalCoupons > 0 && (
+               <div className="flex justify-between items-center text-xs text-purple-600 bg-purple-50 px-2 py-1.5 rounded-lg border border-purple-100">
+                  <span className="flex items-center gap-1 font-medium">
+                     <Tag size={12}/> Descontos Concedidos
+                  </span>
+                  <span className="font-bold">- {formatBRL(totalCoupons)}</span>
+               </div>
+           )}
+       </div>
+   </div>
+
+   {/* Banner Promocional (Mantido igual) */}
+   {showPromoBanner && promoStartDate && (
+       <div className="bg-amber-50 border-y border-amber-100 px-6 py-3 mt-2">
+           <p className="text-[11px] text-amber-700 leading-tight">
+               <span className="font-bold">⚡ Oferta Ativa:</span> Taxa de 10% aplicada sobre vendas até {formatDateSimple(promoEndDate)}.
+           </p>
+       </div>
+   )}
+
+   {/* Footer Líquido */}
+   <div className="p-6 pt-4 bg-slate-50/50 mt-auto border-t border-slate-100">
+       <div className="flex justify-between items-baseline">
+           <p className="text-xs text-green-700 font-bold uppercase">Líquido Estimado</p>
+           <p className="text-3xl font-bold text-green-700 tracking-tight">{formatBRL(netBalance)}</p>
+       </div>
+   </div>
+</div>
               
               {/* CARD 2: Métodos (Mantido) */}
               <div className="p-6 bg-blue-50 rounded-2xl border border-blue-200">
@@ -4513,8 +4697,16 @@ const PartnerDashboard = () => {
             </div>
         </div>
 
-        <FinancialStatementModal isOpen={showFinancialModal} onClose={() => setShowFinancialModal(false)} reservations={reservations} monthIndex={filterMonth} />
-
+{showFinancialModal && createPortal(
+    <FinancialStatementModal 
+        isOpen={showFinancialModal} 
+        onClose={() => setShowFinancialModal(false)}
+        reservations={reservations}
+        monthIndex={filterMonth}
+        items={items} // <--- ADICIONE ESTA LINHA (Importante!)
+    />, 
+    document.body
+)}
         {/* --- MODAL DE CONFERÊNCIA DE VOUCHER (NOVO) --- */}
         {scannedRes && createPortal(
             <ModalOverlay onClose={() => setScannedRes(null)}>
