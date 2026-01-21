@@ -173,7 +173,7 @@ export default async function handler(req, res) {
     const result = await payment.create({ body: paymentBody });
 
     return res.status(200).json({
-      id: result.id,
+      id: result.id.toString(),
       status: result.status,
       detail: result.status_detail,
       point_of_interaction: result.point_of_interaction,
