@@ -1805,24 +1805,6 @@ useEffect(() => {
       {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl">Formulário Claim</div></ModalOverlay>, document.body)}
       {showWarning && createPortal(<ModalOverlay onClose={() => setShowWarning(null)}><div className="bg-white p-8 rounded-3xl text-center"><AlertCircle className="mx-auto mb-4 text-yellow-500" size={32}/><h2 className="font-bold mb-2">{showWarning.title}</h2><p className="text-sm text-slate-600 mb-4">{showWarning.msg}</p><Button onClick={()=>setShowWarning(null)} className="w-full">Entendi</Button></div></ModalOverlay>, document.body)}
-      {/* MODAL DE SOLD OUT (OVERBOOKING NO CHECKOUT) */}
-      {isSoldOut && createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-              <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
-                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <CalendarX size={32}/>
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-2">Vagas Esgotadas!</h3>
-                  <p className="text-slate-600 mb-6 text-sm">
-                      Poxa! Enquanto você preenchia os dados, outra pessoa acabou de comprar os últimos ingressos para esta data.
-                  </p>
-                  <Button onClick={() => navigate(-1)} className="w-full justify-center">
-                      Escolher Outra Data
-                  </Button>
-              </div>
-          </div>,
-          document.body
-      )}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
@@ -1969,6 +1951,45 @@ useEffect(() => {
   );
 };
 
+// --- DICIONÁRIO DE ERROS AMIGÁVEIS ---
+const translateError = (code) => {
+    const errors = {
+        'cc_rejected_call_for_authorize': {
+            title: 'Autorização Necessária',
+            msg: 'O banco emissor do cartão bloqueou a compra por segurança. Ligue para o banco para autorizar e tente novamente.'
+        },
+        'cc_rejected_insufficient_amount': {
+            title: 'Saldo Insuficiente',
+            msg: 'O cartão não possui limite suficiente para esta compra. Por favor, tente outro cartão.'
+        },
+        'cc_rejected_bad_filled_security_code': {
+            title: 'Código de Segurança Inválido',
+            msg: 'O CVV (3 dígitos atrás do cartão) está incorreto. Verifique e tente novamente.'
+        },
+        'cc_rejected_bad_filled_date': {
+            title: 'Data de Validade Inválida',
+            msg: 'A data de validade está incorreta ou o cartão está expirado.'
+        },
+        'cc_rejected_bad_filled_other': {
+            title: 'Erro nos Dados',
+            msg: 'Verifique se o número, nome e validade foram digitados corretamente.'
+        },
+        'cc_rejected_other_reason': {
+            title: 'Cartão Recusado',
+            msg: 'O pagamento foi recusado pelo banco emissor. Tente usar outro cartão.'
+        },
+        'cc_rejected_blacklist': {
+            title: 'Pagamento Recusado',
+            msg: 'Não foi possível processar este cartão.'
+        }
+    };
+
+    return errors[code] || { 
+        title: 'Pagamento não Realizado', 
+        msg: 'Houve um problema ao processar o pagamento. Verifique os dados ou tente outro meio.' 
+    };
+};
+
 // -----------------------------------------------------------------------------
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
 // -----------------------------------------------------------------------------
@@ -1983,6 +2004,9 @@ const CheckoutPage = () => {
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
   
+  // State para Modal de Erro Bonito
+  const [errorData, setErrorData] = useState(null);
+
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
@@ -2003,31 +2027,32 @@ const CheckoutPage = () => {
   const [resendLoading, setResendLoading] = useState(false);
   const [isSoldOut, setIsSoldOut] = useState(false);
 
+  // --- CORREÇÃO DO MASTERCARD ---
   const getPaymentMethodId = (number) => {
     const cleanNum = number.replace(/\D/g, '');
+    
     if (/^4/.test(cleanNum)) return 'visa';
-    if (/^5[1-5]/.test(cleanNum)) return 'master';
+    // MasterCard (Série 5 e Série 2 novas)
+    if (/^(5[1-5]|2[2-7])/.test(cleanNum)) return 'master'; 
     if (/^3[47]/.test(cleanNum)) return 'amex';
-    if (/^6/.test(cleanNum)) return 'elo'; 
-    return 'visa';
+    if (/^(65|636368|636297|5067|4576|4011)/.test(cleanNum)) return 'elo'; 
+    if (/^606282|^3841/.test(cleanNum)) return 'hipercard';
+    
+    return 'visa'; // Fallback
   };
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
     const initMP = () => {
-        // --- ATUALIZADO PARA USAR SUA VARIÁVEL DE TESTE ---
         const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
-
         if (window.MercadoPago && mpKey) {
             try {
                 if (!window.mpInstance) {
                     window.mpInstance = new window.MercadoPago(mpKey);
-                    console.log("✅ SDK MercadoPago inicializado (TESTE).");
+                    console.log("✅ SDK MercadoPago inicializado.");
                 }
             } catch (e) { console.error("Erro init MP:", e); }
-        } else {
-            console.warn("Chave MP Pública não encontrada nas variáveis de ambiente.");
         }
     };
     initMP();
@@ -2050,6 +2075,7 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
+      // (Lógica do cupom mantida igual...)
       setCouponMsg(null); 
       if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
@@ -2079,7 +2105,10 @@ const CheckoutPage = () => {
      if (!user) { setShowLogin(true); return; }
 
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     if (cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
+     if (cleanDoc.length < 11) { 
+         setErrorData({ title: 'CPF Inválido', msg: 'Por favor, digite um CPF válido para a nota fiscal.' });
+         return; 
+     }
 
      setProcessing(true);
 
@@ -2109,7 +2138,6 @@ const CheckoutPage = () => {
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
-       // 2. Prepara Payload
        const paymentPayload = {
         token: null, 
         transaction_amount: Number(finalTotal.toFixed(2)),
@@ -2122,7 +2150,10 @@ const CheckoutPage = () => {
             identification: { type: 'CPF', number: cleanDoc }
         },
         bookingDetails: {
-            dayuseId: bookingData.item.id,
+            // --- AQUI ESTÁ A CORREÇÃO ---
+            dayuseId: bookingData.item.id,         // Mantém para compatibilidade
+            item: { id: bookingData.item.id },     // ADICIONADO: O formato novo que o backend prefere
+            // ---------------------------
             date: bookingData.date,
             total: Number(finalTotal.toFixed(2)),
             adults: Number(bookingData.adults),
@@ -2137,17 +2168,24 @@ const CheckoutPage = () => {
        if (paymentMethod === 'card') {
            if (!window.mpInstance) throw new Error("Sistema de pagamento indisponível.");
            const [month, year] = cardExpiry.split('/');
-           if (!month || !year || cardNumber.length < 13 || !cardCvv) throw new Error("Verifique os dados do cartão.");
+           
+           if (!month || !year || cardNumber.length < 13 || !cardCvv) {
+               throw new Error("Verifique os dados do cartão.");
+           }
 
-           const tokenObj = await window.mpInstance.createCardToken({
-             cardNumber: cardNumber.replace(/\s/g, ''),
-             cardholderName: cardName,
-             cardExpirationMonth: month,
-             cardExpirationYear: '20' + year,
-             securityCode: cardCvv,
-             identification: { type: 'CPF', number: cleanDoc }
-           });
-           paymentPayload.token = tokenObj.id; 
+           try {
+                const tokenObj = await window.mpInstance.createCardToken({
+                    cardNumber: cardNumber.replace(/\s/g, ''),
+                    cardholderName: cardName,
+                    cardExpirationMonth: month,
+                    cardExpirationYear: '20' + year,
+                    securityCode: cardCvv,
+                    identification: { type: 'CPF', number: cleanDoc }
+                });
+                paymentPayload.token = tokenObj.id; 
+           } catch (e) {
+               throw new Error("Dados do cartão inválidos. Verifique número, validade e CVV.");
+           }
        }
 
        // 3. Chama Backend
@@ -2159,25 +2197,24 @@ const CheckoutPage = () => {
 
        const result = await response.json();
 
+       // --- TRATAMENTO DE ERROS COM DESIGN BONITO ---
        if (!response.ok) {
+           // Overbooking (409)
            if (response.status === 409) {
-               // Atualiza a reserva para cancelada no banco
-               await updateDoc(doc(db, "reservations", reservationId), { 
-                   status: 'cancelled_sold_out',
-                   cancelReason: 'No stock at checkout'
-               });
-               
-               setIsSoldOut(true); // <--- ATIVA O MODAL DE ESGOTADO
+               await updateDoc(doc(db, "reservations", reservationId), { status: 'cancelled_sold_out' });
+               setIsSoldOut(true); 
                setProcessing(false);
                return;
            }
+
+           // Erro de Pagamento (400/402)
            await updateDoc(doc(db, "reservations", reservationId), { status: 'failed_payment' });
            
-           if (response.status === 402) {
-               alert(`Pagamento Recusado: ${result.message || 'Verifique os dados.'}`);
-           } else {
-               alert(`Erro: ${result.message || 'Erro ao processar.'}`);
-           }
+           // Traduz o erro feio do MP para português bonito
+           const rawError = result.message || 'unknown_error';
+           const niceError = translateError(rawError);
+           
+           setErrorData(niceError); // Aciona o Modal
            setProcessing(false);
            return;
        }
@@ -2197,15 +2234,36 @@ const CheckoutPage = () => {
        setProcessing(false);
 
      } catch (err) {
-        console.error("Erro Crítico:", err);
-        alert(err.message || "Erro de conexão.");
+        console.error("Erro no Checkout:", err);
+        // Erro genérico de conexão ou JS
+        setErrorData({ 
+            title: 'Ops! Algo deu errado', 
+            msg: err.message || 'Não foi possível conectar com o servidor de pagamentos.' 
+        });
         setProcessing(false);
      }
+  };
+
+  const handleSoldOutReturn = () => {
+      // Se tivermos os dados do item, voltamos para a página dele
+      if (bookingData?.item) {
+          const stateSlug = getStateSlug(bookingData.item.state);
+          const nameSlug = generateSlug(bookingData.item.name);
+          
+          // Navega para a URL correta, passando o ID no state para garantir o carregamento
+          navigate(`/${stateSlug}/${nameSlug}`, { 
+              state: { id: bookingData.item.id } 
+          });
+      } else {
+          // Fallback de segurança: volta uma página ou vai pra home
+          navigate(-1);
+      }
   };
 
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
+      {/* MODAL DE SUCESSO */}
       {showSuccess && createPortal(
           <SuccessModal 
             isOpen={showSuccess} 
@@ -2218,19 +2276,43 @@ const CheckoutPage = () => {
           document.body
       )}
 
+      {/* MODAL DE SOLD OUT */}
       {isSoldOut && createPortal(
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-              <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
                   <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
                       <CalendarX size={32}/>
                   </div>
                   <h3 className="text-xl font-bold text-slate-900 mb-2">Vagas Esgotadas!</h3>
-                  <p className="text-slate-600 mb-6">
-                      Poxa! Enquanto você preenchia os dados, as últimas vagas para esta data acabaram.
+                  <p className="text-slate-600 mb-6 text-sm">
+                      Poxa! Enquanto você preenchia, as últimas vagas acabaram.
                   </p>
-                  <Button onClick={() => navigate(-1)} className="w-full justify-center">
+                  {/* ATUALIZADO AQUI: Chama a função que redireciona para o Day Use */}
+                  <Button onClick={handleSoldOutReturn} className="w-full justify-center">
                       Escolher Outra Data
                   </Button>
+              </div>
+          </div>,
+          document.body
+      )}
+
+      {/* [NOVO] MODAL DE ERRO DE PAGAMENTO (DESIGN BONITO) */}
+      {errorData && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
+                  <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <CreditCard size={32}/>
+                      <div className="absolute"><XCircle size={16} className="text-red-600 translate-x-4 translate-y-4 bg-white rounded-full"/></div>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-2">{errorData.title}</h3>
+                  <p className="text-slate-600 mb-6 text-sm leading-relaxed">
+                      {errorData.msg}
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setErrorData(null)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm">
+                        Revisar Dados
+                    </button>
+                  </div>
               </div>
           </div>,
           document.body
