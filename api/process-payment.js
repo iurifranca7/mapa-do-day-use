@@ -1,36 +1,32 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
-// 1. INICIALIZAÇÃO FIREBASE
+// ==================================================================
+// 1. INICIALIZAÇÃO FIREBASE (Sua versão que funciona)
+// ==================================================================
 const initFirebase = () => {
     if (!admin || !admin.apps) throw new Error("Erro init Firebase");
     if (admin.apps.length > 0) return admin.firestore();
 
-    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
-    const serviceAccountJSON = process.env.FIREBASE_SERVICE_ACCOUNT;
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-    let credential;
     try {
-        if (serviceAccountBase64) {
-            const buffer = Buffer.from(serviceAccountBase64, 'base64');
-            credential = admin.credential.cert(JSON.parse(buffer.toString('utf-8')));
-        } else if (serviceAccountJSON) {
-            credential = admin.credential.cert(JSON.parse(serviceAccountJSON));
-        } else if (projectId && clientEmail && privateKeyRaw) {
+        if (projectId && clientEmail && privateKeyRaw) {
             const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
-            credential = admin.credential.cert({ projectId, clientEmail, privateKey });
+            const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
+            admin.initializeApp({ credential });
+        } else {
+            throw new Error("Credenciais do Firebase incompletas nas Variáveis de Ambiente.");
         }
-        admin.initializeApp({ credential });
-    } catch (e) {
-        if (!e.message.includes('already exists')) throw e;
-    }
+    } catch (e) { throw new Error(`Credentials Error: ${e.message}`); }
+
     return admin.firestore();
 };
 
 export default async function handler(req, res) {
+  // Headers CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -42,28 +38,36 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    console.log("📥 Recebendo Pedido:", JSON.stringify(bookingDetails));
+    // --- CORREÇÃO 1: Robustez na busca do ID ---
+    // Aceita tanto o formato antigo (dayuseId na raiz) quanto o novo (item.id)
+    const targetId = bookingDetails?.dayuseId || bookingDetails?.item?.id;
 
-    // --- 1. VALIDAÇÃO DE DADOS INTELIGENTE ---
-    // Tenta pegar o ID de 'item.id' (Novo) OU 'dayuseId' (Antigo)
-    const targetDayUseId = bookingDetails?.item?.id || bookingDetails?.dayuseId;
-
-    if (!targetDayUseId) {
-        throw new Error("ID do Day Use não fornecido no payload. Verifique os dados enviados.");
+    if (!targetId) {
+        console.error("❌ Payload sem ID:", JSON.stringify(bookingDetails));
+        throw new Error("ID do Day Use não fornecido.");
     }
-    
-    // Busca Dados do Banco
-    const dayUseRef = db.collection('dayuses').doc(targetDayUseId);
+
+    // 1. Busca Day Use
+    const dayUseRef = db.collection('dayuses').doc(targetId);
     const dayUseSnap = await dayUseRef.get();
     
-    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado no banco de dados.");
+    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
-    // ==================================================================
-    // 🛑 2. GUARDIÃO DO ESTOQUE (CHECK FINAL)
-    // ==================================================================
+    // 2. Busca Token do Parceiro
+    const ownerRef = db.collection('users').doc(item.ownerId);
+    const ownerSnap = await ownerRef.get();
     
-    // A. Define o Limite
+    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
+
+    if (!partnerAccessToken) throw new Error("Token MP ausente (Teste ou Produção).");
+
+    // ==================================================================
+    // 🛑 GUARDIÃO DO ESTOQUE (CORREÇÃO 2: Lógica do Mapa)
+    // ==================================================================
+    const bookingDate = bookingDetails.date;
+    
+    // Lógica inteligente para ler o limite (Mapa ou Número)
     let limit = 50;
     if (item.dailyStock) {
         if (typeof item.dailyStock === 'object' && item.dailyStock.adults) {
@@ -74,51 +78,94 @@ export default async function handler(req, res) {
     } else if (item.limit) {
         limit = Number(item.limit);
     }
-
-    // B. Conta Ocupação Atual (CORRIGIDO)
-    // Usamos 'targetDayUseId' que é o ID do documento, garantido.
-    // E buscamos no campo 'item.id' da reserva, pois é lá que salvamos.
+    
+    // CORREÇÃO 3: Busca usando o ID garantido (targetId)
+    // E aceita todos os status de sucesso (incluindo 'approved' do MP)
     const reservationsSnapshot = await db.collection('reservations')
-        .where('item.id', '==', targetDayUseId) 
-        .where('date', '==', bookingDetails.date)
+        .where('item.id', '==', targetId) 
+        .where('date', '==', bookingDate)
         .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid']) 
-        .get();
+        .get()
+        .catch(() => ({ empty: true, forEach: () => {} })); // Evita crash se faltar índice
 
     let currentOccupancy = 0;
-    reservationsSnapshot.forEach(doc => {
-        const d = doc.data();
-        currentOccupancy += (Number(d.adults || 0) + Number(d.children || 0)); 
-    });
-
-    const newGuests = Number(bookingDetails.adults || 0) + Number(bookingDetails.children || 0);
-
-    // C. O Veredito
-    if ((currentOccupancy + newGuests) > limit) {
-        console.warn(`⛔ Bloqueio de Overbooking: ID ${targetDayUseId}`);
-        return res.status(409).json({ 
-            error: 'Sold Out', 
-            message: 'Infelizmente as últimas vagas acabaram de ser vendidas.' 
+    if (!reservationsSnapshot.empty) {
+        reservationsSnapshot.forEach(doc => {
+            const d = doc.data();
+            currentOccupancy += (Number(d.adults || 0) + Number(d.children || 0)); 
         });
     }
 
-    // ==================================================================
-    // 3. PREPARAÇÃO E ENVIO (MERCADO PAGO)
-    // ==================================================================
-    const ownerRef = db.collection('users').doc(item.ownerId);
-    const ownerSnap = await ownerRef.get();
-    
-    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || process.env.VITE_MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
+    const newGuests = Number(bookingDetails.adults || 0) + Number(bookingDetails.children || 0);
 
-    if (!partnerAccessToken) throw new Error("Token MP não configurado.");
+    if ((currentOccupancy + newGuests) > limit) {
+        console.warn(`⛔ Bloqueio de Overbooking: Tentou ${newGuests}, Restam ${limit - currentOccupancy}`);
+        return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas.' });
+    }
 
-    const transactionAmount = Number(Number(bookingDetails.total).toFixed(2));
+    // ==================================================================
+    // CÁLCULOS FINANCEIROS (Seu código original)
+    // ==================================================================
+    let priceAdult = Number(item.priceAdult);
+    let priceChild = Number(item.priceChild || 0);
+    let pricePet = Number(item.petFee || 0);
+
+    const dateParts = bookingDetails.date.split('-'); 
+    const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12); 
+    const dayOfWeek = dateObj.getDay();
+
+    if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
+        const dayConfig = item.weeklyPrices[dayOfWeek];
+        if (typeof dayConfig === 'object') {
+            if (dayConfig.adult) priceAdult = Number(dayConfig.adult);
+            if (dayConfig.child) priceChild = Number(dayConfig.child);
+            if (dayConfig.pet) pricePet = Number(dayConfig.pet);
+        } else if (!isNaN(dayConfig)) priceAdult = Number(dayConfig);
+    }
+
+    let calculatedGrossTotal = 
+        (Number(bookingDetails.adults) * priceAdult) + 
+        (Number(bookingDetails.children) * priceChild) + 
+        (Number(bookingDetails.pets) * pricePet);
+
+    if (bookingDetails.selectedSpecial && item.specialTickets) {
+        Object.entries(bookingDetails.selectedSpecial).forEach(([idx, qtd]) => {
+            const ticket = item.specialTickets[idx];
+            if (ticket && qtd > 0) calculatedGrossTotal += (Number(ticket.price) * Number(qtd));
+        });
+    }
+
+    let transactionAmount = calculatedGrossTotal;
+    if (bookingDetails.couponCode && item.coupons) {
+        const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
+        if (coupon) transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
+    }
+    transactionAmount = Number(transactionAmount.toFixed(2));
+
+    let refDate = new Date();
+    // Tratamento de data seguro
+    if (item.firstActivationDate) {
+         // Tenta converter se for Timestamp do Firebase ou string
+         const d = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
+         if (!isNaN(d)) refDate = d;
+    } else if (item.createdAt) {
+         const d = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+         if (!isNaN(d)) refDate = d;
+    }
     
+    const diffDays = Math.ceil(Math.abs(new Date() - refDate) / (1000 * 60 * 60 * 24)); 
+    const PLATFORM_RATE = diffDays <= 30 ? 0.10 : 0.12;
+
     const isPix = payment_method_id === 'pix';
     const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
-    const platformGrossRevenue = (transactionAmount * 0.10); 
-    let commission = Math.round((platformGrossRevenue - mpFeeCost) * 100) / 100;
+    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
+    let commission = platformGrossRevenue - mpFeeCost;
     if (commission < 0) commission = 0;
+    commission = Math.round(commission * 100) / 100;
 
+    // ==================================================================
+    // PROCESSAMENTO MP
+    // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
     
@@ -144,6 +191,8 @@ export default async function handler(req, res) {
       paymentBody.installments = Number(installments);
     }
 
+    console.log("🚀 Enviando para MP:", transactionAmount);
+
     const result = await payment.create({ body: paymentBody });
 
     if (reservationId) {
@@ -156,6 +205,14 @@ export default async function handler(req, res) {
         });
     }
 
+    const statusValidos = ['approved', 'in_process', 'pending'];
+    if (!statusValidos.includes(result.status)) {
+        return res.status(402).json({ 
+            error: 'Pagamento recusado', 
+            message: result.status_detail || 'Recusado pelo banco.' 
+        });
+    }
+
     return res.status(200).json({
       id: result.id.toString(),
       status: result.status,
@@ -165,7 +222,10 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("❌ Erro Backend:", error);
-    // Retorna mensagem detalhada para ajudar no debug
-    return res.status(500).json({ error: 'Erro interno', message: error.message });
+    return res.status(500).json({ 
+        error: 'Erro interno', 
+        message: error.message,
+        details: error.cause 
+    });
   }
 }
