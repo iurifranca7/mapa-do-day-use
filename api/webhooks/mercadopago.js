@@ -299,7 +299,7 @@ export default async function handler(req, res) {
             
             // Busca ocupação atual (SÓ CONFIRMADOS)
             const occupiedSnap = await db.collection('reservations')
-                .where('dayuseId', '==', resData.dayuseId)
+                .where('item.id', '==', resData.item.id)
                 .where('date', '==', resData.date)
                 .where('status', 'in', ['confirmed', 'validated'])
                 .get();
