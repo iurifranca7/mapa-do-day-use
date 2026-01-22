@@ -2138,6 +2138,21 @@ const CheckoutPage = () => {
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
+       // --- SOLUÇÃO BLINDADA PARA ID ---
+       // 1. Tenta pegar do .id direto (padrão)
+       // 2. Tenta pegar de dentro das props (se foi salvo junto com os dados)
+       // 3. Tenta pegar de um campo legado dayuseId
+       const safeId = bookingData.item.id || bookingData.item.dayuseId || bookingData.dayuseId;
+       
+       console.log("🆔 ID sendo enviado para pagamento:", safeId); // Log para conferência
+
+       if (!safeId) {
+           alert("Erro crítico: ID do local não identificado. Por favor, volte e selecione o local novamente.");
+           setProcessing(false);
+           return;
+       }
+
+       // 2. Prepara Payload
        const paymentPayload = {
         token: null, 
         transaction_amount: Number(finalTotal.toFixed(2)),
@@ -2150,10 +2165,8 @@ const CheckoutPage = () => {
             identification: { type: 'CPF', number: cleanDoc }
         },
         bookingDetails: {
-            // --- AQUI ESTÁ A CORREÇÃO ---
-            dayuseId: bookingData.item.id,         // Mantém para compatibilidade
-            item: { id: bookingData.item.id },     // ADICIONADO: O formato novo que o backend prefere
-            // ---------------------------
+            dayuseId: safeId,         // Compatibilidade
+            item: { id: safeId },     // Formato Novo (Prioritário)
             date: bookingData.date,
             total: Number(finalTotal.toFixed(2)),
             adults: Number(bookingData.adults),

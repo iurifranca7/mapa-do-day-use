@@ -1,7 +1,7 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
-// 1. INICIALIZAÇÃO FIREBASE (Mesma versão robusta dos outros arquivos)
+// 1. INICIALIZAÇÃO FIREBASE
 const initFirebase = () => {
     if (!admin || !admin.apps) throw new Error("Erro init Firebase");
     if (admin.apps.length > 0) return admin.firestore();
@@ -31,7 +31,6 @@ const initFirebase = () => {
 };
 
 export default async function handler(req, res) {
-  // Headers CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -43,21 +42,28 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    // --- 1. VALIDAÇÃO DE DADOS ---
-    if (!bookingDetails?.item?.id) throw new Error("ID do Day Use não fornecido.");
+    console.log("📥 Recebendo Pedido:", JSON.stringify(bookingDetails));
+
+    // --- 1. VALIDAÇÃO DE DADOS INTELIGENTE ---
+    // Tenta pegar o ID de 'item.id' (Novo) OU 'dayuseId' (Antigo)
+    const targetDayUseId = bookingDetails?.item?.id || bookingDetails?.dayuseId;
+
+    if (!targetDayUseId) {
+        throw new Error("ID do Day Use não fornecido no payload. Verifique os dados enviados.");
+    }
     
-    // Busca Dados do Banco (para garantir integridade)
-    const dayUseRef = db.collection('dayuses').doc(bookingDetails.item.id);
+    // Busca Dados do Banco
+    const dayUseRef = db.collection('dayuses').doc(targetDayUseId);
     const dayUseSnap = await dayUseRef.get();
     
-    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
+    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado no banco de dados.");
     const item = dayUseSnap.data();
 
     // ==================================================================
-    // 🛑 2. GUARDIÃO DO ESTOQUE (CHECK FINAL NO SERVIDOR)
+    // 🛑 2. GUARDIÃO DO ESTOQUE (CHECK FINAL)
     // ==================================================================
     
-    // A. Define o Limite (Lógica do Mapa corrigida)
+    // A. Define o Limite
     let limit = 50;
     if (item.dailyStock) {
         if (typeof item.dailyStock === 'object' && item.dailyStock.adults) {
@@ -69,10 +75,11 @@ export default async function handler(req, res) {
         limit = Number(item.limit);
     }
 
-    // B. Conta Ocupação Atual
-    // Atenção: Aqui usamos o campo 'item.id' aninhado, igual corrigimos no Front
+    // B. Conta Ocupação Atual (CORRIGIDO)
+    // Usamos 'targetDayUseId' que é o ID do documento, garantido.
+    // E buscamos no campo 'item.id' da reserva, pois é lá que salvamos.
     const reservationsSnapshot = await db.collection('reservations')
-        .where('item.id', '==', item.id) 
+        .where('item.id', '==', targetDayUseId) 
         .where('date', '==', bookingDetails.date)
         .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid']) 
         .get();
@@ -87,9 +94,7 @@ export default async function handler(req, res) {
 
     // C. O Veredito
     if ((currentOccupancy + newGuests) > limit) {
-        console.warn(`⛔ Bloqueio de Overbooking: Tentou comprar ${newGuests}, mas só restam ${limit - currentOccupancy}`);
-        
-        // Retorna erro 409 (Conflict) para o Frontend avisar o usuário
+        console.warn(`⛔ Bloqueio de Overbooking: ID ${targetDayUseId}`);
         return res.status(409).json({ 
             error: 'Sold Out', 
             message: 'Infelizmente as últimas vagas acabaram de ser vendidas.' 
@@ -97,7 +102,7 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // 3. PREPARAÇÃO DO PAGAMENTO (Se passou no guardião)
+    // 3. PREPARAÇÃO E ENVIO (MERCADO PAGO)
     // ==================================================================
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
@@ -106,21 +111,14 @@ export default async function handler(req, res) {
 
     if (!partnerAccessToken) throw new Error("Token MP não configurado.");
 
-    // Recálculo de Valores (Segurança)
-    // Em produção, você deve recalcular o 'transactionAmount' usando os preços do 'item' do banco,
-    // e não confiar apenas no que vem do frontend. Aqui mantemos simples para o teste.
     const transactionAmount = Number(Number(bookingDetails.total).toFixed(2));
     
-    // Comissão (Simplificado)
     const isPix = payment_method_id === 'pix';
     const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
     const platformGrossRevenue = (transactionAmount * 0.10); 
     let commission = Math.round((platformGrossRevenue - mpFeeCost) * 100) / 100;
     if (commission < 0) commission = 0;
 
-    // ==================================================================
-    // 4. ENVIO PARA O MERCADO PAGO
-    // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
     
@@ -148,7 +146,6 @@ export default async function handler(req, res) {
 
     const result = await payment.create({ body: paymentBody });
 
-    // Atualiza a reserva com o ID do pagamento
     if (reservationId) {
         await db.collection('reservations').doc(reservationId).update({
             paymentId: result.id.toString(),
@@ -168,6 +165,7 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("❌ Erro Backend:", error);
+    // Retorna mensagem detalhada para ajudar no debug
     return res.status(500).json({ error: 'Erro interno', message: error.message });
   }
 }
