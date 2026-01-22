@@ -3470,32 +3470,23 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
         let couponPercent = 0;
         let couponCode = "-";
         
-        // Tenta achar o cupom nos dados do item (Snapshot atual)
         if (res.couponCode && item?.coupons) {
              const c = item.coupons.find(cp => cp.code === res.couponCode);
              if (c) {
                  couponPercent = c.percentage;
                  couponCode = c.code;
              }
-        } 
-        // Fallback: Se não achar no item atual, tenta inferir pelo desconto salvo na reserva (se houver campo discount)
-        else if (res.discount > 0 && res.total > 0) {
-             // Lógica de fallback caso a estrutura de cupons tenha mudado
+        } else if (res.discount > 0 && res.total > 0) {
              const impliedGross = res.total + res.discount;
              couponPercent = (res.discount / impliedGross) * 100;
              couponCode = res.couponCode || "DESCONTO";
         }
 
-        const paid = res.total || 0; // O que o cliente pagou efetivamente
-        
-        // Engenharia reversa para achar o Valor Original (Bruto)
-        // Se pagou 90 com 10% off -> Original = 90 / 0.9 = 100
+        const paid = res.total || 0; 
         const gross = couponPercent > 0 ? paid / (1 - (couponPercent/100)) : paid;
-        
-        // Valor do Cupom (Dinheiro)
         const discountVal = gross - paid;
 
-        // 2. Definir Taxa da Plataforma (Promoção de Data)
+        // 2. Definir Taxa da Plataforma
         const resDate = res.createdAt.toDate ? res.createdAt.toDate() : new Date(res.createdAt);
         let refDate = new Date();
         if (item) {
@@ -3507,44 +3498,31 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
         }
         
         const diffDays = Math.ceil(Math.abs(resDate - refDate) / (1000 * 60 * 60 * 24));
-        
-        // Regra: <= 30 dias = 10%, > 30 dias = 12%
         const isPromo = diffDays <= 30;
         const rate = isPromo ? 0.10 : 0.12;
 
         // 3. Calcular Taxa Adm (Sobre o Valor Original/Bruto)
         const fee = gross * rate;
 
-        // 4. Líquido = O que entrou (Pago) - O que saiu (Taxa)
+        // 4. Líquido
         const net = paid - fee;
 
-        return { 
-            gross,        // Valor Original
-            paid,         // Valor Pago
-            discountVal,  // Valor Cupom
-            fee,          // Valor Taxa
-            net,          // Valor Líquido
-            isPromo, 
-            rate, 
-            couponCode, 
-            couponPercent 
-        };
+        return { gross, paid, discountVal, fee, net, isPromo, rate, couponCode, couponPercent };
     };
 
-    // Totais para o Rodapé do Modal
+    // Totais para o Rodapé
     const totals = monthRes.reduce((acc, curr) => {
         const calc = calculateRow(curr);
         return { 
-            gross: acc.gross + calc.gross, // Total Original
-            paid: acc.paid + calc.paid,    // Total Pago (Entrada Real)
-            fee: acc.fee + calc.fee,       // Total Taxas
-            net: acc.net + calc.net        // Total Líquido
+            gross: acc.gross + calc.gross,
+            paid: acc.paid + calc.paid,
+            fee: acc.fee + calc.fee,
+            net: acc.net + calc.net
         };
     }, { gross: 0, paid: 0, fee: 0, net: 0 });
 
-    // --- FUNÇÃO EXPORTAR CSV (ESTRUTURA SOLICITADA) ---
+    // --- FUNÇÃO EXPORTAR CSV (CORRIGIDA) ---
     const handleExportCSV = () => {
-        // Colunas exatas conforme solicitado
         const header = "Data da compra;Hora da compra;ID da transação;Nome e sobrenome;Valor original;Cupom;% do cupom;Valor cupom;Valor pago;Taxa admin %;Valor taxa;Valor liquido\n";
         
         let csvContent = header;
@@ -3553,33 +3531,53 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
             const calc = calculateRow(res);
             const dateObj = new Date(res.createdAt.seconds * 1000);
             
-            // Tratamento de dados para o CSV (Excel PT-BR usa vírgula decimal)
+            // Formatadores
             const fmtNum = (n) => n.toFixed(2).replace('.', ',');
+            
+            // CORREÇÃO 1: ID DO MERCADO PAGO
+            // Tenta pegar o ID real (paymentId). Se não tiver, usa o ID da reserva como fallback.
+            // O .replace remove prefixos internos se existirem (ex: 'FRONT_PIX_...') para ficar limpo.
+            const transactionId = res.paymentId 
+                ? res.paymentId.replace(/^(FRONT_|PIX-|CARD_)/, '') 
+                : res.id; 
 
             const row = [
-                dateObj.toLocaleDateString('pt-BR'),           // Data (dd/mm/aaaa)
-                dateObj.toLocaleTimeString('pt-BR'),           // Hora (hh:mm:ss)
-                res.id,                                        // ID Transação
-                `"${res.guestName}"`,                          // Nome
-                fmtNum(calc.gross),                            // Valor original (bruto)
-                calc.couponCode,                               // Nome do cupom
-                calc.couponPercent > 0 ? fmtNum(calc.couponPercent) + '%' : '-', // % do cupom
-                calc.couponPercent > 0 ? fmtNum(calc.discountVal) : '0,00',      // Valor cupom
-                fmtNum(calc.paid),                             // Valor pago
-                (calc.rate * 100).toFixed(0) + '%',            // Taxa admin %
-                fmtNum(calc.fee),                              // Valor taxa
-                fmtNum(calc.net)                               // Valor liquido
+                dateObj.toLocaleDateString('pt-BR'),
+                dateObj.toLocaleTimeString('pt-BR'),
+                `"${transactionId}"`,                          // ID Corrigido (MP)
+                `"${res.guestName}"`,
+                fmtNum(calc.gross),
+                calc.couponCode,
+                calc.couponPercent > 0 ? fmtNum(calc.couponPercent) + '%' : '-',
+                calc.couponPercent > 0 ? fmtNum(calc.discountVal) : '0,00',
+                fmtNum(calc.paid),
+                (calc.rate * 100).toFixed(0) + '%',
+                fmtNum(calc.fee),
+                fmtNum(calc.net)
             ].join(';');
 
             csvContent += row + "\n";
         });
 
-        // Download com BOM para acentuação correta no Excel
+        // CORREÇÃO 2: NOME DO ARQUIVO PERSONALIZADO
+        const meses = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+        const nomeMes = meses[monthIndex];
+        const ano = new Date().getFullYear();
+        
+        // Pega o nome do local (day use) do primeiro item, limpa espaços e acentos
+        const nomeLocalRaw = items.length > 0 ? items[0].name : "estabelecimento";
+        const nomeLocal = nomeLocalRaw
+            .toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
+            .replace(/[^a-z0-9]/g, "_"); // Troca espaços/símbolos por underline
+
+        const fileName = `extrato_detalhado_${nomeLocal}_mapadodayuse_${nomeMes}_${ano}.csv`;
+
         const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
         link.setAttribute("href", url);
-        link.setAttribute("download", `extrato_detalhado_mes_${monthIndex + 1}.csv`);
+        link.setAttribute("download", fileName); // Nome novo aplicado aqui
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
@@ -3638,40 +3636,39 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                 <tbody className="text-sm text-slate-600">
                                     {monthRes.map((res) => {
                                         const calc = calculateRow(res);
+                                        // Usa o mesmo ID corrigido na visualização da tabela
+                                        const displayId = res.paymentId ? res.paymentId.replace(/^(FRONT_|PIX-)/, '') : res.id.slice(0,6).toUpperCase();
+
                                         return (
                                             <tr key={res.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                                                 <td className="py-3 pl-2">
                                                     <div className="font-mono text-xs text-slate-500">{new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}</div>
-                                                    <div className="text-[10px] text-slate-400 font-mono">#{res.id.slice(0,6).toUpperCase()}</div>
+                                                    <div className="text-[10px] text-slate-400 font-mono">#{displayId}</div>
                                                 </td>
                                                 <td className="py-3">
                                                     <div className="font-bold text-slate-800 line-clamp-1">{res.guestName}</div>
                                                     <span className={`text-[9px] px-1 rounded border uppercase ${res.paymentMethod==='pix'?'bg-teal-50 border-teal-100 text-teal-700':'bg-blue-50 border-blue-100 text-blue-700'}`}>{res.paymentMethod}</span>
                                                 </td>
                                                 
-                                                {/* Coluna Valor Original */}
                                                 <td className="py-3 text-right font-medium text-slate-400">
                                                     {formatBRL(calc.gross)}
                                                 </td>
 
-                                                {/* Coluna Cupom */}
                                                 <td className="py-3 text-right">
                                                     {calc.discountVal > 0 ? (
                                                         <>
                                                             <div className="text-purple-600 font-bold text-xs">- {formatBRL(calc.discountVal)}</div>
                                                             <div className="text-[9px] text-purple-400 flex justify-end items-center gap-1">
-                                                                <Tag size={8}/> {calc.couponCode} ({calc.couponPercent}%)
+                                                                <Tag size={8}/> {calc.couponCode}
                                                             </div>
                                                         </>
                                                     ) : <span className="text-slate-300">-</span>}
                                                 </td>
 
-                                                {/* Coluna Pago */}
                                                 <td className="py-3 text-right font-bold text-slate-700">
                                                     {formatBRL(calc.paid)}
                                                 </td>
 
-                                                {/* Coluna Taxa */}
                                                 <td className="py-3 text-right">
                                                     <div className="text-red-500 font-medium text-xs">- {formatBRL(calc.fee)}</div>
                                                     <span className={`text-[9px] px-1 rounded font-bold uppercase ${calc.isPromo ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -3679,7 +3676,6 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                     </span>
                                                 </td>
 
-                                                {/* Coluna Líquido */}
                                                 <td className="py-3 text-right pr-2 text-green-700 font-bold">
                                                     {formatBRL(calc.net)}
                                                 </td>
@@ -3693,14 +3689,15 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                             <div className="md:hidden space-y-3">
                                 {monthRes.map((res) => {
                                     const calc = calculateRow(res);
+                                    const displayId = res.paymentId ? res.paymentId.replace(/^(FRONT_|PIX-)/, '') : res.id.slice(0,6).toUpperCase();
+
                                     return (
                                         <div key={res.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                                            {/* Header do Card */}
                                             <div className="flex justify-between items-start mb-3 border-b border-slate-50 pb-2">
                                                 <div>
                                                     <p className="font-bold text-slate-800 text-sm">{res.guestName}</p>
                                                     <p className="text-[10px] text-slate-400 font-mono">
-                                                        {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')} • #{res.id.slice(0,6).toUpperCase()}
+                                                        {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')} • #{displayId}
                                                     </p>
                                                 </div>
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
@@ -3710,9 +3707,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                 </span>
                                             </div>
                                             
-                                            {/* Grid de Valores */}
                                             <div className="space-y-2">
-                                                {/* Linha Original + Cupom */}
                                                 <div className="flex justify-between text-xs text-slate-500">
                                                     <span>Valor Original:</span>
                                                     <span>{formatBRL(calc.gross)}</span>
@@ -3726,7 +3721,6 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                 
                                                 <div className="border-t border-slate-50 my-1"></div>
 
-                                                {/* Linha Pago + Taxa */}
                                                 <div className="flex justify-between text-sm font-bold text-slate-700">
                                                     <span>Valor Pago:</span>
                                                     <span>{formatBRL(calc.paid)}</span>
@@ -3736,7 +3730,6 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                     <span>- {formatBRL(calc.fee)}</span>
                                                 </div>
 
-                                                {/* Linha Líquido */}
                                                 <div className="flex justify-between text-sm font-bold text-green-700 bg-green-50 px-2 py-2 rounded mt-1 border border-green-100">
                                                     <span>Líquido a Receber:</span>
                                                     <span>{formatBRL(calc.net)}</span>
@@ -3758,7 +3751,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                             <p className="text-sm md:text-lg font-bold text-slate-500">{formatBRL(totals.gross)}</p>
                         </div>
                         <div>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase">Pago (Entrada)</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase">Pago</p>
                             <p className="text-sm md:text-lg font-bold text-slate-800">{formatBRL(totals.paid)}</p>
                         </div>
                         <div>
