@@ -34,7 +34,7 @@ import {
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
-  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown
+  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -1805,6 +1805,24 @@ useEffect(() => {
       {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
       {showClaimModal && createPortal(<ModalOverlay onClose={() => setShowClaimModal(false)}><div className="bg-white p-8 rounded-3xl">Formulário Claim</div></ModalOverlay>, document.body)}
       {showWarning && createPortal(<ModalOverlay onClose={() => setShowWarning(null)}><div className="bg-white p-8 rounded-3xl text-center"><AlertCircle className="mx-auto mb-4 text-yellow-500" size={32}/><h2 className="font-bold mb-2">{showWarning.title}</h2><p className="text-sm text-slate-600 mb-4">{showWarning.msg}</p><Button onClick={()=>setShowWarning(null)} className="w-full">Entendi</Button></div></ModalOverlay>, document.body)}
+      {/* MODAL DE SOLD OUT (OVERBOOKING NO CHECKOUT) */}
+      {isSoldOut && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
+                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <CalendarX size={32}/>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">Vagas Esgotadas!</h3>
+                  <p className="text-slate-600 mb-6 text-sm">
+                      Poxa! Enquanto você preenchia os dados, outra pessoa acabou de comprar os últimos ingressos para esta data.
+                  </p>
+                  <Button onClick={() => navigate(-1)} className="w-full justify-center">
+                      Escolher Outra Data
+                  </Button>
+              </div>
+          </div>,
+          document.body
+      )}
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-10">
          <div className="lg:col-span-2 space-y-8">
@@ -2143,8 +2161,13 @@ const CheckoutPage = () => {
 
        if (!response.ok) {
            if (response.status === 409) {
-               await updateDoc(doc(db, "reservations", reservationId), { status: 'cancelled_sold_out' });
-               setIsSoldOut(true); 
+               // Atualiza a reserva para cancelada no banco
+               await updateDoc(doc(db, "reservations", reservationId), { 
+                   status: 'cancelled_sold_out',
+                   cancelReason: 'No stock at checkout'
+               });
+               
+               setIsSoldOut(true); // <--- ATIVA O MODAL DE ESGOTADO
                setProcessing(false);
                return;
            }

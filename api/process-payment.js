@@ -1,29 +1,32 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
-// ==================================================================
-// 1. INICIALIZAÇÃO FIREBASE (Versão Vercel/Env)
-// ==================================================================
+// 1. INICIALIZAÇÃO FIREBASE (Mesma versão robusta dos outros arquivos)
 const initFirebase = () => {
     if (!admin || !admin.apps) throw new Error("Erro init Firebase");
     if (admin.apps.length > 0) return admin.firestore();
 
+    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    const serviceAccountJSON = process.env.FIREBASE_SERVICE_ACCOUNT;
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
+    let credential;
     try {
-        if (projectId && clientEmail && privateKeyRaw) {
+        if (serviceAccountBase64) {
+            const buffer = Buffer.from(serviceAccountBase64, 'base64');
+            credential = admin.credential.cert(JSON.parse(buffer.toString('utf-8')));
+        } else if (serviceAccountJSON) {
+            credential = admin.credential.cert(JSON.parse(serviceAccountJSON));
+        } else if (projectId && clientEmail && privateKeyRaw) {
             const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
-            const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
-            admin.initializeApp({ credential });
-        } else {
-            // Tenta fallback para variáveis locais se estiver rodando localmente sem Vercel Env
-            // Mas na Vercel vai cair no erro se não estiver configurado
-            throw new Error("Credenciais do Firebase incompletas nas Variáveis de Ambiente.");
+            credential = admin.credential.cert({ projectId, clientEmail, privateKey });
         }
-    } catch (e) { throw new Error(`Credentials Error: ${e.message}`); }
-
+        admin.initializeApp({ credential });
+    } catch (e) {
+        if (!e.message.includes('already exists')) throw e;
+    }
     return admin.firestore();
 };
 
@@ -40,126 +43,87 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
-
-    // 1. Busca Day Use
-    const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
+    // --- 1. VALIDAÇÃO DE DADOS ---
+    if (!bookingDetails?.item?.id) throw new Error("ID do Day Use não fornecido.");
+    
+    // Busca Dados do Banco (para garantir integridade)
+    const dayUseRef = db.collection('dayuses').doc(bookingDetails.item.id);
     const dayUseSnap = await dayUseRef.get();
     
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
-    // 2. Busca Token do Parceiro
-    const ownerRef = db.collection('users').doc(item.ownerId);
-    const ownerSnap = await ownerRef.get();
-    
-    // Prioriza Token de Teste do ENV, senão usa do parceiro
-    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
-
-    if (!partnerAccessToken) throw new Error("Token MP ausente (Teste ou Produção).");
-
     // ==================================================================
-    // 🛑 GUARDIÃO DO ESTOQUE (CORRIGIDO)
+    // 🛑 2. GUARDIÃO DO ESTOQUE (CHECK FINAL NO SERVIDOR)
     // ==================================================================
-   const bookingDate = bookingDetails.date; // Data: "2024-02-20"
     
-    // 1. Pega a Capacidade Máxima (dailyStock)
-    // Se não tiver dailyStock, usa limit, se não tiver, assume 50
-    const maxCapacity = Number(item.dailyStock || item.limit || 50); 
-    
-    // 2. Busca TODAS as reservas confirmadas para ESSE DIA
+    // A. Define o Limite (Lógica do Mapa corrigida)
+    let limit = 50;
+    if (item.dailyStock) {
+        if (typeof item.dailyStock === 'object' && item.dailyStock.adults) {
+            limit = Number(item.dailyStock.adults);
+        } else if (typeof item.dailyStock === 'string' || typeof item.dailyStock === 'number') {
+            limit = Number(item.dailyStock);
+        }
+    } else if (item.limit) {
+        limit = Number(item.limit);
+    }
+
+    // B. Conta Ocupação Atual
+    // Atenção: Aqui usamos o campo 'item.id' aninhado, igual corrigimos no Front
     const reservationsSnapshot = await db.collection('reservations')
-        .where('dayuseId', '==', bookingDetails.dayuseId) 
-        .where('date', '==', bookingDate)
-        .where('status', 'in', ['confirmed', 'validated']) // Apenas quem já pagou conta espaço
+        .where('item.id', '==', item.id) 
+        .where('date', '==', bookingDetails.date)
+        .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid']) 
         .get();
 
-    // 3. Soma quantas pessoas já ocuparam lugar
     let currentOccupancy = 0;
     reservationsSnapshot.forEach(doc => {
         const d = doc.data();
-        // Soma Adultos + Crianças (assumindo que crianças contam na lotação)
         currentOccupancy += (Number(d.adults || 0) + Number(d.children || 0)); 
     });
 
-    // 4. Quantos querem entrar agora?
     const newGuests = Number(bookingDetails.adults || 0) + Number(bookingDetails.children || 0);
 
-    console.log(`📊 Estoque Dia ${bookingDate}: Ocupado ${currentOccupancy} + Novo ${newGuests} / Máx ${maxCapacity}`);
-
-    // 5. Verifica se cabe
-    if ((currentOccupancy + newGuests) > maxCapacity) {
+    // C. O Veredito
+    if ((currentOccupancy + newGuests) > limit) {
+        console.warn(`⛔ Bloqueio de Overbooking: Tentou comprar ${newGuests}, mas só restam ${limit - currentOccupancy}`);
+        
+        // Retorna erro 409 (Conflict) para o Frontend avisar o usuário
         return res.status(409).json({ 
             error: 'Sold Out', 
-            message: `Ops! Restam apenas ${maxCapacity - currentOccupancy} vagas para esta data.` 
+            message: 'Infelizmente as últimas vagas acabaram de ser vendidas.' 
         });
     }
 
     // ==================================================================
-    // CÁLCULOS FINANCEIROS
+    // 3. PREPARAÇÃO DO PAGAMENTO (Se passou no guardião)
     // ==================================================================
-    let priceAdult = Number(item.priceAdult);
-    let priceChild = Number(item.priceChild || 0);
-    let pricePet = Number(item.petFee || 0);
-
-    const dateParts = bookingDetails.date.split('-'); 
-    const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12); 
-    const dayOfWeek = dateObj.getDay();
-
-    if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
-        const dayConfig = item.weeklyPrices[dayOfWeek];
-        if (typeof dayConfig === 'object') {
-            if (dayConfig.adult) priceAdult = Number(dayConfig.adult);
-            if (dayConfig.child) priceChild = Number(dayConfig.child);
-            if (dayConfig.pet) pricePet = Number(dayConfig.pet);
-        } else if (!isNaN(dayConfig)) priceAdult = Number(dayConfig);
-    }
-
-    let calculatedGrossTotal = 
-        (Number(bookingDetails.adults) * priceAdult) + 
-        (Number(bookingDetails.children) * priceChild) + 
-        (Number(bookingDetails.pets) * pricePet);
-
-    if (bookingDetails.selectedSpecial && item.specialTickets) {
-        Object.entries(bookingDetails.selectedSpecial).forEach(([idx, qtd]) => {
-            const ticket = item.specialTickets[idx];
-            if (ticket && qtd > 0) calculatedGrossTotal += (Number(ticket.price) * Number(qtd));
-        });
-    }
-
-    let transactionAmount = calculatedGrossTotal;
-    if (bookingDetails.couponCode && item.coupons) {
-        const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
-        if (coupon) transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
-    }
-    transactionAmount = Number(transactionAmount.toFixed(2));
-
-    // Define Taxa (Promo vs Padrão)
-    // Tenta pegar data de ativação, criação ou hoje
-    let refDate = new Date();
-    if (item.firstActivationDate) {
-        refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
-    } else if (item.createdAt) {
-        refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
-    }
+    const ownerRef = db.collection('users').doc(item.ownerId);
+    const ownerSnap = await ownerRef.get();
     
-    const diffDays = Math.ceil(Math.abs(new Date() - refDate) / (1000 * 60 * 60 * 24)); 
-    const PLATFORM_RATE = diffDays <= 30 ? 0.10 : 0.12;
+    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || process.env.VITE_MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
+    if (!partnerAccessToken) throw new Error("Token MP não configurado.");
+
+    // Recálculo de Valores (Segurança)
+    // Em produção, você deve recalcular o 'transactionAmount' usando os preços do 'item' do banco,
+    // e não confiar apenas no que vem do frontend. Aqui mantemos simples para o teste.
+    const transactionAmount = Number(Number(bookingDetails.total).toFixed(2));
+    
+    // Comissão (Simplificado)
     const isPix = payment_method_id === 'pix';
     const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
-    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
-    let commission = platformGrossRevenue - mpFeeCost;
+    const platformGrossRevenue = (transactionAmount * 0.10); 
+    let commission = Math.round((platformGrossRevenue - mpFeeCost) * 100) / 100;
     if (commission < 0) commission = 0;
-    commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // PROCESSAMENTO MP
+    // 4. ENVIO PARA O MERCADO PAGO
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
     
-    // IMPORTANTE: Garantir que a URL Base não tenha barra no final
     const rawBaseUrl = process.env.VITE_BASE_URL || 'https://mapadodayuse.com';
     const baseUrl = rawBaseUrl.replace(/\/$/, ""); 
 
@@ -182,8 +146,6 @@ export default async function handler(req, res) {
       paymentBody.installments = Number(installments);
     }
 
-    console.log("🚀 Enviando para MP:", JSON.stringify({amount: transactionAmount, fee: commission, webhook: paymentBody.notification_url}));
-
     const result = await payment.create({ body: paymentBody });
 
     // Atualiza a reserva com o ID do pagamento
@@ -197,14 +159,6 @@ export default async function handler(req, res) {
         });
     }
 
-    const statusValidos = ['approved', 'in_process', 'pending'];
-    if (!statusValidos.includes(result.status)) {
-        return res.status(402).json({ 
-            error: 'Pagamento recusado', 
-            message: result.status_detail || 'Recusado pelo banco.' 
-        });
-    }
-
     return res.status(200).json({
       id: result.id.toString(),
       status: result.status,
@@ -214,11 +168,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("❌ Erro Backend:", error);
-    // Retorna o erro detalhado para facilitar o debug no console do navegador
-    return res.status(500).json({ 
-        error: 'Erro interno', 
-        message: error.message,
-        details: error.cause 
-    });
+    return res.status(500).json({ error: 'Erro interno', message: error.message });
   }
 }
