@@ -2120,6 +2120,9 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
+  // --- CORREÇÃO 1: Adicionado o estado que faltava ---
+  const [currentReservationId, setCurrentReservationId] = useState(null);
+  
   // Pix Modal
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
@@ -2250,7 +2253,6 @@ const CheckoutPage = () => {
             <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #f3f4f6; padding: 40px 0;">
                 <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
                     
-                    <!-- CABEÇALHO -->
                     <div style="background-color: #0097A8; padding: 30px; text-align: center;">
                         <h1 style="color: white; margin: 0; font-size: 22px; letter-spacing: 1px; text-transform: uppercase;">Voucher de Acesso</h1>
                         <p style="color: #e0f2fe; margin: 5px 0 0; font-size: 13px;">Apresente este e-mail na portaria</p>
@@ -2258,7 +2260,6 @@ const CheckoutPage = () => {
 
                     <div style="padding: 40px 30px;">
                         
-                        <!-- LOCAL -->
                         <div style="text-align: center; margin-bottom: 25px;">
                             <h2 style="color: #0f172a; margin: 0 0 5px; font-size: 24px;">${reservationData.item.name}</h2>
                             <p style="color: #64748b; margin: 0; font-size: 14px;">${reservationData.item.city}, ${reservationData.item.state}</p>
@@ -2267,14 +2268,12 @@ const CheckoutPage = () => {
                             </a>
                         </div>
                         
-                        <!-- QR CODE -->
                         <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 30px;">
                             <img src="${qrCodeUrl}" alt="QR Code" style="width: 150px; height: 150px; margin-bottom: 10px; mix-blend-mode: multiply;" />
                             <p style="margin: 5px 0 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Código de Validação</p>
                             <p style="margin: 5px 0 0 0; font-size: 28px; font-weight: 800; color: #0f172a; letter-spacing: 3px; font-family: monospace;">${reservationId.slice(0,6).toUpperCase()}</p>
                         </div>
 
-                        <!-- GRID DE DETALHES -->
                         <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; border-top: 1px solid #f1f5f9;">
                             <tr>
                                 <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; width: 50%; vertical-align: top;">
@@ -2308,7 +2307,6 @@ const CheckoutPage = () => {
                             </tr>
                         </table>
 
-                        <!-- ITENS E TOTAL -->
                         <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                             <p style="color: #0369a1; font-weight: bold; font-size: 12px; text-transform: uppercase; margin: 0 0 10px 0;">Resumo do Pedido</p>
                             <ul style="margin: 0; padding-left: 0; list-style: none; font-size: 14px; color: #334155;">
@@ -2325,7 +2323,6 @@ const CheckoutPage = () => {
 
                         ${rulesHtml}
 
-                        <!-- CONTATO E POLÍTICA -->
                         <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; font-size: 12px; color: #4b5563; border: 1px solid #e5e7eb; margin-top: 20px;">
                             <strong style="text-transform: uppercase; color: #94a3b8; font-size: 10px; display: block; margin-bottom: 8px;">Fale com o local</strong>
                             ${reservationData.item.localWhatsapp ? `WhatsApp: <strong>${reservationData.item.localWhatsapp}</strong><br/>` : ''} 
@@ -2682,44 +2679,45 @@ const CheckoutPage = () => {
           </div>
           
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 overflow-hidden ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Forma de Pagamento</h3>
-             
-             {/* Abas de Método */}
-             <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Cartão de Crédito</button>
-                 <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Pix</button>
-             </div>
+              <h3 className="font-bold text-xl mb-4 text-slate-900">Forma de Pagamento</h3>
+              
+              {/* Abas de Método */}
+              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
+                  <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Cartão de Crédito</button>
+                  <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500 hover:text-slate-700'}`}>Pix</button>
+              </div>
 
-             {paymentMethod === 'card' ? (
-               <div className="space-y-4 animate-fade-in">
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
-                 <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
-                 </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
-               </div>
-             ) : (
-               <div className="text-center py-6 animate-fade-in">
-                  <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
-                  <p className="text-sm text-slate-600 mb-4">Ao confirmar, geraremos um código Pix para você.</p>
-                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (obrigatório)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-               </div>
-             )}
-             
-             <div className="mt-6">
-                 <Button 
+              {paymentMethod === 'card' ? (
+                <div className="space-y-4 animate-fade-in">
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}/></div>
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
+                     <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                  </div>
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
+                </div>
+              ) : (
+                <div className="text-center py-6 animate-fade-in">
+                   <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
+                   <p className="text-sm text-slate-600 mb-4">Ao confirmar, geraremos um código Pix para você.</p>
+                   <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (obrigatório)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
+                </div>
+              )}
+              
+              <div className="mt-6">
+                  {/* --- CORREÇÃO 2: Alterado de processCardPayment para processPayment --- */}
+                  <Button 
                     className="w-full py-4 text-lg" 
-                    onClick={processCardPayment} 
+                    onClick={processPayment} 
                     disabled={processing}
-                 >
-                     {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Confirmar Reserva (${formatBRL(finalTotal)})`)}
-                 </Button>
-             </div>
-             
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
+                  >
+                      {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Confirmar Reserva (${formatBRL(finalTotal)})`)}
+                  </Button>
+              </div>
+              
+              <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
           </div>
         </div>
 
