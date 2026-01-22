@@ -1,7 +1,9 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
-// 1. INICIALIZAÇÃO FIREBASE (Usando suas variáveis)
+// ==================================================================
+// 1. INICIALIZAÇÃO FIREBASE (Versão Vercel/Env)
+// ==================================================================
 const initFirebase = () => {
     if (!admin || !admin.apps) throw new Error("Erro init Firebase");
     if (admin.apps.length > 0) return admin.firestore();
@@ -16,7 +18,9 @@ const initFirebase = () => {
             const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
             admin.initializeApp({ credential });
         } else {
-            throw new Error("Credenciais do Firebase incompletas.");
+            // Tenta fallback para variáveis locais se estiver rodando localmente sem Vercel Env
+            // Mas na Vercel vai cair no erro se não estiver configurado
+            throw new Error("Credenciais do Firebase incompletas nas Variáveis de Ambiente.");
         }
     } catch (e) { throw new Error(`Credentials Error: ${e.message}`); }
 
@@ -24,9 +28,11 @@ const initFirebase = () => {
 };
 
 export default async function handler(req, res) {
+  // Headers CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -36,29 +42,31 @@ export default async function handler(req, res) {
 
     if (!bookingDetails?.dayuseId) throw new Error("ID do Day Use não fornecido.");
 
+    // 1. Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(bookingDetails.dayuseId);
     const dayUseSnap = await dayUseRef.get();
+    
     if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
+    // 2. Busca Token do Parceiro
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
-    // --- LÓGICA DE TOKEN DE TESTE ---
-    // Se existir a variável MP_ACCESS_TOKEN_TEST, usamos ela (Sandbox do Admin)
-    // Caso contrário, usamos o token do parceiro cadastrado no banco
+    // Prioriza Token de Teste do ENV, senão usa do parceiro
     const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
     if (!partnerAccessToken) throw new Error("Token MP ausente (Teste ou Produção).");
 
     // ==================================================================
-    // GUARDIÃO DO ESTOQUE
+    // 🛑 GUARDIÃO DO ESTOQUE (CORRIGIDO)
     // ==================================================================
     const bookingDate = bookingDetails.date;
     const limit = Number(item.limit || 50); 
     
+    // CORREÇÃO AQUI: Usamos bookingDetails.dayuseId em vez de item.id
     const reservationsSnapshot = await db.collection('reservations')
-        .where('dayuseId', '==', item.id) 
+        .where('dayuseId', '==', bookingDetails.dayuseId) 
         .where('date', '==', bookingDate)
         .where('status', 'in', ['confirmed', 'validated']) 
         .get();
@@ -76,7 +84,7 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // CÁLCULOS
+    // CÁLCULOS FINANCEIROS
     // ==================================================================
     let priceAdult = Number(item.priceAdult);
     let priceChild = Number(item.priceChild || 0);
@@ -114,7 +122,15 @@ export default async function handler(req, res) {
     }
     transactionAmount = Number(transactionAmount.toFixed(2));
 
-    let refDate = item.firstActivationDate ? (item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate)) : (item.createdAt ? (item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt)) : new Date());
+    // Define Taxa (Promo vs Padrão)
+    // Tenta pegar data de ativação, criação ou hoje
+    let refDate = new Date();
+    if (item.firstActivationDate) {
+        refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
+    } else if (item.createdAt) {
+        refDate = item.createdAt.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+    }
+    
     const diffDays = Math.ceil(Math.abs(new Date() - refDate) / (1000 * 60 * 60 * 24)); 
     const PLATFORM_RATE = diffDays <= 30 ? 0.10 : 0.12;
 
@@ -126,13 +142,14 @@ export default async function handler(req, res) {
     commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // PROCESSAMENTO
+    // PROCESSAMENTO MP
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
     
-    // --- USA VITE_BASE_URL PARA O WEBHOOK ---
-    const baseUrl = process.env.VITE_BASE_URL || 'https://mapadodayuse.com';
+    // IMPORTANTE: Garantir que a URL Base não tenha barra no final
+    const rawBaseUrl = process.env.VITE_BASE_URL || 'https://mapadodayuse.com';
+    const baseUrl = rawBaseUrl.replace(/\/$/, ""); 
 
     const paymentBody = {
       transaction_amount: transactionAmount,
@@ -153,8 +170,11 @@ export default async function handler(req, res) {
       paymentBody.installments = Number(installments);
     }
 
+    console.log("🚀 Enviando para MP:", JSON.stringify({amount: transactionAmount, fee: commission, webhook: paymentBody.notification_url}));
+
     const result = await payment.create({ body: paymentBody });
 
+    // Atualiza a reserva com o ID do pagamento
     if (reservationId) {
         await db.collection('reservations').doc(reservationId).update({
             paymentId: result.id.toString(),
@@ -167,7 +187,10 @@ export default async function handler(req, res) {
 
     const statusValidos = ['approved', 'in_process', 'pending'];
     if (!statusValidos.includes(result.status)) {
-        return res.status(402).json({ error: 'Pagamento recusado', message: 'Recusado pelo banco.' });
+        return res.status(402).json({ 
+            error: 'Pagamento recusado', 
+            message: result.status_detail || 'Recusado pelo banco.' 
+        });
     }
 
     return res.status(200).json({
@@ -178,25 +201,12 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("Erro Backend:", error);
-    return res.status(500).json({ error: 'Erro interno', message: error.message });
+    console.error("❌ Erro Backend:", error);
+    // Retorna o erro detalhado para facilitar o debug no console do navegador
+    return res.status(500).json({ 
+        error: 'Erro interno', 
+        message: error.message,
+        details: error.cause 
+    });
   }
-}
-
-// Helper para mensagens amigáveis de erro
-function traduzirErroMP(statusDetail) {
-    const erros = {
-        'cc_rejected_bad_filled_card_number': 'Verifique o número do cartão.',
-        'cc_rejected_bad_filled_date': 'Verifique a data de validade.',
-        'cc_rejected_bad_filled_other': 'Verifique os dados do titular (CPF/Nome).',
-        'cc_rejected_bad_filled_security_code': 'Verifique o código de segurança (CVV).',
-        'cc_rejected_blacklist': 'Cartão recusado. Tente outro cartão.',
-        'cc_rejected_call_for_authorize': 'Você precisa autorizar o pagamento junto ao seu banco.',
-        'cc_rejected_card_disabled': 'Cartão inativo. Ligue para o seu banco.',
-        'cc_rejected_duplicated_payment': 'Pagamento duplicado identificado.',
-        'cc_rejected_high_risk': 'Operação recusada por segurança. Tente outro meio de pagamento.',
-        'cc_rejected_insufficient_amount': 'Saldo insuficiente.',
-        'cc_rejected_max_attempts': 'Muitas tentativas. Tente novamente mais tarde.',
-    };
-    return erros[statusDetail] || 'O pagamento foi recusado pela operadora.';
 }
