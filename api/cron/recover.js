@@ -1,3 +1,11 @@
+export default async function handler(req, res) {
+    // PROTEÇÃO SIMPLES
+    const { secret } = req.query;
+    // Defina uma senha difícil aqui ou no .env
+    if (secret !== '5691Av!d7991') {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }}
+
 import admin from 'firebase-admin';
 import { MailtrapClient } from 'mailtrap';
 

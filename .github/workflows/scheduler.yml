@@ -1,0 +1,16 @@
+name: Robô de Recuperação (Cron)
+
+on:
+  schedule:
+    # Roda a cada 30 minutos
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Permite rodar manualmente se precisar testar
+
+jobs:
+  ping-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar API de Recuperação
+        run: |
+          curl -X POST "https://mapadodayuse.com/api/cron/recover?secret=5691Av!d7991" \
+          -H "Content-Type: application/json"
