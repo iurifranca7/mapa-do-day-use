@@ -32,10 +32,12 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { 
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
-  TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
+  TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Wallet, Calendar,
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
-  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX, XCircle
+  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX, XCircle, Clock, Flame, ChevronUp, AlertTriangle, AlertOctagon
 } from 'lucide-react';
+import RefundModal from './components/RefundModal';
+import { notifyCustomer, notifyPartner } from './utils/notifications';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
 const STATE_NAMES = {
@@ -2210,6 +2212,35 @@ const CheckoutPage = () => {
 
        const result = await response.json();
 
+       if (result.status === 'approved' || result.status === 'confirmed') {
+       
+       // ... (seu código que salva a reserva no banco, se houver) ...
+
+       // 📧 [NOVO] Dispara os E-mails (sem await para não travar a tela)
+       console.log("📨 Enviando vouchers...");
+       
+       // O objeto 'bookingData' ou 'result.reservation' depende de como você montou. 
+       // Se você tiver os dados da reserva salvos em 'bookingData', use-o.
+       // O segundo parâmetro deve ser o ID da transação ou da reserva.
+       
+       const reservationData = { 
+           ...bookingData, 
+           paymentId: result.id, 
+           status: result.status 
+       };
+
+       notifyCustomer(reservationData, result.id.toString());
+       notifyPartner(reservationData, result.id.toString());
+
+       // 🚀 Redireciona
+       navigate('/success', { 
+          state: { 
+             paymentId: result.id,
+             reservation: reservationData
+          } 
+       });
+    }
+
        // --- TRATAMENTO DE ERROS COM DESIGN BONITO ---
        if (!response.ok) {
            // Overbooking (409)
@@ -2527,22 +2558,91 @@ const PartnerCallbackPage = () => {
 };
 
 // --- USER DASHBOARD (MEUS INGRESSOS) ---
+// --- FORMATADORES ---
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    try { return dateStr.split('-').reverse().join('/'); } catch (e) { return dateStr; }
+};
+
+// --- COMPONENTE DE URGÊNCIA ---
+const StockIndicator = ({ dayuseId, date, currentReservationId }) => {
+    const [stock, setStock] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchStock = async () => {
+            try {
+                const dayUseSnap = await getDoc(doc(db, "dayuses", dayuseId));
+                if (!dayUseSnap.exists()) return;
+                const item = dayUseSnap.data();
+
+                let limit = 50;
+                if (item.dailyStock) {
+                    if (typeof item.dailyStock === 'object' && item.dailyStock.adults) limit = Number(item.dailyStock.adults);
+                    else if (typeof item.dailyStock === 'string') limit = Number(item.dailyStock);
+                } else if (item.limit) limit = Number(item.limit);
+
+                const q = query(
+                    collection(db, "reservations"),
+                    where("item.id", "==", dayuseId),
+                    where("date", "==", date),
+                    where("status", "in", ["confirmed", "validated", "approved", "paid"])
+                );
+                
+                const snapshot = await getDocs(q);
+                let occupied = 0;
+                snapshot.forEach(d => {
+                    if (d.id !== currentReservationId) {
+                        occupied += (Number(d.data().adults || 0) + Number(d.data().children || 0));
+                    }
+                });
+
+                setStock(Math.max(0, limit - occupied));
+            } catch (e) {
+                console.error("Erro stock:", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchStock();
+    }, [dayuseId, date]);
+
+    if (loading) return <span className="text-xs text-slate-400 animate-pulse">Verificando vagas...</span>;
+    if (stock === 0) return <span className="text-xs font-bold text-red-600 flex items-center gap-1"><XCircle size={12}/> Vagas Esgotadas!</span>;
+    if (stock <= 5) return <span className="text-xs font-bold text-orange-600 flex items-center gap-1 animate-pulse"><Flame size={12}/> Corra! Restam só {stock} vagas</span>;
+    return <span className="text-xs font-medium text-green-600 flex items-center gap-1"><CheckCircle size={12}/> Vagas disponíveis ({stock})</span>;
+};
+
+// --- COMPONENTE PRINCIPAL ---
 const UserDashboard = () => {
+  const navigate = useNavigate();
   const [trips, setTrips] = useState([]);
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Filtros
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterDate, setFilterDate] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
+
+  const clearFilters = () => {
+      setSearchTerm('');
+      setFilterDate('');
+      setFilterStatus('all');
+  };
+
+  const hasActiveFilters = searchTerm || filterDate || filterStatus !== 'all';
+
   useEffect(() => {
      const unsub = onAuthStateChanged(auth, u => {
         if(u) {
            setUser(u);
-           // Usando getDocs conforme sua versão que funcionou
            const q = query(collection(db, "reservations"), where("userId", "==", u.uid));
            
            getDocs(q)
              .then(s => {
-                 // Mapeia e ordena por data (mais recente primeiro)
                  const data = s.docs.map(d => ({id: d.id, ...d.data()}));
                  data.sort((a, b) => {
                      const dateA = a.createdAt?.seconds || a.date;
@@ -2560,70 +2660,295 @@ const UserDashboard = () => {
      return unsub;
   }, []);
 
-  const formatDate = (dateStr) => {
-      if (!dateStr) return '';
-      try { return dateStr.split('-').reverse().join('/'); } catch (e) { return dateStr; }
+  // Navegar para Checkout (Recuperação)
+  const handleResumePayment = (trip) => {
+      const bookingData = {
+          item: trip.item,
+          date: trip.date,
+          adults: trip.adults,
+          children: trip.children,
+          pets: trip.pets,
+          selectedSpecial: trip.selectedSpecial || {},
+          priceSnapshot: trip.priceSnapshot || {},
+          total: trip.total,
+          couponCode: trip.couponCode,
+          dayuseId: trip.item?.id || trip.dayuseId
+      };
+      navigate('/checkout', { state: { bookingData } });
   };
 
-  if (loading) return <div className="text-center py-20 text-slate-400">Carregando ingressos...</div>;
+  // Navegar para Detalhes (Recompra de Expirado)
+  const handleRepurchase = (trip) => {
+      if (trip.item) {
+          const stateSlug = getStateSlug(trip.item.state);
+          const nameSlug = generateSlug(trip.item.name);
+          navigate(`/${stateSlug}/${nameSlug}`, { state: { id: trip.item.id } });
+      } else {
+          // Fallback se o item não tiver dados completos
+          navigate('/');
+      }
+  };
+
+  // Lógica de Clique no Card (Imagem/Nome)
+  const handleCardClick = (trip, isConfirmed) => {
+      if (isConfirmed) {
+          setSelectedVoucher(trip);
+      }
+      // Se não for confirmado, não faz nada (foco no botão de ação)
+  };
+
+  const getStatusBadge = (status, isExpired) => {
+      if (isExpired && status !== 'confirmed' && status !== 'validated') {
+          return <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><Clock size={12}/> Expirado</span>;
+      }
+
+      switch (status) {
+          case 'confirmed':
+          case 'approved':
+              return <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Confirmado</span>;
+          case 'validated':
+              return <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> Utilizado</span>;
+          case 'pending':
+          case 'waiting_payment':
+              return <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><Clock size={12}/> Aguardando</span>;
+          case 'failed_payment':
+              return <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CreditCard size={12}/> Recusado</span>;
+          case 'cancelled_sold_out':
+              return <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"><XCircle size={12}/> Esgotado</span>;
+          default:
+              return <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-xs font-bold">Cancelado</span>;
+      }
+  };
+
+  // --- FILTRAGEM CORRIGIDA ---
+  const filteredTrips = trips.filter(t => {
+      // 1. Filtro de Texto
+      const matchText = (t.item?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        (t.item?.city || '').toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // 2. Filtro de Data
+      const matchDate = filterDate ? t.date === filterDate : true;
+      
+      // 3. Filtro de Status (Agrupamento Inteligente)
+      let matchStatus = true;
+      if (filterStatus !== 'all') {
+          if (filterStatus === 'waiting_payment') {
+              // Agrupa todos os pendentes/falhos
+              matchStatus = ['pending', 'waiting_payment', 'failed_payment'].includes(t.status);
+          } else if (filterStatus === 'confirmed') {
+              // Agrupa confirmados e aprovados
+              matchStatus = ['confirmed', 'approved'].includes(t.status);
+          } else if (filterStatus === 'cancelled') {
+              // Agrupa cancelados manuais e por falta de estoque
+              matchStatus = ['cancelled', 'cancelled_sold_out', 'chargeback'].includes(t.status);
+          } else {
+              // Para 'validated' ou outros, busca exato
+              matchStatus = t.status === filterStatus;
+          }
+      }
+      
+      return matchText && matchDate && matchStatus;
+  });
+
+  if (loading) return <div className="text-center py-20 text-slate-400 flex flex-col items-center gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-[#0097A8] rounded-full animate-spin"></div>Carregando ingressos...</div>;
   if (!user) return <div className="text-center py-20 text-slate-400">Faça login para ver seus ingressos.</div>;
 
   return (
-     <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in">
+     <div className="max-w-4xl mx-auto py-12 px-4 animate-fade-in min-h-[60vh]">
         <VoucherModal isOpen={!!selectedVoucher} trip={selectedVoucher} onClose={() => setSelectedVoucher(null)} />
         
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
             <h1 className="text-3xl font-bold text-slate-900">Meus Ingressos</h1>
+            
+            {/* BOTÃO MOBILE PARA ABRIR FILTROS */}
+            <button 
+                onClick={() => setShowFilters(!showFilters)}
+                className="md:hidden flex items-center gap-2 text-sm font-bold text-slate-600 bg-slate-100 px-4 py-2 rounded-xl w-full justify-between"
+            >
+                <span className="flex items-center gap-2"><Filter size={16}/> Filtros {hasActiveFilters && <span className="w-2 h-2 bg-teal-500 rounded-full"></span>}</span>
+                {showFilters ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+            </button>
+        </div>
+
+        {/* BARRA DE FILTROS (COLLAPSIBLE NO MOBILE) */}
+        <div className={`bg-white md:p-4 rounded-2xl md:border border-slate-200 md:shadow-sm mb-8 flex flex-col md:flex-row gap-4 overflow-hidden transition-all duration-300 ease-in-out ${showFilters ? 'max-h-[500px] opacity-100 p-4 border shadow-sm' : 'max-h-0 opacity-0 md:max-h-none md:opacity-100 md:overflow-visible'}`}>
+            
+            {/* Campo de Busca */}
+            <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                <input 
+                    type="text" 
+                    placeholder="Buscar por nome ou cidade..." 
+                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                />
+            </div>
+
+            {/* Campo de Data */}
+            <div className="relative w-full md:w-auto">
+                <input 
+                    type="date" 
+                    className="w-full md:w-auto px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                />
+            </div>
+
+            {/* Campo de Status */}
+            <div className="relative w-full md:w-auto">
+                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
+                <select 
+                    className="w-full md:w-auto pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600 appearance-none focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                >
+                    <option value="all">Todos os Status</option>
+                    <option value="confirmed">Confirmados</option>
+                    <option value="waiting_payment">Aguardando Pagamento</option>
+                    <option value="validated">Utilizados</option>
+                    <option value="cancelled">Cancelados</option>
+                </select>
+            </div>
+
+            {/* [NOVO] Botão Limpar Filtros (Só aparece se tiver filtro ativo) */}
+            {hasActiveFilters && (
+                <button 
+                    onClick={clearFilters}
+                    className="flex items-center justify-center gap-1 px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-xl transition-colors md:w-auto w-full border border-transparent hover:border-red-100"
+                >
+                    <X size={14}/> Limpar
+                </button>
+            )}
         </div>
         
         <div className="space-y-6">
-           {trips.length === 0 ? (
+           {filteredTrips.length === 0 ? (
                <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
                    <Ticket size={40} className="mx-auto text-slate-300 mb-4"/>
-                   <h3 className="text-xl font-bold text-slate-700 mb-2">Nenhum ingresso ainda</h3>
-                   <p className="text-slate-500 mb-6">Encontre o lugar perfeito para o seu próximo Day Use.</p>
-                   <Button onClick={()=>window.location.href='/'}>Explorar Destinos</Button>
+                   <h3 className="text-xl font-bold text-slate-700 mb-2">Nenhum ingresso encontrado</h3>
+                   <p className="text-slate-500 mb-6">Tente ajustar seus filtros ou busque novos destinos.</p>
+                   {searchTerm || filterDate || filterStatus !== 'all' ? (
+                       <Button variant="outline" onClick={() => {setSearchTerm(''); setFilterDate(''); setFilterStatus('all')}}>Limpar Filtros</Button>
+                   ) : (
+                       <Button onClick={()=>window.location.href='/'}>Explorar Destinos</Button>
+                   )}
                </div>
            ) : (
-               trips.map(t => (
-                  <div key={t.id} className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
-                     <div className="flex gap-4 items-center w-full md:w-auto">
-                        <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden shrink-0">
-                            <img src={t.item?.image || t.itemImage} className="w-full h-full object-cover" alt="Local"/>
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-lg text-slate-900">{t.item?.name || t.itemName}</h3>
-                          <p className="text-sm text-slate-500 flex items-center gap-1 mt-1">
-                              <CalendarIcon size={14}/> {formatDate(t.date)}
-                          </p>
-                          
-                          <div className="text-xs text-slate-500 mt-2 font-medium flex gap-3 flex-wrap">
-                              <span className="flex items-center gap-1"><User size={12}/> {t.adults} Adultos</span>
-                              {t.children > 0 && <span>• {t.children} Crianças</span>}
-                              {t.pets > 0 && <span className="flex items-center gap-1">• <PawPrint size={12}/> {t.pets}</span>}
-                          </div>
+               filteredTrips.map(t => {
+                  // Lógica de Estado
+                  const today = new Date().toISOString().split('T')[0];
+                  const isExpiredDate = t.date < today;
+                  
+                  const isConfirmed = ['confirmed', 'approved', 'validated'].includes(t.status);
+                  const isPendingPay = ['pending', 'waiting_payment', 'failed_payment'].includes(t.status);
+                  
+                  // Se passou da data e não pagou, é "Perdido/Expirado"
+                  const isMissed = isPendingPay && isExpiredDate;
+                  
+                  // Se não passou da data e não pagou, é "Recuperável"
+                  const isRecoverable = isPendingPay && !isExpiredDate;
+                  
+                  const isSoldOut = t.status === 'cancelled_sold_out';
 
-                          <div className="mt-3 flex items-center gap-3">
-                              <Badge type={t.status === 'cancelled' ? 'red' : t.status === 'validated' ? 'green' : 'default'}>
-                                 {t.status === 'cancelled' ? 'Cancelado' : t.status === 'validated' ? 'Utilizado' : 'Confirmado'}
-                              </Badge>
-                              <span className="font-bold text-slate-900">{formatBRL(t.total)}</span>
-                          </div>
+                  return (
+                     <div key={t.id} className={`bg-white border p-6 rounded-3xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 transition-all ${isRecoverable ? 'border-yellow-200 shadow-md ring-1 ring-yellow-100' : isMissed ? 'bg-slate-50 border-slate-200 opacity-90' : 'border-slate-200'}`}>
+                         
+                         <div className="flex gap-4 items-center w-full md:w-auto">
+                            {/* IMAGEM CLICÁVEL SE CONFIRMADO */}
+                            <div 
+                                className={`w-24 h-24 bg-slate-100 rounded-2xl overflow-hidden shrink-0 relative ${isConfirmed ? 'cursor-pointer group' : ''}`}
+                                onClick={() => handleCardClick(t, isConfirmed)}
+                            >
+                                <img src={t.item?.image || t.itemImage} className={`w-full h-full object-cover transition-transform ${isConfirmed ? 'group-hover:scale-105' : ''} ${isSoldOut || isMissed ? 'grayscale opacity-70' : ''}`} alt="Local"/>
+                                {isRecoverable && <div className="absolute inset-0 bg-yellow-500/10 flex items-center justify-center"><Clock className="text-yellow-600 drop-shadow-md" size={24}/></div>}
+                                {isMissed && <div className="absolute inset-0 bg-slate-500/20 flex items-center justify-center"><CalendarIcon className="text-slate-600" size={24}/></div>}
+                            </div>
+                            
+                            <div>
+                              {/* NOME CLICÁVEL SE CONFIRMADO */}
+                              <h3 
+                                className={`font-bold text-lg text-slate-900 ${isConfirmed ? 'cursor-pointer hover:text-[#0097A8] transition-colors' : ''}`}
+                                onClick={() => handleCardClick(t, isConfirmed)}
+                              >
+                                {t.item?.name || t.itemName}
+                              </h3>
+                              
+                              <p className="text-sm text-slate-500 flex items-center gap-1 mt-1">
+                                  <CalendarIcon size={14}/> {formatDate(t.date)}
+                                  {t.item?.city && <span className="flex items-center gap-1 ml-3 border-l pl-3 border-slate-300"><MapPin size={14}/> {t.item.city}</span>}
+                              </p>
+                              
+                              <div className="text-xs text-slate-500 mt-2 font-medium flex gap-3 flex-wrap">
+                                  <span className="flex items-center gap-1"><User size={12}/> {t.adults}</span>
+                                  {t.children > 0 && <span>• {t.children} Crianças</span>}
+                                  {t.pets > 0 && <span className="flex items-center gap-1">• <PawPrint size={12}/> {t.pets}</span>}
+                              </div>
 
-                          <div className="mt-2 text-xs font-mono bg-slate-50 p-1 px-2 rounded w-fit border border-slate-200 text-slate-500">
-                             #{t.id?.slice(0,6).toUpperCase()}
-                          </div>
-                        </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-3">
+                                  {getStatusBadge(t.status, isMissed)}
+                                  <span className="font-bold text-slate-900">{formatBRL(t.total)}</span>
+                              </div>
+                              
+                              {/* MENSAGENS DE ESTADO */}
+                              {t.status === 'failed_payment' && !isMissed && (
+                                  <p className="text-xs text-red-500 mt-2 font-medium">O último pagamento falhou.</p>
+                              )}
+                              {isSoldOut && (
+                                  <p className="text-xs text-slate-400 mt-2">Cancelado automaticamente (Esgotado).</p>
+                              )}
+                              {isMissed && (
+                                  <p className="text-xs text-slate-500 mt-2 flex items-center gap-1 bg-slate-100 p-2 rounded-lg">
+                                      <AlertTriangle size={12}/> Parece que você perdeu a data.
+                                  </p>
+                              )}
+                              
+                              {/* INDICADOR DE URGÊNCIA (SÓ SE RECUPERÁVEL) */}
+                              {isRecoverable && t.item?.id && (
+                                  <div className="mt-2">
+                                      <StockIndicator dayuseId={t.item.id} date={t.date} currentReservationId={t.id}/>
+                                  </div>
+                              )}
+                            </div>
+                         </div>
+                         
+                         <div className="flex flex-col gap-2 w-full md:w-auto items-end">
+                            {isMissed ? (
+                                // BOTÃO PARA RECOMPRAR (MISSING DATE)
+                                <Button 
+                                    className="w-full md:w-auto px-6 bg-slate-800 hover:bg-slate-700 shadow-none text-xs" 
+                                    onClick={() => handleRepurchase(t)}
+                                >
+                                    Ver Próximas Datas <ArrowRight size={14} className="ml-2"/>
+                                </Button>
+                            ) : isRecoverable ? (
+                                // BOTÃO DE RECUPERAÇÃO (COM URGÊNCIA)
+                                <>
+                                    <Button 
+                                        className={`w-full md:w-auto px-6 ${t.status === 'failed_payment' ? 'bg-red-500 hover:bg-red-600 shadow-red-200' : 'bg-yellow-500 hover:bg-yellow-600 shadow-yellow-200'}`} 
+                                        onClick={() => handleResumePayment(t)}
+                                    >
+                                        {t.status === 'failed_payment' ? 'Tentar Outro Cartão' : 'Finalizar Compra'}
+                                    </Button>
+                                    <p className="text-[10px] text-slate-400 text-center md:text-right">Não perca sua reserva!</p>
+                                </>
+                            ) : (
+                                // BOTÃO PADRÃO (VER VOUCHER)
+                                <div className="flex flex-col items-end gap-2 w-full">
+                                    <div className="text-xs font-mono bg-slate-50 p-1 px-2 rounded w-fit border border-slate-200 text-slate-500 mb-2 md:mb-0">
+                                        #{t.id?.slice(0,6).toUpperCase()}
+                                    </div>
+                                    {(isConfirmed) && (
+                                        <Button variant="outline" className="px-4 py-2 h-auto text-xs w-full md:w-auto justify-center" onClick={() => setSelectedVoucher(t)}>
+                                            Abrir Voucher
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
+                         </div>
                      </div>
-                     
-                     <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
-                        <Button variant="outline" className="px-4 py-2 h-auto text-xs w-full md:w-auto justify-center" onClick={() => setSelectedVoucher(t)}>
-                            {t.status === 'confirmed' ? 'Abrir Voucher' : 'Ver Detalhes'}
-                        </Button>
-                        {/* Botão Cancelar Removido */}
-                     </div>
-                  </div>
-               ))
+                  );
+               })
            )}
         </div>
      </div>
@@ -3144,11 +3469,11 @@ const OccupancyCalendar = ({ reservations, selectedDate, onDateSelect }) => {
 const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, items = [] }) => {
     if (!isOpen) return null;
 
-    // Filtra e ordena (Mais recentes primeiro)
+    // 1. FILTRO: Adicionado refunded, chargeback e overbooking_refund
     const monthRes = reservations.filter(r => 
         r.createdAt && 
         new Date(r.createdAt.seconds * 1000).getMonth() === monthIndex && 
-        r.status === 'confirmed'
+        ['confirmed', 'approved', 'validated', 'refunded', 'chargeback', 'overbooking_refund'].includes(r.status)
     ).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
 
     // Helper de formatação BRL
@@ -3156,8 +3481,12 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
 
     // --- LÓGICA DE CÁLCULO POR LINHA ---
     const calculateRow = (res) => {
-        const item = items.find(i => i.id === res.dayuseId);
+        const item = items.find(i => i.id === res.dayuseId) || {}; // Fallback para objeto vazio
         
+        // --- NOVO: Detecta se é negativo ---
+        const isNegative = ['refunded', 'chargeback', 'overbooking_refund'].includes(res.status);
+        const multiplier = isNegative ? -1 : 1;
+
         // 1. Identificar Cupom e Valores
         let couponPercent = 0;
         let couponCode = "-";
@@ -3174,13 +3503,15 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
              couponCode = res.couponCode || "DESCONTO";
         }
 
-        const paid = res.total || 0; 
-        const gross = couponPercent > 0 ? paid / (1 - (couponPercent/100)) : paid;
-        const discountVal = gross - paid;
+        // Valores Absolutos (Sem sinal negativo ainda)
+        const paidAbs = res.total || 0; 
+        const grossAbs = couponPercent > 0 ? paidAbs / (1 - (couponPercent/100)) : paidAbs;
+        const discountValAbs = grossAbs - paidAbs;
 
         // 2. Definir Taxa da Plataforma
-        const resDate = res.createdAt.toDate ? res.createdAt.toDate() : new Date(res.createdAt);
         let refDate = new Date();
+        const resDate = res.createdAt.toDate ? res.createdAt.toDate() : new Date(res.createdAt);
+        
         if (item) {
             if (item.firstActivationDate) {
                 refDate = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
@@ -3193,13 +3524,25 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
         const isPromo = diffDays <= 30;
         const rate = isPromo ? 0.10 : 0.12;
 
-        // 3. Calcular Taxa Adm (Sobre o Valor Original/Bruto)
-        const fee = gross * rate;
+        // 3. Calcular Taxa Adm
+        const feeAbs = grossAbs * rate;
 
-        // 4. Líquido
-        const net = paid - fee;
+        // 4. Líquido Absoluto
+        const netAbs = paidAbs - feeAbs;
 
-        return { gross, paid, discountVal, fee, net, isPromo, rate, couponCode, couponPercent };
+        // --- APLICA O SINAL (Se for estorno, tudo fica negativo) ---
+        return { 
+            gross: grossAbs * multiplier, 
+            paid: paidAbs * multiplier, 
+            discountVal: discountValAbs, // Desconto geralmente não se negativa visualmente, mas matematicamente ok
+            fee: feeAbs * multiplier, 
+            net: netAbs * multiplier, 
+            isPromo, 
+            rate, 
+            couponCode, 
+            couponPercent,
+            isNegative // Flag para pintar de vermelho
+        };
     };
 
     // Totais para o Rodapé
@@ -3213,9 +3556,9 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
         };
     }, { gross: 0, paid: 0, fee: 0, net: 0 });
 
-    // --- FUNÇÃO EXPORTAR CSV (CORRIGIDA) ---
+    // --- FUNÇÃO EXPORTAR CSV ---
     const handleExportCSV = () => {
-        const header = "Data da compra;Hora da compra;ID da transação;Nome e sobrenome;Valor original;Cupom;% do cupom;Valor cupom;Valor pago;Taxa admin %;Valor taxa;Valor liquido\n";
+        const header = "Data da compra;Hora da compra;ID da transação;Nome e sobrenome;Status;Valor original;Cupom;% do cupom;Valor cupom;Valor pago;Taxa admin %;Valor taxa;Valor liquido\n";
         
         let csvContent = header;
 
@@ -3225,19 +3568,14 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
             
             // Formatadores
             const fmtNum = (n) => n.toFixed(2).replace('.', ',');
-            
-            // CORREÇÃO 1: ID DO MERCADO PAGO
-            // Tenta pegar o ID real (paymentId). Se não tiver, usa o ID da reserva como fallback.
-            // O .replace remove prefixos internos se existirem (ex: 'FRONT_PIX_...') para ficar limpo.
-            const transactionId = res.paymentId 
-                ? res.paymentId.replace(/^(FRONT_|PIX-|CARD_)/, '') 
-                : res.id; 
+            const transactionId = res.paymentId ? res.paymentId.replace(/^(FRONT_|PIX-|CARD_)/, '') : res.id; 
 
             const row = [
                 dateObj.toLocaleDateString('pt-BR'),
                 dateObj.toLocaleTimeString('pt-BR'),
-                `"${transactionId}"`,                          // ID Corrigido (MP)
+                `"${transactionId}"`,
                 `"${res.guestName}"`,
+                res.status, // Adicionado Status
                 fmtNum(calc.gross),
                 calc.couponCode,
                 calc.couponPercent > 0 ? fmtNum(calc.couponPercent) + '%' : '-',
@@ -3251,17 +3589,16 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
             csvContent += row + "\n";
         });
 
-        // CORREÇÃO 2: NOME DO ARQUIVO PERSONALIZADO
+        // NOME DO ARQUIVO PERSONALIZADO
         const meses = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
         const nomeMes = meses[monthIndex];
         const ano = new Date().getFullYear();
         
-        // Pega o nome do local (day use) do primeiro item, limpa espaços e acentos
         const nomeLocalRaw = items.length > 0 ? items[0].name : "estabelecimento";
         const nomeLocal = nomeLocalRaw
             .toLowerCase()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
-            .replace(/[^a-z0-9]/g, "_"); // Troca espaços/símbolos por underline
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
+            .replace(/[^a-z0-9]/g, "_");
 
         const fileName = `extrato_detalhado_${nomeLocal}_mapadodayuse_${nomeMes}_${ano}.csv`;
 
@@ -3269,7 +3606,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
         link.setAttribute("href", url);
-        link.setAttribute("download", fileName); // Nome novo aplicado aqui
+        link.setAttribute("download", fileName);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
@@ -3328,47 +3665,42 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                 <tbody className="text-sm text-slate-600">
                                     {monthRes.map((res) => {
                                         const calc = calculateRow(res);
-                                        // Usa o mesmo ID corrigido na visualização da tabela
                                         const displayId = res.paymentId ? res.paymentId.replace(/^(FRONT_|PIX-)/, '') : res.id.slice(0,6).toUpperCase();
 
                                         return (
-                                            <tr key={res.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                                                <td className="py-3 pl-2">
-                                                    <div className="font-mono text-xs text-slate-500">{new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}</div>
-                                                    <div className="text-[10px] text-slate-400 font-mono">#{displayId}</div>
+                                            <tr key={res.id} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 ${calc.isNegative ? 'bg-red-50/40' : ''}`}>
+                                                <td className="px-2 py-4">
+                                                    <div className="font-mono text-xs bg-slate-100 px-2 py-1 rounded w-fit mb-1">#{displayId.slice(0,8)}</div>
+                                                    <div className="flex items-center gap-1 font-bold text-slate-700">
+                                                        <Calendar size={12}/> {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')}
+                                                    </div>
+                                                    {/* TAG VISUAL DE ESTORNO */}
+                                                    {res.status === 'refunded' && <span className="text-[10px] font-bold text-red-500 block mt-1">ESTORNADO</span>}
+                                                    {res.status === 'chargeback' && <span className="text-[10px] font-bold text-red-600 flex items-center gap-1 mt-1"><AlertOctagon size={10}/> CHARGEBACK</span>}
                                                 </td>
-                                                <td className="py-3">
-                                                    <div className="font-bold text-slate-800 line-clamp-1">{res.guestName}</div>
-                                                    <span className={`text-[9px] px-1 rounded border uppercase ${res.paymentMethod==='pix'?'bg-teal-50 border-teal-100 text-teal-700':'bg-blue-50 border-blue-100 text-blue-700'}`}>{res.paymentMethod}</span>
+                                                <td className="px-2 py-4">
+                                                    <div className="font-bold text-slate-900">{res.guestName}</div>
+                                                    <div className="text-xs text-slate-400">{res.guestEmail}</div>
                                                 </td>
-                                                
-                                                <td className="py-3 text-right font-medium text-slate-400">
+                                                <td className={`px-2 py-4 text-right ${calc.isNegative ? 'text-red-400' : ''}`}>
                                                     {formatBRL(calc.gross)}
                                                 </td>
-
-                                                <td className="py-3 text-right">
-                                                    {calc.discountVal > 0 ? (
-                                                        <>
-                                                            <div className="text-purple-600 font-bold text-xs">- {formatBRL(calc.discountVal)}</div>
-                                                            <div className="text-[9px] text-purple-400 flex justify-end items-center gap-1">
-                                                                <Tag size={8}/> {calc.couponCode}
-                                                            </div>
-                                                        </>
-                                                    ) : <span className="text-slate-300">-</span>}
+                                                <td className="px-2 py-4 text-right">
+                                                    {calc.couponPercent > 0 ? (
+                                                        <span className="bg-purple-50 text-purple-700 px-2 py-1 rounded text-xs font-bold">
+                                                            {calc.couponCode}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-slate-300">-</span>
+                                                    )}
                                                 </td>
-
-                                                <td className="py-3 text-right font-bold text-slate-700">
+                                                <td className={`px-2 py-4 text-right font-bold ${calc.isNegative ? 'text-red-600' : 'text-slate-700'}`}>
                                                     {formatBRL(calc.paid)}
                                                 </td>
-
-                                                <td className="py-3 text-right">
-                                                    <div className="text-red-500 font-medium text-xs">- {formatBRL(calc.fee)}</div>
-                                                    <span className={`text-[9px] px-1 rounded font-bold uppercase ${calc.isPromo ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                        {calc.rate * 100}%
-                                                    </span>
+                                                <td className={`px-2 py-4 text-right text-xs ${calc.isNegative ? 'text-red-400' : 'text-red-500'}`}>
+                                                    {formatBRL(calc.fee)}
                                                 </td>
-
-                                                <td className="py-3 text-right pr-2 text-green-700 font-bold">
+                                                <td className={`px-2 py-4 text-right font-bold ${calc.isNegative ? 'text-red-700' : 'text-green-700'}`}>
                                                     {formatBRL(calc.net)}
                                                 </td>
                                             </tr>
@@ -3384,7 +3716,7 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                     const displayId = res.paymentId ? res.paymentId.replace(/^(FRONT_|PIX-)/, '') : res.id.slice(0,6).toUpperCase();
 
                                     return (
-                                        <div key={res.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                                        <div key={res.id} className={`bg-white p-4 rounded-xl shadow-sm border ${calc.isNegative ? 'border-red-200 bg-red-50/20' : 'border-slate-100'}`}>
                                             <div className="flex justify-between items-start mb-3 border-b border-slate-50 pb-2">
                                                 <div>
                                                     <p className="font-bold text-slate-800 text-sm">{res.guestName}</p>
@@ -3392,38 +3724,43 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                                                         {new Date(res.createdAt.seconds * 1000).toLocaleDateString('pt-BR')} • #{displayId}
                                                     </p>
                                                 </div>
-                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                                                    res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
-                                                }`}>
-                                                    {res.paymentMethod}
-                                                </span>
+                                                <div className="text-right">
+                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                                                        res.paymentMethod === 'pix' ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+                                                    }`}>
+                                                        {res.paymentMethod}
+                                                    </span>
+                                                    {calc.isNegative && <span className="block text-[10px] font-bold text-red-600 mt-1 uppercase">{res.status}</span>}
+                                                </div>
                                             </div>
                                             
                                             <div className="space-y-2">
                                                 <div className="flex justify-between text-xs text-slate-500">
                                                     <span>Valor Original:</span>
-                                                    <span>{formatBRL(calc.gross)}</span>
+                                                    <span className={calc.isNegative ? 'text-red-400' : ''}>{formatBRL(calc.gross)}</span>
                                                 </div>
                                                 {calc.discountVal > 0 && (
                                                     <div className="flex justify-between text-xs text-purple-600 font-medium">
                                                         <span className="flex items-center gap-1"><Tag size={10}/> Cupom ({calc.couponCode}):</span>
-                                                        <span>- {formatBRL(calc.discountVal)}</span>
+                                                        <span>- {formatBRL(Math.abs(calc.discountVal))}</span>
                                                     </div>
                                                 )}
                                                 
                                                 <div className="border-t border-slate-50 my-1"></div>
 
-                                                <div className="flex justify-between text-sm font-bold text-slate-700">
+                                                <div className={`flex justify-between text-sm font-bold ${calc.isNegative ? 'text-red-600' : 'text-slate-700'}`}>
                                                     <span>Valor Pago:</span>
                                                     <span>{formatBRL(calc.paid)}</span>
                                                 </div>
-                                                <div className="flex justify-between text-xs text-red-500 font-medium bg-red-50 px-2 py-1 rounded">
+                                                <div className={`flex justify-between text-xs font-medium px-2 py-1 rounded ${calc.isNegative ? 'bg-red-100 text-red-600' : 'bg-red-50 text-red-500'}`}>
                                                     <span>Taxa ({calc.rate*100}%):</span>
-                                                    <span>- {formatBRL(calc.fee)}</span>
+                                                    <span>{formatBRL(calc.fee)}</span>
                                                 </div>
 
-                                                <div className="flex justify-between text-sm font-bold text-green-700 bg-green-50 px-2 py-2 rounded mt-1 border border-green-100">
-                                                    <span>Líquido a Receber:</span>
+                                                <div className={`flex justify-between text-sm font-bold px-2 py-2 rounded mt-1 border ${
+                                                    calc.isNegative ? 'bg-red-100 text-red-800 border-red-200' : 'bg-green-50 text-green-700 border-green-100'
+                                                }`}>
+                                                    <span>Líquido:</span>
                                                     <span>{formatBRL(calc.net)}</span>
                                                 </div>
                                             </div>
@@ -3439,20 +3776,20 @@ const FinancialStatementModal = ({ isOpen, onClose, reservations, monthIndex, it
                 <div className="p-4 md:p-6 bg-white md:bg-slate-50 border-t border-slate-200">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 text-right">
                         <div>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">Original</p>
-                            <p className="text-sm md:text-lg font-bold text-slate-500">{formatBRL(totals.gross)}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">Bruto</p>
+                            <p className={`text-sm md:text-lg font-bold ${totals.gross < 0 ? 'text-red-500' : 'text-slate-500'}`}>{formatBRL(totals.gross)}</p>
                         </div>
                         <div>
                             <p className="text-[10px] text-slate-500 font-bold uppercase">Pago</p>
-                            <p className="text-sm md:text-lg font-bold text-slate-800">{formatBRL(totals.paid)}</p>
+                            <p className={`text-sm md:text-lg font-bold ${totals.paid < 0 ? 'text-red-500' : 'text-slate-800'}`}>{formatBRL(totals.paid)}</p>
                         </div>
                         <div>
                             <p className="text-[10px] text-red-400 font-bold uppercase">Taxas</p>
-                            <p className="text-sm md:text-lg font-bold text-red-500">- {formatBRL(totals.fee)}</p>
+                            <p className={`text-sm md:text-lg font-bold ${totals.fee < 0 ? 'text-red-600' : 'text-red-500'}`}>- {formatBRL(Math.abs(totals.fee))}</p>
                         </div>
-                        <div className="bg-green-50 rounded-lg p-1 md:bg-transparent md:p-0">
-                            <p className="text-[10px] text-green-600 font-bold uppercase">Líquido</p>
-                            <p className="text-sm md:text-2xl font-bold text-green-700">{formatBRL(totals.net)}</p>
+                        <div className={`rounded-lg p-1 md:bg-transparent md:p-0 ${totals.net < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                            <p className={`text-[10px] font-bold uppercase ${totals.net < 0 ? 'text-red-600' : 'text-green-600'}`}>Líquido</p>
+                            <p className={`text-sm md:text-2xl font-bold ${totals.net < 0 ? 'text-red-700' : 'text-green-700'}`}>{formatBRL(totals.net)}</p>
                         </div>
                     </div>
                 </div>
@@ -3513,6 +3850,116 @@ const PartnerDashboard = () => {
 
   const [newMemberRole, setNewMemberRole] = useState('staff');
   const [mainOwnerId, setMainOwnerId] = useState(null);
+
+  // [NOVO] State para o Modal de Estorno
+  const [hasChargeback, setHasChargeback] = useState(false);
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [selectedForRefund, setSelectedForRefund] = useState(null);
+  const [refundLoading, setRefundLoading] = useState(false);
+
+  // --- NOVA LÓGICA DE CÁLCULO (Substitua ou ajuste sua calculateStats atual) ---
+  const calculateStats = (data) => {
+      let revenue = 0;
+      let lost = 0; // Dinheiro perdido
+      let guests = 0;
+      let active = 0;
+      let chargebackFound = false;
+
+      data.forEach(r => {
+          const total = Number(r.total || 0);
+
+          // Soma Receita (Vendas Confirmadas)
+          if (['confirmed', 'validated', 'approved'].includes(r.status)) {
+              revenue += total;
+              guests += (Number(r.adults) + Number(r.children));
+              active++;
+          }
+          // Soma Perdas (Estornos e Chargebacks)
+          else if (['refunded', 'chargeback', 'overbooking_refund'].includes(r.status)) {
+              lost += total;
+              if (r.status === 'chargeback') chargebackFound = true;
+          }
+      });
+
+      // Atualiza os stats (Adicione lostRevenue e netRevenue ao seu state de stats se não tiver)
+      setStats({
+          totalRevenue: revenue,
+          netRevenue: (revenue * 0.90), // Ex: Receita - 10%
+          lostRevenue: lost,
+          activeBookings: active,
+          totalGuests: guests
+      });
+
+      setHasChargeback(chargebackFound);
+  };
+
+  // --- FUNÇÕES DE AÇÃO DO ESTORNO ---
+  const handleOpenRefund = (reservation) => {
+      setSelectedForRefund(reservation);
+      setRefundModalOpen(true);
+  };
+
+  const processRefund = async (reservation) => {
+      if (!user || !user.mp_access_token) {
+          alert("Erro: Token do Mercado Pago não encontrado. Conecte sua conta nas configurações.");
+          return;
+      }
+
+      setRefundLoading(true);
+
+      try {
+          // 2. Chamada da API (Com os dados novos para o e-mail)
+          const response = await fetch('/api/refund', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  paymentId: reservation.paymentId,
+                  partnerAccessToken: user.mp_access_token,
+                  
+                  // DADOS EXTRAS PARA O EMAIL DE ESTORNO
+                  guestEmail: reservation.guestEmail,
+                  guestName: reservation.guestName,
+                  itemName: reservation.item?.name || reservation.itemName || "Day Use",
+                  amount: reservation.total
+              })
+          });
+
+          const result = await response.json();
+
+          if (!response.ok) {
+              throw new Error(result.message || "Erro ao processar estorno no Mercado Pago");
+          }
+
+          // 3. Atualiza Firebase para 'refunded'
+          await updateDoc(doc(db, "reservations", reservation.id), {
+              status: 'refunded',
+              refundedAt: new Date(),
+              refundId: result.id
+          });
+
+          // 4. Atualiza UI localmente
+          const updatedList = reservations.map(r => 
+              r.id === reservation.id ? { ...r, status: 'refunded' } : r
+          );
+          setReservations(updatedList);
+          
+          // Recalcula os cards financeiros se a função existir
+          if (typeof calculateStats === 'function') {
+              calculateStats(updatedList);
+          }
+
+          alert("✅ Estorno realizado com sucesso e cliente notificado!");
+          setRefundModalOpen(false);
+
+      } catch (error) {
+          // 5. Bloco de Erro (O que estava faltando)
+          console.error(error);
+          alert(`Erro: ${error.message}`);
+      } finally {
+          // 6. Finalização (Onde para o loading)
+          setRefundLoading(false);
+      }
+  };
 
   // 1. CARREGAMENTO INICIAL E LISTENERS
     useEffect(() => {
@@ -4652,6 +5099,15 @@ const PartnerDashboard = () => {
             </ModalOverlay>, 
             document.body
         )}
+
+        {/* MODAL DE CONFIRMAÇÃO */}
+      <RefundModal 
+          isOpen={refundModalOpen}
+          onClose={() => setRefundModalOpen(false)}
+          onConfirm={processRefund}
+          reservation={selectedForRefund}
+          loading={refundLoading}
+      />
      </div>
   );
 };
@@ -5589,6 +6045,28 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  const [hasChargeback, setHasChargeback] = useState(false);
+
+  useEffect(() => {
+    const checkChargeback = async () => {
+      if (user && user.role === 'partner') {
+         try {
+           // Verifica se existe alguma reserva com status 'chargeback' para este parceiro
+           const q = query(
+             collection(db, "reservations"), 
+             where("ownerId", "==", user.uid), 
+             where("status", "==", "chargeback")
+           );
+           const snapshot = await getDocs(q);
+           setHasChargeback(!snapshot.empty);
+         } catch (e) {
+           console.error("Erro ao verificar chargeback:", e);
+         }
+      }
+    };
+    checkChargeback();
+  }, [user]);
+
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
 
   // Auto-hide da barra verde
@@ -5671,6 +6149,19 @@ const Layout = ({ children }) => {
 
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50 relative">
+
+        {hasChargeback && (
+            <div className="bg-red-600 text-white px-4 py-3 sticky top-0 z-50 shadow-md flex justify-between items-center mb-6">
+                <div className="flex items-center gap-2 font-bold text-sm">
+                    <AlertOctagon className="animate-pulse" size={20}/>
+                    <span>Atenção: Você tem contestações de pagamento (Chargeback).</span>
+                </div>
+                <a href="https://www.mercadopago.com.br/developers/pt/docs/chargebacks" target="_blank" rel="noreferrer" className="bg-white text-red-600 px-3 py-1 rounded-full text-xs font-bold">
+                    Resolver no MP <ExternalLink size={12} className="inline ml-1"/>
+                </a>
+            </div>
+        )}
+        
       <GlobalStyles />
       <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={handleLoginSuccess} />
       

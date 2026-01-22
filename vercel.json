@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/cron/recover",
+      "schedule": "*/30 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/sitemap.xml",
