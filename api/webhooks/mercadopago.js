@@ -250,7 +250,39 @@ const processOverbookingRefund = async (paymentId, partnerToken) => {
 };
 
 // ==================================================================
-// 4. HANDLER PRINCIPAL DO WEBHOOK
+// 4. [NOVO] HELPER: CANCELAR PENDENTES SE ESGOTAR
+// ==================================================================
+const cleanUpPendingReservations = async (db, itemId, date) => {
+    console.log(`🧹 Verificando pendências para limpar em: ${date}`);
+    
+    // Busca todas as reservas pendentes para este dia/local
+    const snapshot = await db.collection('reservations')
+        .where('item.id', '==', itemId) // Atenção ao item.id aninhado
+        .where('date', '==', date)
+        .where('status', 'in', ['pending', 'waiting_payment'])
+        .get();
+
+    if (snapshot.empty) return;
+
+    // Executa cancelamento em lote (Batch)
+    const batch = db.batch();
+    let count = 0;
+
+    snapshot.forEach(doc => {
+        batch.update(doc.ref, { 
+            status: 'cancelled_sold_out',
+            updatedAt: new Date(),
+            autoCancelled: true
+        });
+        count++;
+    });
+
+    await batch.commit();
+    console.log(`🚫 ${count} reservas pendentes foram canceladas automaticamente por falta de estoque.`);
+};
+
+// ==================================================================
+// 5. HANDLER PRINCIPAL DO WEBHOOK
 // ==================================================================
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
