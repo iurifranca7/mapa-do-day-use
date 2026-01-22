@@ -34,7 +34,7 @@ import {
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
   TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, 
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
-  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX
+  Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX, XCircle
 } from 'lucide-react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
