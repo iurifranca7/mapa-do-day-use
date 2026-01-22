@@ -61,26 +61,38 @@ export default async function handler(req, res) {
     // ==================================================================
     // 🛑 GUARDIÃO DO ESTOQUE (CORRIGIDO)
     // ==================================================================
-    const bookingDate = bookingDetails.date;
-    const limit = Number(item.limit || 50); 
+   const bookingDate = bookingDetails.date; // Data: "2024-02-20"
     
-    // CORREÇÃO AQUI: Usamos bookingDetails.dayuseId em vez de item.id
+    // 1. Pega a Capacidade Máxima (dailyStock)
+    // Se não tiver dailyStock, usa limit, se não tiver, assume 50
+    const maxCapacity = Number(item.dailyStock || item.limit || 50); 
+    
+    // 2. Busca TODAS as reservas confirmadas para ESSE DIA
     const reservationsSnapshot = await db.collection('reservations')
         .where('dayuseId', '==', bookingDetails.dayuseId) 
         .where('date', '==', bookingDate)
-        .where('status', 'in', ['confirmed', 'validated']) 
+        .where('status', 'in', ['confirmed', 'validated']) // Apenas quem já pagou conta espaço
         .get();
 
+    // 3. Soma quantas pessoas já ocuparam lugar
     let currentOccupancy = 0;
     reservationsSnapshot.forEach(doc => {
         const d = doc.data();
-        currentOccupancy += (Number(d.adults) + Number(d.children)); 
+        // Soma Adultos + Crianças (assumindo que crianças contam na lotação)
+        currentOccupancy += (Number(d.adults || 0) + Number(d.children || 0)); 
     });
 
-    const newGuests = Number(bookingDetails.adults) + Number(bookingDetails.children);
+    // 4. Quantos querem entrar agora?
+    const newGuests = Number(bookingDetails.adults || 0) + Number(bookingDetails.children || 0);
 
-    if ((currentOccupancy + newGuests) > limit) {
-        return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas.' });
+    console.log(`📊 Estoque Dia ${bookingDate}: Ocupado ${currentOccupancy} + Novo ${newGuests} / Máx ${maxCapacity}`);
+
+    // 5. Verifica se cabe
+    if ((currentOccupancy + newGuests) > maxCapacity) {
+        return res.status(409).json({ 
+            error: 'Sold Out', 
+            message: `Ops! Restam apenas ${maxCapacity - currentOccupancy} vagas para esta data.` 
+        });
     }
 
     // ==================================================================
