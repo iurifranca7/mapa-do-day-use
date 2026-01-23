@@ -2043,6 +2043,13 @@ const CheckoutPage = () => {
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
   const [issuerId, setIssuerId] = useState(null);
   const [isCardReady, setIsCardReady] = useState(false);
+  const cardFormMounted = useRef(false);
+  const changeMethod = (method) => {
+      setPaymentMethod(method);
+      if (method === 'pix') {
+          cardFormMounted.current = false; // Reseta para poder montar o cartão de novo se o usuário voltar
+      }
+  };
 
   // ============================================================
   // SISTEMA DE NOTIFICAÇÃO (Embutido)
@@ -2122,31 +2129,38 @@ const CheckoutPage = () => {
     if(!bookingData) { navigate('/'); return; }
     
     const initMP = async () => {
-        // Verifica se já está inicializado para evitar erro de duplicidade
-        if (window.MercadoPago) {
-             // Se já existe, apenas garante que os campos estão montados se for cartão
-             if (window.mpInstance && paymentMethod === 'card') mountSecureFields(window.mpInstance);
-             return;
-        }
+        // 🌟 CORREÇÃO 3: Previne erro de "Duplicate Import"
+        if (cardFormMounted.current) return; 
 
         try {
-            await loadMercadoPago(); 
+            // Só carrega o script se ele ainda não existir na janela
+            if (!window.MercadoPago) {
+                await loadMercadoPago(); 
+            }
+            
             const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
             
             if (window.MercadoPago && mpKey) {
-                const mp = new window.MercadoPago(mpKey);
-                window.mpInstance = mp; 
-                console.log("✅ SDK V2 Inicializado");
+                // Cria a instância apenas se não existir
+                if (!window.mpInstance) {
+                    window.mpInstance = new window.MercadoPago(mpKey);
+                    console.log("✅ SDK V2 Inicializado");
+                }
 
-                if (paymentMethod === 'card') mountSecureFields(mp);
+                // Só monta os campos se o método for cartão
+                if (paymentMethod === 'card') {
+                    mountSecureFields(window.mpInstance);
+                }
             }
         } catch (e) { console.error("Erro SDK:", e); }
     };
     
     initMP();
     
-    // Limpeza ao mudar método ou desmontar
-    return () => { cardFormMounted.current = false; };
+    // Limpeza ao sair da página
+    return () => { 
+        cardFormMounted.current = false; 
+    };
   }, [bookingData, navigate, paymentMethod]);
 
   const mountSecureFields = (mp) => {
@@ -2371,8 +2385,19 @@ const CheckoutPage = () => {
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento Seguro</h3>
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão</button>
-                 <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Pix</button>
+                 <button 
+                    onClick={() => changeMethod('card')} // <--- USE A FUNÇÃO changeMethod
+                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}
+                 >
+                    Cartão de Crédito
+                 </button>
+                 
+                 <button 
+                    onClick={() => changeMethod('pix')} // <--- USE A FUNÇÃO changeMethod
+                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}
+                 >
+                    Pix
+                 </button>
              </div>
 
              {paymentMethod === 'card' ? (
