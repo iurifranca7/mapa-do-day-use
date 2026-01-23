@@ -2051,13 +2051,9 @@ const CheckoutPage = () => {
   const notifyCustomer = async (reservationData, reservationId) => {
       try {
           const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
-          
-          let rulesHtml = '';
-          if (reservationData.item.allowFood === false) {
-             rulesHtml = `<div style="background:#fef2f2;color:#991b1b;padding:15px;border-radius:8px;margin:20px 0;">🚫 <strong>Proibida entrada de alimentos/bebidas</strong></div>`;
-          } else {
-             rulesHtml = `<div style="background:#f0fdf4;color:#166534;padding:15px;border-radius:8px;margin:20px 0;">✅ <strong>Entrada de alimentos permitida</strong></div>`;
-          }
+          let rulesHtml = reservationData.item.allowFood === false 
+             ? `<div style="background:#fef2f2;color:#991b1b;padding:15px;border-radius:8px;margin:20px 0;">🚫 <strong>Proibida entrada de alimentos/bebidas</strong></div>`
+             : `<div style="background:#f0fdf4;color:#166534;padding:15px;border-radius:8px;margin:20px 0;">✅ <strong>Entrada de alimentos permitida</strong></div>`;
 
           const emailHtml = `
             <div style="font-family:sans-serif;background:#f3f4f6;padding:40px 0;">
@@ -2075,6 +2071,7 @@ const CheckoutPage = () => {
                         <p><strong>Titular:</strong> ${reservationData.guestName}</p>
                         <p><strong>Pago:</strong> ${formatBRL(reservationData.total)}</p>
                         ${rulesHtml}
+                        <center><a href="https://mapadodayuse.com/minhas-viagens" style="background:#0097A8;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Ver Voucher Completo</a></center>
                     </div>
                 </div>
             </div>`;
@@ -2084,7 +2081,7 @@ const CheckoutPage = () => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ to: reservationData.guestEmail, subject: `Voucher: ${reservationData.item.name}`, html: emailHtml })
           });
-      } catch (e) { console.error("Erro envio email cliente:", e); }
+      } catch (e) { console.error("Erro email cliente:", e); }
   };
 
   const notifyPartner = async (reservationData, paymentId) => {
@@ -2099,6 +2096,7 @@ const CheckoutPage = () => {
                 <div style="background:#e0f7fa;padding:20px;border-radius:8px;">
                     <p style="font-size:32px;font-weight:bold;color:#0097A8;margin:0;">${formatBRL(reservationData.total)}</p>
                 </div>
+                <ul><li>Cliente: ${reservationData.guestName}</li><li>Data: ${reservationData.date}</li></ul>
             </div>`;
 
           await fetch('/api/send-email', {
@@ -2106,7 +2104,7 @@ const CheckoutPage = () => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ to: ownerSnap.data().email, subject: `Nova Venda: ${formatBRL(reservationData.total)}`, html: emailHtml })
           });
-      } catch (e) { console.error("Erro envio email parceiro:", e); }
+      } catch (e) { console.error("Erro email parceiro:", e); }
   };
 
   // ============================================================
@@ -2124,57 +2122,70 @@ const CheckoutPage = () => {
     if(!bookingData) { navigate('/'); return; }
     
     const initMP = async () => {
+        // Verifica se já está inicializado para evitar erro de duplicidade
+        if (window.MercadoPago) {
+             // Se já existe, apenas garante que os campos estão montados se for cartão
+             if (window.mpInstance && paymentMethod === 'card') mountSecureFields(window.mpInstance);
+             return;
+        }
+
         try {
-            if (!window.MercadoPago) await loadMercadoPago();
-            
+            await loadMercadoPago(); 
             const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
             
             if (window.MercadoPago && mpKey) {
-                // 1. Inicializa Instância
                 const mp = new window.MercadoPago(mpKey);
-                window.mpInstance = mp;
+                window.mpInstance = mp; 
                 console.log("✅ SDK V2 Inicializado");
 
-                // 2. Monta os Secure Fields (PCI Compliance)
-                const style = { color: '#1e293b', fontSize: '14px', fontFamily: 'sans-serif' }; // Estilo base
-                
-                // Campo Número
-                const cardNumberElement = mp.fields.create('cardNumber', {
-                    placeholder: "0000 0000 0000 0000",
-                    style
-                }).mount('form-checkout__cardNumber');
-
-                // Campo Validade
-                const expirationDateElement = mp.fields.create('expirationDate', {
-                    placeholder: "MM/YY",
-                    style
-                }).mount('form-checkout__expirationDate');
-
-                // Campo CVV
-                const securityCodeElement = mp.fields.create('securityCode', {
-                    placeholder: "123",
-                    style
-                }).mount('form-checkout__securityCode');
-
-                // 3. Listener para detectar Bandeira e Banco (Bin Change)
-                cardNumberElement.on('binChange', async (data) => {
-                    const { bin } = data;
-                    if (bin) {
-                        const { results } = await mp.getPaymentMethods({ bin });
-                        if (results && results[0]) {
-                            setMpPaymentMethodId(results[0].id);
-                            setIssuerId(results[0].issuer.id);
-                            setIsCardReady(true);
-                        }
-                    }
-                });
+                if (paymentMethod === 'card') mountSecureFields(mp);
             }
-        } catch (e) { console.error("Erro SDK MP:", e); }
+        } catch (e) { console.error("Erro SDK:", e); }
     };
     
     initMP();
-    return () => { setMpPaymentMethodId(''); setIsCardReady(false); };
-  }, [bookingData]);
+    
+    // Limpeza ao mudar método ou desmontar
+    return () => { cardFormMounted.current = false; };
+  }, [bookingData, navigate, paymentMethod]);
+
+  const mountSecureFields = (mp) => {
+      try {
+          if (cardFormMounted.current) return;
+          
+          console.log("🔒 Montando Secure Fields...");
+          const style = { color: '#1e293b', fontSize: '14px', fontFamily: 'sans-serif', placeholderColor: '#94a3b8' };
+
+          // Cria campos seguros
+          const cardNumberElement = mp.fields.create('cardNumber', { placeholder: "0000 0000 0000 0000", style });
+          const expirationDateElement = mp.fields.create('expirationDate', { placeholder: "MM/YY", style });
+          const securityCodeElement = mp.fields.create('securityCode', { placeholder: "123", style });
+
+          // Monta nos IDs (iframes)
+          cardNumberElement.mount('form-checkout__cardNumber');
+          expirationDateElement.mount('form-checkout__expirationDate');
+          securityCodeElement.mount('form-checkout__securityCode');
+
+          cardFormMounted.current = true;
+
+          // Listener de Bin para qualidade
+          cardNumberElement.on('binChange', async (data) => {
+              const { bin } = data;
+              if (bin) {
+                  const { results } = await mp.getPaymentMethods({ bin });
+                  if (results && results[0]) {
+                      setMpPaymentMethodId(results[0].id);
+                      setIssuerId(results[0].issuer.id);
+                  }
+              }
+          });
+      } catch (e) { console.warn("Campos já montados ou erro de mount:", e); }
+  };
+    
+
+  useEffect(() => {
+      return onAuthStateChanged(auth, u => setUser(u));
+  }, []);
 
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
@@ -2192,6 +2203,16 @@ const CheckoutPage = () => {
         setFinalTotal(bookingData.total);
         setCouponMsg({ type: 'error', text: "Cupom inválido." });
       }
+  };
+
+  const handleResendVerification = async () => {
+      if (!user) return;
+      setResendLoading(true);
+      try {
+          await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
+          alert(`E-mail enviado!`);
+      } catch (e) { alert("Erro ao enviar."); } 
+      finally { setResendLoading(false); }
   };
 
   // 🌟 Qualidade MP: Secure Fields simulation & Issuer ID
@@ -2220,16 +2241,6 @@ const CheckoutPage = () => {
     setCardExpiry(val);
   };
 
-  const handleResendVerification = async () => {
-      if (!user) return;
-      setResendLoading(true);
-      try {
-          await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
-          alert(`E-mail enviado!`);
-      } catch (e) { alert("Erro ao enviar."); } 
-      finally { setResendLoading(false); }
-  };
-
   // --- PROCESSAMENTO ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
@@ -2242,7 +2253,7 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria Reserva (Sanitizada)
+       // 1. Cria Reserva
        const rawRes = {
          ...bookingData, 
          total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
@@ -2257,41 +2268,34 @@ const CheckoutPage = () => {
 
        const safeId = bookingData.item.id || bookingData.item.dayuseId;
        
-       // 2. Payload MP
-       const finalMethodId = paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || guessPaymentMethod(cardNumber));
+       // 2. Payload Inicial
        const paymentPayload = {
         token: null, transaction_amount: Number(finalTotal.toFixed(2)),
-        payment_method_id: finalMethodId,
+        payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
         issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
         payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
         bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
         reservationId 
        };
 
-       // 3. Tokenização
-        if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Sistema carregando...");
-           
+       // 3. Tokenização (SECURE FIELDS V2)
+       if (paymentMethod === 'card') {
+           if (!window.mpInstance) throw new Error("Aguarde o sistema carregar...");
            try {
-                // 🔥 CRIA O TOKEN USANDO OS CAMPOS SEGUROS (IFRAMES)
+                // 🔥 CRIA TOKEN USANDO OS CAMPOS SEGUROS
                 const tokenObj = await window.mpInstance.fields.createCardToken({
                     cardholderName: cardName,
                     identificationType: 'CPF',
-                    identificationNumber: cleanDoc.replace(/\D/g, '')
+                    identificationNumber: cleanDoc
                 });
-
                 paymentPayload.token = tokenObj.id; 
-                
-                // Garante que enviamos o issuer_id detectado pelo Secure Field
-                if (issuerId) paymentPayload.issuer_id = Number(issuerId);
-                
            } catch (e) { 
                console.error(e);
-               throw new Error("Verifique os dados do cartão (Número, Validade ou CVV)."); 
+               throw new Error("Verifique os dados do cartão."); 
            }
        }
 
-       // 4. API Backend
+       // 4. Chamada API
        console.log("📡 Enviando pagamento...");
        const response = await fetch("/api/process-payment", { 
          method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
@@ -2313,14 +2317,13 @@ const CheckoutPage = () => {
        // Sucesso
        if (paymentMethod === 'pix' && result.point_of_interaction) {
            setPixData(result.point_of_interaction.transaction_data);
-           setShowPixModal(true); // O PixModal chamará o check-payment-status
+           setShowPixModal(true); 
        } 
        else if (result.status === 'approved' || result.status === 'confirmed') {
-           // 🔥 DISPARO E-MAILS (Background)
+           // 🔥 DISPARO E-MAIL E MODAL
            const finalData = { ...reservationData, paymentId: result.id, status: result.status };
-           notifyCustomer(finalData, reservationId);
+           notifyCustomer(finalData, reservationId); 
            notifyPartner(finalData, result.id);
-           
            setShowSuccess(true);
        }
        setProcessing(false);
@@ -2344,17 +2347,12 @@ const CheckoutPage = () => {
       
       {/* MODAIS */}
       {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
-      
-      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><p>As vagas acabaram.</p><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
-      
-      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-lg">{errorData.title}</h3><p>{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
-
-      {/* PixModal deve usar o currentReservationId para consultar o status */}
+      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
+      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
-      
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><ChevronLeft size={16}/> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
@@ -2371,7 +2369,7 @@ const CheckoutPage = () => {
           </div>
           
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
+             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento Seguro</h3>
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
                  <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão</button>
                  <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Pix</button>
@@ -2380,57 +2378,33 @@ const CheckoutPage = () => {
              {paymentMethod === 'card' ? (
                <div className="space-y-4 animate-fade-in">
                  
-                 {/* NÚMERO DO CARTÃO (SECURE FIELD) */}
+                 {/* 🔒 SECURE FIELDS (IFRAMES) */}
                  <div>
                     <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
-                    {/* O MP injeta o iframe AQUI dentro. Mantemos a borda para parecer um input */}
                     <div id="form-checkout__cardNumber" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
                     {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
                  </div>
-                 
-                 {/* NOME (INPUT NORMAL) */}
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label>
-                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/>
-                 </div>
+
+                 {/* Nome (Input Normal) */}
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)} placeholder="Igual no cartão"/></div>
                  
                  <div className="grid grid-cols-2 gap-4">
-                   {/* VALIDADE (SECURE FIELD) */}
-                   <div>
-                       <label className="text-xs font-bold text-slate-500 uppercase">Validade</label>
-                       <div id="form-checkout__expirationDate" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
-                   </div>
-                   
-                   {/* CVV (SECURE FIELD) */}
-                   <div>
-                       <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
-                       <div id="form-checkout__securityCode" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
-                   </div>
+                   {/* 🔒 Validade */}
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><div id="form-checkout__expirationDate" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div></div>
+                   {/* 🔒 CVV */}
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><div id="form-checkout__securityCode" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div></div>
                  </div>
 
-                 {/* CPF (INPUT NORMAL) */}
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label>
-                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
-                 </div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
                  
-                 {/* PARCELAS (INPUT NORMAL) */}
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label>
-                    <select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}>
-                        <option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option>
-                        <option value={2}>2x de {formatBRL(finalTotal/2)}</option>
-                        <option value={3}>3x de {formatBRL(finalTotal/3)}</option>
-                    </select>
-                 </div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
                </div>
              ) : (
-                // ... Bloco Pix mantido igual ...
-                <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
+               <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
              )}
              
              <div className="mt-6"><Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>{processing ? 'Processando...' : `Confirmar (${formatBRL(finalTotal)})`}</Button></div>
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente Seguro</p>
+             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente PCI Seguro</p>
           </div>
         </div>
 

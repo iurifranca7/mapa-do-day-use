@@ -167,16 +167,31 @@ export default async function handler(req, res) {
     const rawBaseUrl = process.env.VITE_BASE_URL || 'https://mapadodayuse.com';
     const baseUrl = rawBaseUrl.replace(/\/$/, ""); 
 
+    const cleanName = item.name
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos (Zé -> Ze)
+        .replace(/[^a-zA-Z0-9]/g, "") // Remove tudo que NÃO for letra ou número (Tira espaços, traços, etc)
+        .toUpperCase();
+
+    // 2. Monta a frase (Prefixo + Nome)
+    // Sugestão: Use "MAPA*" (5 chars) para sobrar 17 chars para o nome do local
+    // Se usar "MAPADODAYUSE*" (13 chars), sobrarão apenas 9 chars para o nome.
+    let descriptor = `DAYUSE*${cleanName}`; 
+
+    // 3. Corta obrigatoriamente em 22 caracteres (Regra do Banco)
+    if (descriptor.length > 22) {
+        descriptor = descriptor.substring(0, 22);
+    }
+
     const paymentBody = {
       transaction_amount: transactionAmount,
       description: `Reserva: ${item.name}`,
       payment_method_id,
       application_fee: commission,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
+      statement_descriptor: descriptor,
       
       // Campos de Qualidade (Já adicionados anteriormente)
       external_reference: reservationId,
-      statement_descriptor: "MAPADODAYUSE", 
       binary_mode: true,
       
       payer: {
