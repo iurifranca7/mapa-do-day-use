@@ -50,45 +50,35 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Recebe paymentId (pode ser MP ID ou Firebase Doc ID) e ownerId (opcional)
   let { paymentId, ownerId } = req.body;
 
   if (!paymentId) return res.status(400).json({ error: 'ID é obrigatório.' });
 
   try {
     const db = initFirebase();
-    let mpPaymentId = paymentId; // Assume que é o ID numérico inicialmente
+    let mpPaymentId = paymentId; 
 
-    // --- CORREÇÃO DE ID (Inteligência Híbrida) ---
-    // Se o ID não for apenas números (ou seja, é um ID do Firebase tipo "Nvt5...")
+    // --- CORREÇÃO DE ID (Híbrido) ---
+    // Se o ID não for numérico (ex: ID do Firebase), buscamos o ID real
     if (isNaN(paymentId)) {
-        console.log(`🔄 Recebido ID Firebase (${paymentId}). Buscando ID Real do MP...`);
-        
         const docRef = await db.collection('reservations').doc(paymentId).get();
         
         if (!docRef.exists) {
-            return res.status(404).json({ error: 'Reserva não encontrada no sistema.' });
+            return res.status(404).json({ error: 'Reserva não encontrada.' });
         }
 
         const data = docRef.data();
-        
-        // Tenta pegar o ID do pagamento dentro da reserva
-        // O regex remove prefixos como "PIX-" se existirem
         if (data.paymentId) {
             mpPaymentId = data.paymentId.toString().replace(/^(FRONT_|PIX-|CARD_)/, '');
         } else {
-            // Se ainda não tem paymentId salvo, retorna pendente (usuário acabou de criar)
             return res.status(200).json({ status: 'pending', status_detail: 'waiting_creation' });
         }
 
-        // Se não veio ownerId no body, pega da reserva para garantir o token certo
-        if (!ownerId && data.ownerId) {
-            ownerId = data.ownerId;
-        }
+        if (!ownerId && data.ownerId) ownerId = data.ownerId;
     }
 
     // --- SELEÇÃO DE TOKEN ---
-    let accessToken = process.env.MP_ACCESS_TOKEN; // Default: Plataforma
+    let accessToken = process.env.MP_ACCESS_TOKEN; 
 
     if (ownerId) {
         try {
@@ -97,23 +87,20 @@ export default async function handler(req, res) {
                 accessToken = ownerDoc.data().mp_access_token;
             }
         } catch (dbError) {
-            console.warn("Falha ao buscar token do parceiro, usando padrão.", dbError);
+            console.warn("Falha ao buscar token do parceiro.", dbError);
         }
     }
 
     if (!accessToken) throw new Error("Token MP não configurado.");
 
     // --- CONSULTA MERCADO PAGO ---
-    // Agora temos certeza que mpPaymentId é numérico
     const client = new MercadoPagoConfig({ accessToken });
     const payment = new Payment(client);
     
-    //console.log(`🔍 Consultando MP ID: ${mpPaymentId}`);
     const paymentData = await payment.get({ id: mpPaymentId });
 
-    // Se aprovado, podemos até atualizar o Firebase aqui para garantir sincronia
+    // Atualiza Firebase se aprovado
     if (paymentData.status === 'approved' && isNaN(paymentId)) {
-        // Atualiza status se veio pelo ID do Firebase
         await db.collection('reservations').doc(paymentId).update({ 
             status: 'approved',
             updatedAt: new Date()
@@ -128,15 +115,9 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error(`❌ Erro Check Status (ID: ${paymentId}):`, error.message);
-    
-    // Se erro for 404 do MP, é porque o pagamento ainda não propagou ou ID está errado
     if (error.status === 404 || error.message.includes('not found')) {
          return res.status(200).json({ status: 'pending', status_detail: 'not_found_yet' });
     }
-
-    return res.status(500).json({ 
-        error: 'Erro na verificação', 
-        message: error.message 
-    });
+    return res.status(500).json({ error: 'Erro na verificação', message: error.message });
   }
 }

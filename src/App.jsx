@@ -2007,7 +2007,6 @@ const sanitizeForFirestore = (obj) => {
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
 // -----------------------------------------------------------------------------
 const CheckoutPage = () => {
-  // Se o hook useSEO não existir, apenas ignoramos o erro
   try { useSEO("Pagamento", "Finalize sua reserva.", true); } catch(e) {}
 
   const navigate = useNavigate();
@@ -2019,7 +2018,7 @@ const CheckoutPage = () => {
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
   
-  // Modais e Feedback
+  // Feedback UI
   const [errorData, setErrorData] = useState(null);
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
@@ -2027,13 +2026,13 @@ const CheckoutPage = () => {
   const [currentReservationId, setCurrentReservationId] = useState(null);
   const [resendLoading, setResendLoading] = useState(false);
 
-  // Valores e Cupom
+  // Valores
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
   const [couponMsg, setCouponMsg] = useState(null);
 
-  // Formulário Pagamento
+  // Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
   const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
@@ -2043,16 +2042,18 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
-  // 🌟 Qualidade MP (Bandeira e Banco)
+  // 🌟 DADOS DE QUALIDADE MP (V2)
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
-  const [issuerId, setIssuerId] = useState(null);
+  const [issuerId, setIssuerId] = useState(null); // ID do Banco (Obrigatório V2)
 
-  // --- 1. NOTIFICAÇÃO CLIENTE (VOUCHER) ---
+  // ============================================================
+  // SISTEMA DE NOTIFICAÇÃO (EMBUTIDO PARA GARANTIR FUNCIONAMENTO)
+  // ============================================================
+  
   const notifyCustomer = async (reservationData, reservationId) => {
       try {
           const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
           const mapLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
-          const transactionId = reservationData.paymentId?.toString().slice(-8) || "N/A";
           
           let rulesHtml = '';
           if (reservationData.item.allowFood === false) {
@@ -2091,7 +2092,6 @@ const CheckoutPage = () => {
       } catch (e) { console.error("Erro email cliente:", e); }
   };
 
-  // --- 2. NOTIFICAÇÃO PARCEIRO (VENDA) ---
   const notifyPartner = async (reservationData, paymentId) => {
       try {
           const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
@@ -2119,36 +2119,41 @@ const CheckoutPage = () => {
       } catch (e) { console.error("Erro email parceiro:", e); }
   };
 
-  // --- 3. INIT & EFEITOS ---
+  // ============================================================
+  // LÓGICA DE NEGÓCIO E MP V2
+  // ============================================================
+
+  // Fallback para bandeira (caso a API demore)
+  const guessPaymentMethod = (number) => {
+    const cleanNum = number.replace(/\D/g, '');
+    if (/^4/.test(cleanNum)) return 'visa';
+    if (/^(5[1-5]|2[2-7])/.test(cleanNum)) return 'master'; 
+    if (/^3[47]/.test(cleanNum)) return 'amex';
+    if (/^6/.test(cleanNum)) return 'elo'; 
+    return 'visa';
+  };
+
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    const initMP = () => {
-        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY; // Use a chave correta
-        if (window.MercadoPago && mpKey && !window.mpInstance) {
-            try {
-                window.mpInstance = new window.MercadoPago(mpKey);
-                console.log("✅ SDK MP Pronto");
-            } catch (e) { console.error("Erro init MP:", e); }
-        }
+    // 🌟 INICIALIZAÇÃO SDK V2 (Device ID automático)
+    const initMP = async () => {
+        try {
+            await loadMercadoPago(); 
+            const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
+            
+            if (window.MercadoPago && mpKey) {
+                if (!window.mpInstance) {
+                    window.mpInstance = new window.MercadoPago(mpKey);
+                    console.log("✅ SDK MercadoPago V2 Inicializado");
+                }
+            }
+        } catch (e) { console.error("Erro ao carregar SDK:", e); }
     };
+    
     initMP();
     return onAuthStateChanged(auth, u => setUser(u));
   }, [bookingData, navigate]);
-
-  const handleCardNumberChange = async (e) => {
-    const val = e.target.value;
-    setCardNumber(val);
-    if (val.replace(/\s/g, '').length >= 6 && window.mpInstance) {
-        try {
-            const methods = await window.mpInstance.getPaymentMethods({ bin: val.replace(/\s/g, '').substring(0,6) });
-            if (methods?.results?.[0]) {
-                setMpPaymentMethodId(methods.results[0].id);
-                setIssuerId(methods.results[0].issuer.id);
-            }
-        } catch (err) {}
-    }
-  };
 
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
@@ -2168,10 +2173,50 @@ const CheckoutPage = () => {
       }
   };
 
+  // 🌟 QUALIDADE MP: Detecta Bandeira e Banco (Issuer)
+  const handleCardNumberChange = async (e) => {
+    const val = e.target.value;
+    setCardNumber(val);
+    const cleanVal = val.replace(/\s/g, '');
+
+    if (cleanVal.length >= 6 && window.mpInstance) {
+        try {
+            const bin = cleanVal.substring(0, 6);
+            const methods = await window.mpInstance.getPaymentMethods({ bin });
+            if (methods?.results?.length > 0) {
+                const pm = methods.results[0];
+                setMpPaymentMethodId(pm.id); // ex: master
+                setIssuerId(pm.issuer.id);   // ex: 23 (Banco X) - OBRIGATÓRIO PARA QUALIDADE
+            }
+        } catch (err) { console.warn("Erro detecção:", err); }
+    }
+  };
+
+  const handleExpiryChange = (e) => {
+    let val = e.target.value.replace(/\D/g, '');
+    if (val.length > 4) val = val.slice(0, 4);
+    if (val.length > 2) val = `${val.slice(0, 2)}/${val.slice(2)}`;
+    setCardExpiry(val);
+  };
+
+  const handleResendVerification = async () => {
+      if (!user) return;
+      setResendLoading(true);
+      try {
+          await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
+          alert(`E-mail enviado para ${user.email}`);
+      } catch (e) { alert("Erro ao enviar."); } 
+      finally { setResendLoading(false); }
+  };
+
+  // --- LÓGICA DE CHECKOUT ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
+
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     if (cleanDoc.length < 11) { alert("CPF Inválido"); return; }
+     if (cleanDoc.length < 11) { 
+         setErrorData({ title: 'CPF Inválido', msg: 'Digite um CPF válido.' }); return; 
+     }
      setProcessing(true);
 
      const email = user.email || "cliente@mapadodayuse.com";
@@ -2179,75 +2224,103 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria Reserva Pendente (Sanitizada)
+       // 1. Cria Pré-Reserva (Sanitizada)
        const rawRes = {
          ...bookingData, 
-         total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
+         total: Number(finalTotal.toFixed(2)),
+         discount, couponCode: couponCode || null, paymentMethod,
          status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
          createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
          parentTicketId: bookingData.parentTicketId || null
        };
        const reservationData = sanitizeForFirestore(rawRes);
+
        const docRef = await addDoc(collection(db, "reservations"), reservationData);
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
        const safeId = bookingData.item.id || bookingData.item.dayuseId;
        
-       // 2. Payload MP
+       // 2. Payload MP (Com Issuer ID e Device ID implícito no SDK)
+       const finalMethodId = paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || guessPaymentMethod(cardNumber));
        const paymentPayload = {
-        token: null, transaction_amount: Number(finalTotal.toFixed(2)),
-        payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
-        issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
+        token: null, 
+        transaction_amount: Number(finalTotal.toFixed(2)),
+        payment_method_id: finalMethodId,
+        issuer_id: issuerId ? Number(issuerId) : null,
+        installments: Number(installments),
         payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
-        bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
+        bookingDetails: {
+            dayuseId: safeId, item: { id: safeId }, date: bookingData.date,
+            total: finalTotal, adults: bookingData.adults, children: bookingData.children,
+            pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode
+        },
         reservationId 
        };
 
+       // 3. Tokenização V2
        if (paymentMethod === 'card') {
+           if (!window.mpInstance) throw new Error("Aguarde o sistema carregar...");
+           const [month, year] = cardExpiry.split('/');
            try {
-                const [month, year] = cardExpiry.split('/');
                 const tokenObj = await window.mpInstance.createCardToken({
-                    cardNumber: cardNumber.replace(/\s/g, ''), cardholderName: cardName,
-                    cardExpirationMonth: month, cardExpirationYear: '20'+year, securityCode: cardCvv,
+                    cardNumber: cardNumber.replace(/\s/g, ''),
+                    cardholderName: cardName,
+                    cardExpirationMonth: month,
+                    cardExpirationYear: '20' + year,
+                    securityCode: cardCvv,
                     identification: { type: 'CPF', number: cleanDoc }
                 });
                 paymentPayload.token = tokenObj.id; 
            } catch (e) { throw new Error("Verifique os dados do cartão."); }
        }
 
-       // 3. API
+       // 4. API Backend
+       console.log("📡 Enviando pagamento...");
        const response = await fetch("/api/process-payment", { 
          method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
        });
        const result = await response.json();
 
-       // 4. Resultado
+       // 5. Tratamento de Resultado
        if (!response.ok || result.status === 'rejected') {
            const status = response.status === 409 ? 'cancelled_sold_out' : 'failed_payment';
            await updateDoc(doc(db, "reservations", reservationId), { status });
-           if (status === 'cancelled_sold_out') setIsSoldOut(true);
-           else setErrorData({ title: "Pagamento Recusado", msg: result.message || "Tente novamente." });
+           
+           if (status === 'cancelled_sold_out') {
+               setIsSoldOut(true);
+           } else {
+               const msg = result.message || "Tente novamente.";
+               setErrorData({ title: "Pagamento Recusado", msg: msg.includes('funds') ? 'Saldo insuficiente' : msg });
+           }
            setProcessing(false);
            return;
        }
 
-       // Sucesso
+       // Sucesso Pix
        if (paymentMethod === 'pix' && result.point_of_interaction) {
            setPixData(result.point_of_interaction.transaction_data);
            setShowPixModal(true);
-       } else if (result.status === 'approved' || result.status === 'confirmed') {
-           // 🔥 DISPARO E-MAIL + MODAL (Sem redirect forçado)
+       } 
+       // Sucesso Cartão
+       else if (result.status === 'approved' || result.status === 'confirmed') {
+           console.log("🔔 Aprovado! Processando sucesso...");
+           
+           // Dados completos para notificação
            const finalData = { ...reservationData, paymentId: result.id, status: result.status };
-           notifyCustomer(finalData, reservationId); // Dispara e-mail sem await
+           
+           // 🔥 Disparo de E-mails (Sem await para não travar)
+           notifyCustomer(finalData, reservationId);
            notifyPartner(finalData, result.id);
-           setShowSuccess(true); // Abre modal de sucesso
+           
+           // 🔥 Abre Modal de Sucesso (O usuário clica para sair depois)
+           setShowSuccess(true);
        }
        setProcessing(false);
 
      } catch (err) {
-        console.error("Erro:", err);
-        setErrorData({ title: "Erro", msg: err.message || "Erro de conexão." });
+        console.error("Erro Checkout:", err);
+        setErrorData({ title: 'Ops!', msg: err.message || 'Erro de conexão.' });
         setProcessing(false);
      }
   };
@@ -2262,47 +2335,54 @@ const CheckoutPage = () => {
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* MODAIS (Seus componentes existentes) */}
-      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Meus Ingressos" />}
-      
+      {/* MODAL DE SUCESSO (Não redireciona auto, espera clique) */}
+      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada! 🎉" message="Sua reserva foi realizada. Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
+
       {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><p>As vagas acabaram.</p><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
-      
-      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-lg">{errorData.title}</h3><p>{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
+
+      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded font-bold">OK</button></div></div>}
 
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} />}
       
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><ChevronLeft size={16}/> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
+          {/* Dados */}
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
             {user ? (
                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <p className="font-bold">{user.displayName}</p><p className="text-sm">{user.email}</p>
-                  <div className="mt-3 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
+                  <div className="mt-3 flex items-center gap-2 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
+                  {!user.emailVerified && (<div className="mt-3 p-3 bg-yellow-50 rounded-lg"><p className="text-xs text-yellow-800 font-bold mb-1">E-mail não verificado</p><button className="text-xs text-[#0097A8] font-bold underline" onClick={handleResendVerification}>Reenviar confirmação</button></div>)}
                </div>
             ) : (
-               <div className="text-center py-8"><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm font-bold text-[#0097A8] hover:underline">Já tenho conta</button></div>
+               <div className="text-center py-8"><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm font-bold text-[#0097A8] hover:underline">Já tenho cadastro</button></div>
             )}
           </div>
           
+          {/* Pagamento */}
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão</button>
+                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão de Crédito</button>
                  <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Pix</button>
              </div>
 
              {paymentMethod === 'card' ? (
                <div className="space-y-4 animate-fade-in">
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Número</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={handleCardNumberChange}/>{mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}</div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Número</label>
+                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={handleCardNumberChange}/>
+                    {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
+                 </div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
                  <div className="grid grid-cols-2 gap-4">
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={e=>{ let v = e.target.value.replace(/\D/g,''); if(v.length>4)v=v.slice(0,4); if(v.length>2)v=`${v.slice(0,2)}/${v.slice(2)}`; setCardExpiry(v); }}/></div>
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" value={cardExpiry} onChange={handleExpiryChange}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
                  </div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
@@ -2316,6 +2396,7 @@ const CheckoutPage = () => {
           </div>
         </div>
 
+        {/* Resumo */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
