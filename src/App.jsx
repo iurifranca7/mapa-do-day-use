@@ -1992,12 +1992,23 @@ const translateError = (code) => {
     };
 };
 
+const sanitizeForFirestore = (obj) => {
+    const cleanObj = { ...obj };
+    Object.keys(cleanObj).forEach(key => {
+        if (cleanObj[key] === undefined) {
+            cleanObj[key] = null; // Troca undefined por null
+        }
+    });
+    return cleanObj;
+};
+
 // -----------------------------------------------------------------------------
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
 // -----------------------------------------------------------------------------
 const CheckoutPage = () => {
+  // Tenta usar o SEO se ele existir no arquivo, senão ignora
   try { useSEO("Pagamento", "Finalize sua reserva.", true); } catch(e) {}
-  
+
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
@@ -2007,19 +2018,14 @@ const CheckoutPage = () => {
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
   
-  // Modais de Feedback
+  // State para Modal de Erro
   const [errorData, setErrorData] = useState(null);
-  const [showPixModal, setShowPixModal] = useState(false);
-  const [pixData, setPixData] = useState(null);
-  const [isSoldOut, setIsSoldOut] = useState(false);
 
-  // Cupom e Valores
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
   const [couponMsg, setCouponMsg] = useState(null);
 
-  // Formulário de Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
   const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
@@ -2029,14 +2035,17 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
-  // 🌟 DADOS DE QUALIDADE MP (Bandeira e Banco)
+  // 🌟 DADOS DE QUALIDADE MP
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
   const [issuerId, setIssuerId] = useState(null);
   
+  const [showPixModal, setShowPixModal] = useState(false);
+  const [pixData, setPixData] = useState(null);
   const [currentReservationId, setCurrentReservationId] = useState(null);
   const [resendLoading, setResendLoading] = useState(false);
+  const [isSoldOut, setIsSoldOut] = useState(false);
 
-  // Fallback para bandeira (caso a API demore)
+  // Fallback de Bandeira
   const guessPaymentMethod = (number) => {
     const cleanNum = number.replace(/\D/g, '');
     if (/^4/.test(cleanNum)) return 'visa';
@@ -2050,13 +2059,12 @@ const CheckoutPage = () => {
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // Inicializa SDK do Mercado Pago
     const initMP = () => {
         const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
         if (window.MercadoPago && mpKey && !window.mpInstance) {
             try {
                 window.mpInstance = new window.MercadoPago(mpKey);
-                console.log("✅ SDK MercadoPago Carregado");
+                console.log("✅ SDK MP Pronto");
             } catch (e) { console.error("Erro init MP:", e); }
         }
     };
@@ -2067,15 +2075,15 @@ const CheckoutPage = () => {
 
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
-      if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
+      if (!bookingData.item.coupons?.length) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
           return; 
       }
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
       if(found) {
-        const discountVal = (bookingData.total * found.percentage) / 100;
-        setDiscount(discountVal);
-        setFinalTotal(bookingData.total - discountVal);
+        const val = (bookingData.total * found.percentage) / 100;
+        setDiscount(val);
+        setFinalTotal(bookingData.total - val);
         setCouponMsg({ type: 'success', text: `Cupom ${found.code} aplicado: ${found.percentage}% OFF` });
       } else {
         setDiscount(0);
@@ -2084,36 +2092,30 @@ const CheckoutPage = () => {
       }
   };
 
-  // 🌟 FUNÇÃO CRÍTICA: Detecta Bandeira e Banco via API do MP (Qualidade Alta)
+  // 🌟 QUALIDADE MP: Detecta Bandeira e Banco
   const handleCardNumberChange = async (e) => {
-    const rawValue = e.target.value;
-    const cleanValue = rawValue.replace(/\s/g, '');
-    setCardNumber(rawValue);
+    const rawVal = e.target.value;
+    const cleanVal = rawVal.replace(/\s/g, '');
+    setCardNumber(rawVal);
 
-    // Se tiver 6 dígitos (BIN), consulta a API do MP
-    if (cleanValue.length >= 6 && window.mpInstance) {
+    if (cleanVal.length >= 6 && window.mpInstance) {
         try {
-            const bin = cleanValue.substring(0, 6);
+            const bin = cleanVal.substring(0, 6);
             const methods = await window.mpInstance.getPaymentMethods({ bin });
-            
-            if (methods && methods.results && methods.results.length > 0) {
+            if (methods?.results?.length > 0) {
                 const pm = methods.results[0];
-                setMpPaymentMethodId(pm.id); // ex: 'master'
-                setIssuerId(pm.issuer.id);   // ex: '123' (Nubank, Itau, etc)
-                console.log("💳 Cartão Identificado:", pm.id, "| Banco ID:", pm.issuer.id);
+                setMpPaymentMethodId(pm.id); 
+                setIssuerId(pm.issuer.id); // Captura o Banco para enviar ao Backend
             }
-        } catch (err) {
-            // Silencioso para não assustar o usuário, usamos o fallback depois
-            console.warn("Delay na detecção da bandeira");
-        }
+        } catch (err) { console.warn("Erro detecção cartão", err); }
     }
   };
 
   const handleExpiryChange = (e) => {
-    let value = e.target.value.replace(/\D/g, '');
-    if (value.length > 4) value = value.slice(0, 4);
-    if (value.length > 2) value = `${value.slice(0, 2)}/${value.slice(2)}`;
-    setCardExpiry(value);
+    let val = e.target.value.replace(/\D/g, '');
+    if (val.length > 4) val = val.slice(0, 4);
+    if (val.length > 2) val = `${val.slice(0, 2)}/${val.slice(2)}`;
+    setCardExpiry(val);
   };
 
   const handleResendVerification = async () => {
@@ -2121,21 +2123,18 @@ const CheckoutPage = () => {
       setResendLoading(true);
       try {
           await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
-          alert(`✅ E-mail enviado para ${user.email}!`);
-      } catch (e) { alert("Erro ao enviar e-mail."); } 
+          alert(`E-mail enviado para ${user.email}!`);
+      } catch (e) { alert("Erro ao enviar."); } 
       finally { setResendLoading(false); }
   };
 
-  // --- LÓGICA DE PAGAMENTO PRINCIPAL ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
 
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
      if (cleanDoc.length < 11) { 
-         setErrorData({ title: 'CPF Inválido', msg: 'Por favor, digite o CPF do titular para a nota fiscal.' });
-         return; 
+         setErrorData({ title: 'CPF Inválido', msg: 'Por favor, digite um CPF válido.' }); return; 
      }
-
      setProcessing(true);
 
      const email = user.email || "cliente@mapadodayuse.com";
@@ -2143,41 +2142,34 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria a Reserva "Aguardando Pagamento"
-       const reservationData = {
+       // 1. Prepara e Sanitiza Dados (Evita erro 'undefined')
+       const rawReservation = {
          ...bookingData, 
          total: Number(finalTotal.toFixed(2)),
-         discount, couponCode, paymentMethod,
+         discount, couponCode: couponCode || null, paymentMethod,
          status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
          createdAt: new Date(), guestName: user.displayName || firstName, guestEmail: user.email,
-         mpStatus: 'pending'
+         mpStatus: 'pending', parentTicketId: bookingData.parentTicketId || null
        };
+       // 🔥 LIMPEZA
+       const reservationData = sanitizeForFirestore(rawReservation);
 
        const docRef = await addDoc(collection(db, "reservations"), reservationData);
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
        const safeId = bookingData.item.id || bookingData.item.dayuseId || bookingData.dayuseId;
-       if (!safeId) {
-           alert("Erro de sistema: ID do local não encontrado.");
-           setProcessing(false);
-           return;
-       }
+       if (!safeId) { alert("Erro ID Local."); setProcessing(false); return; }
 
-       // 2. Monta o Payload para a API
-       // 🌟 Prioridade: ID detectado pela API > Regex > 'credit_card'
+       // 2. Payload para Backend
        const finalMethodId = paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || guessPaymentMethod(cardNumber));
-
        const paymentPayload = {
         token: null, 
         transaction_amount: Number(finalTotal.toFixed(2)),
         payment_method_id: finalMethodId,
-        issuer_id: issuerId, // 🌟 Envia o ID do Banco (Isso aumenta a pontuação de qualidade)
+        issuer_id: issuerId ? Number(issuerId) : null, // 🌟 Envia ID do banco
         installments: Number(installments),
-        payer: {
-            email, first_name: firstName, last_name: lastName,
-            identification: { type: 'CPF', number: cleanDoc }
-        },
+        payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
         bookingDetails: {
             dayuseId: safeId, item: { id: safeId }, date: bookingData.date,
             total: Number(finalTotal.toFixed(2)), adults: Number(bookingData.adults),
@@ -2187,15 +2179,9 @@ const CheckoutPage = () => {
         reservationId 
        };
 
-       // 3. Tokenização do Cartão
+       // 3. Tokenização
        if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Sistema de pagamento carregando... Tente novamente.");
            const [month, year] = cardExpiry.split('/');
-           
-           if (!month || !year || cardNumber.length < 13 || !cardCvv) {
-               throw new Error("Verifique os dados do cartão.");
-           }
-
            try {
                 const tokenObj = await window.mpInstance.createCardToken({
                     cardNumber: cardNumber.replace(/\s/g, ''),
@@ -2206,32 +2192,22 @@ const CheckoutPage = () => {
                     identification: { type: 'CPF', number: cleanDoc }
                 });
                 paymentPayload.token = tokenObj.id; 
-           } catch (e) {
-               throw new Error("Cartão inválido. Verifique número, validade e CVV.");
-           }
+           } catch (e) { throw new Error("Verifique os dados do cartão."); }
        }
 
-       // 4. Envia para o Backend
-       console.log("📡 Enviando pagamento...");
+       // 4. Backend
+       console.log("📡 Processando pagamento...");
        const response = await fetch("/api/process-payment", { 
          method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
        });
-
        const result = await response.json();
 
-       // =================================================================
-       // 5. TRATAMENTO DA RESPOSTA (Cartão e Pix)
-       // =================================================================
-
-       // CENÁRIO A: ERRO
-       if (!response.ok || (result.status && result.status === 'rejected')) {
-           console.error("❌ Erro API:", result);
-
-           if (response.status === 409) { // Overbooking
+       // 5. Tratamento de Resposta
+       if (!response.ok || result.status === 'rejected') {
+           if (response.status === 409) {
                await updateDoc(doc(db, "reservations", reservationId), { status: 'cancelled_sold_out' });
-               setIsSoldOut(true); 
+               setIsSoldOut(true);
            } else {
-               // Falha de pagamento
                await updateDoc(doc(db, "reservations", reservationId), { status: 'failed_payment' });
                const niceError = translateError(result.message || 'unknown');
                setErrorData(niceError); 
@@ -2240,44 +2216,36 @@ const CheckoutPage = () => {
            return;
        }
 
-       // CENÁRIO B: PIX (Sucesso Pendente)
-       if (paymentMethod === 'pix') {
-           if (result.point_of_interaction?.transaction_data) {
-               setPixData(result.point_of_interaction.transaction_data);
-               setShowPixModal(true); 
-           } else {
-               throw new Error("QR Code Pix não gerado.");
-           }
+       // Sucesso Pix
+       if (paymentMethod === 'pix' && result.point_of_interaction) {
+           setPixData(result.point_of_interaction.transaction_data);
+           setShowPixModal(true);
        } 
-       
-       // CENÁRIO C: CARTÃO APROVADO (Sucesso Total)
+       // Sucesso Cartão
        else if (result.status === 'approved' || result.status === 'confirmed') {
+           console.log("🔔 Sucesso! Enviando notificação...");
            
+           // Dados completos para o e-mail
            const finalData = { 
                ...reservationData, 
                paymentId: result.id.toString(),
-               paymentMethod: 'credit_card',
-               status: result.status
+               total: Number(finalTotal.toFixed(2))
            };
 
-           console.log("📨 Pagamento Aprovado! Enviando e-mails...");
-           
-           // 🔥 DISPARO DOS E-MAILS (Frontend Helper)
-           // Não usamos await para não bloquear a UI
+           // 🔥 Disparo de E-mails (Frontend)
            try {
               notifyCustomer(finalData, result.id.toString());
               notifyPartner(finalData, result.id.toString());
-           } catch(e) { console.error("Erro disparo email:", e); }
+           } catch(e) { console.error("Erro notificação:", e); }
 
-           // Mostra o Modal de Sucesso
+           // Mostra Modal
            setShowSuccess(true);
        }
-
        setProcessing(false);
 
      } catch (err) {
         console.error("🔥 Erro Crítico:", err);
-        setErrorData({ title: 'Erro de Conexão', msg: err.message || 'Tente novamente.' });
+        setErrorData({ title: 'Ops!', msg: err.message || 'Erro de conexão.' });
         setProcessing(false);
      }
   };
@@ -2290,50 +2258,42 @@ const CheckoutPage = () => {
       } else { navigate(-1); }
   };
 
+  // --- RENDERIZAÇÃO ---
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* MODAIS */}
-      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Pagamento Aprovado! 🎉" message="Sua reserva foi confirmada e o voucher enviado para seu e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Voucher" />}
+      {/* MODAIS (Assume que SuccessModal, PixModal, etc já existem no arquivo) */}
+      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada! 🎉" message="Sua reserva foi realizada. Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
 
-      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="text-xl font-bold text-slate-900 mb-2">Vagas Esgotadas!</h3><p className="text-slate-600 mb-4">Poxa! As últimas vagas acabaram.</p><Button onClick={handleSoldOutReturn} className="w-full">Escolher Outra Data</Button></div></div>}
+      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="text-xl font-bold mb-2">Esgotado!</h3><Button onClick={handleSoldOutReturn}>Voltar</Button></div></div>}
 
-      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="text-slate-600 mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full py-3 bg-slate-100 rounded-xl font-bold">Tentar Novamente</button></div></div>}
+      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4 text-slate-600">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full py-3 bg-slate-100 rounded-xl font-bold">Revisar Dados</button></div></div>}
 
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><ChevronLeft size={16}/> Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 font-medium"><ChevronLeft size={16}/> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
-        
-        {/* COLUNA 1: FORMULÁRIOS */}
         <div className="space-y-6">
-          {/* Seção Dados */}
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
             {user ? (
                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <p className="font-bold text-slate-900">{user.displayName || "Usuário"}</p>
-                  <p className="text-slate-600 text-sm">{user.email}</p>
+                  <p className="font-bold text-slate-900">{user.displayName}</p><p className="text-sm text-slate-600">{user.email}</p>
                   <div className="mt-3 flex items-center gap-2 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
                   {!user.emailVerified && (<div className="mt-3 p-3 bg-yellow-50 rounded-lg"><p className="text-xs text-yellow-800 font-bold mb-1">E-mail não verificado</p><button className="text-xs text-[#0097A8] font-bold underline" onClick={handleResendVerification}>Reenviar confirmação</button></div>)}
                </div>
             ) : (
-               <div className="text-center py-8">
-                  <h3 className="font-bold text-slate-900 mb-2">Para continuar, crie sua conta</h3>
-                  <Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full justify-center py-4 text-lg shadow-lg">Criar Conta</Button>
-                  <button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm text-[#0097A8] font-bold hover:underline">Já tenho cadastro</button>
-               </div>
+               <div className="text-center py-8"><h3 className="font-bold mb-2">Crie sua conta</h3><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm text-[#0097A8] font-bold hover:underline">Já tenho cadastro</button></div>
             )}
           </div>
           
-          {/* Seção Pagamento */}
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Forma de Pagamento</h3>
+             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão de Crédito</button>
+                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão</button>
                  <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Pix</button>
              </div>
 
@@ -2342,39 +2302,25 @@ const CheckoutPage = () => {
                  <div>
                     <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
                     <input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={handleCardNumberChange}/>
-                    {/* Indicador Visual da Bandeira Detectada */}
                     {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold flex items-center gap-1">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
                  </div>
-                 
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
-                 
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
                  <div className="grid grid-cols-2 gap-4">
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" value={cardExpiry} onChange={handleExpiryChange}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
                  </div>
-                 
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
                </div>
              ) : (
-               <div className="text-center py-6 animate-fade-in">
-                  <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
-                  <p className="text-sm text-slate-600 mb-4">Gera um código Pix instantâneo.</p>
-                  <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-               </div>
+               <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix instantâneo.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
              )}
              
-             <div className="mt-6">
-                 <Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>
-                     {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Pix' : `Confirmar Reserva (${formatBRL(finalTotal)})`)}
-                 </Button>
-             </div>
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente seguro.</p>
+             <div className="mt-6"><Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>{processing ? 'Processando...' : `Confirmar (${formatBRL(finalTotal)})`}</Button></div>
+             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente Seguro</p>
           </div>
         </div>
 
-        {/* COLUNA 2: RESUMO LATERAL */}
         <div>
            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
               <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
@@ -2385,17 +2331,13 @@ const CheckoutPage = () => {
                   {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
                   {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis</span><span>R$ 0,00</span></div>)}
                   {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => { const ticket = bookingData.item?.specialTickets?.[idx]; if(qtd > 0 && ticket) { return ( <div key={idx} className="flex justify-between text-blue-600 text-xs"><span>{ticket.name} ({qtd})</span><b>{formatBRL(ticket.price * qtd)}</b></div> ) } return null; })}
-                  
                   {discount > 0 && (<div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto</span><span>- {formatBRL(discount)}</span></div>)}
-                  
                   <div className="flex gap-2 pt-2"><input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="CUPOM" value={couponCode} onChange={e=>setCouponCode(e.target.value)} /><button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300">Aplicar</button></div>
                   {couponMsg && (<div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{couponMsg.text}</div>)}
-                  
                   <div className="flex justify-between pt-4 border-t border-slate-100"><span className="font-bold text-lg">Total</span><span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span></div>
               </div>
            </div>
         </div>
-
       </div>
     </div>
   );
