@@ -260,16 +260,30 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
   if (!isOpen) return null;
   return (
     <ModalOverlay onClose={onClose}>
-      <div className="p-8 text-center">
-        <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={20}/></button>
-        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6"><CheckCircle size={40} className="text-green-600" /></div>
-        <h2 className="text-2xl font-bold text-slate-900 mb-2">{title}</h2>
-        <p className="text-slate-600 mb-8">{message}</p>
-        <div className="space-y-3">
-          {onAction && <Button className="w-full justify-center" onClick={() => { onClose(); onAction(); }}>{actionLabel}</Button>}
-          <Button variant="ghost" className="w-full justify-center" onClick={onClose}>Fechar</Button>
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-md w-full text-center relative overflow-hidden">
+        {/* Decoração de fundo */}
+        <div className="absolute top-0 left-0 w-full h-2 bg-[#0097A8]"></div>
+        
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600">
+          <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
         </div>
+
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">Reserva Confirmada!</h2>
+        <p className="text-slate-500 mb-8">Seu pagamento foi aprovado e o voucher já foi enviado para seu e-mail.</p>
+
+        <button 
+            onClick={onAction} // Aqui chamamos o navigate('/minhas-viagens')
+            className="w-full bg-[#0097A8] hover:bg-[#007f8c] text-white font-bold py-4 rounded-xl text-lg transition-transform hover:scale-[1.02] active:scale-95 shadow-lg shadow-cyan-500/20"
+        >
+            Ver Meus Ingressos
+        </button>
+        
+        <button onClick={onClose} className="mt-4 text-slate-400 text-sm hover:text-slate-600 font-medium">
+            Fechar
+        </button>
       </div>
+    </div>
     </ModalOverlay>
   );
 };
@@ -2257,103 +2271,114 @@ const CheckoutPage = () => {
 
   // --- PROCESSAMENTO ---
   const processPayment = async () => {
-     if (!user) { setShowLogin(true); return; }
-     const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     if (cleanDoc.length < 11) { alert("CPF Inválido"); return; }
-     setProcessing(true);
+     if (!user) { setShowLogin(true); return; }
+     
+     const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
+     if (cleanDoc.length < 11) { alert("CPF Inválido"); return; }
+     
+     setProcessing(true);
 
-     const email = user.email || "cliente@mapadodayuse.com";
-     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
-     const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+     const email = user.email || "cliente@mapadodayuse.com";
+     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
+     const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
-     try {
-       // 1. Cria Reserva
-       const rawRes = {
-         ...bookingData, 
-         total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
-         status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
-         createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
-         parentTicketId: bookingData.parentTicketId || null
-       };
-       const reservationData = sanitizeForFirestore(rawRes);
-       const docRef = await addDoc(collection(db, "reservations"), reservationData);
-       const reservationId = docRef.id;
-       setCurrentReservationId(reservationId);
+     // Variáveis para escopo de erro
+     let reservationIdRef = null;
 
-       const safeId = bookingData.item.id || bookingData.item.dayuseId;
-       
-       // 2. Payload Inicial
-       const paymentPayload = {
-        token: null, transaction_amount: Number(finalTotal.toFixed(2)),
-        payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
-        issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
-        payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
-        bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
-        reservationId 
-       };
+     try {
+       // 1. Cria Reserva no Firestore (Status Waiting)
+       const rawRes = {
+         ...bookingData, 
+         total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
+         status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
+         createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
+         parentTicketId: bookingData.parentTicketId || null
+       };
+       
+       const reservationData = sanitizeForFirestore(rawRes);
+       const docRef = await addDoc(collection(db, "reservations"), reservationData);
+       reservationIdRef = docRef.id;
+       setCurrentReservationId(reservationIdRef); // Salva no state para uso no Pix se necessário
 
-       // 3. Tokenização (SECURE FIELDS V2)
-       if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Aguarde o sistema carregar...");
-           try {
-                // 🔥 CRIA TOKEN USANDO OS CAMPOS SEGUROS
-                const tokenObj = await window.mpInstance.fields.createCardToken({
-                    cardholderName: cardName,
-                    identificationType: 'CPF',
-                    identificationNumber: cleanDoc
-                });
-                paymentPayload.token = tokenObj.id; 
-           } catch (e) { 
-               console.error(e);
-               throw new Error("Verifique os dados do cartão."); 
-           }
+       // 2. Prepara Payload do MP
+       const safeId = bookingData.item.id || bookingData.item.dayuseId;
+       const paymentPayload = {
+           token: null, transaction_amount: Number(finalTotal.toFixed(2)),
+           payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
+           issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
+           payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
+           bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
+           reservationId: reservationIdRef 
+       };
+
+       // 3. Tokenização Cartão (Se aplicável)
+       if (paymentMethod === 'card') {
+           if (!window.mpInstance) throw new Error("Sistema de pagamento carregando...");
+           const tokenObj = await window.mpInstance.fields.createCardToken({
+               cardholderName: cardName,
+               identificationType: 'CPF',
+               identificationNumber: cleanDoc
+           });
+           paymentPayload.token = tokenObj.id; 
+       }
+
+       // 4. Processa Pagamento (Backend)
+       const response = await fetch("/api/process-payment", { 
+         method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
+       });
+       const result = await response.json();
+
+       // 5. Trata Falha ou Rejeição
+       if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
+           const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
+           
+           // Atualiza o doc criado para falha
+           await updateDoc(doc(db, "reservations", reservationIdRef), { status });
+           
+           if (status === 'cancelled_sold_out') setIsSoldOut(true);
+           else setErrorData({ title: "Pagamento não aprovado", msg: result.message || "Verifique os dados do cartão." });
+           
+           setProcessing(false);
+           return; 
+       }
+
+       // 6. SUCESSO! (Pix ou Cartão Aprovado)
+       if (paymentMethod === 'pix' && result.point_of_interaction) {
+           setPixData(result.point_of_interaction.transaction_data);
+           setShowPixModal(true); 
+            setProcessing(false);
+       } 
+       else if (result.status === 'approved' || result.status === 'confirmed') {
+           
+            // A. Atualiza State Visual IMEDIATAMENTE (UX Rápida)
+           setProcessing(false);
+           setShowSuccess(true); 
+
+            // B. Atualiza Firestore (opcional se seu webhook já faz isso, mas bom garantir)
+            // Não usamos await aqui para não travar, ou usamos se for muito rápido.
+            // O ideal é confiar no retorno do backend, mas vamos atualizar o objeto local:
+           const finalData = { ...reservationData, paymentId: result.id, status: result.status };
+
+            // C. Dispara e-mails em SEGUNDO PLANO (Sem await)
+            // Isso garante que se o email falhar, o cliente ainda vê o sucesso da compra.
+           notifyCustomer(finalData, reservationIdRef)
+                .catch(err => console.error("⚠️ Falha silenciada envio email cliente:", err));
+                
+           notifyPartner(finalData, result.id)
+                .catch(err => console.error("⚠️ Falha silenciada envio email parceiro:", err));
+       } else {
+            // Status pendente (ex: análise manual)
+            setProcessing(false);
+            alert("Pagamento em análise. Você receberá um e-mail em breve.");
+            navigate('/minhas-viagens');
        }
 
-       // 4. Chamada API
-       console.log("📡 Enviando pagamento...");
-       const response = await fetch("/api/process-payment", { 
-         method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
-       });
-       const result = await response.json();
-
-       // 5. Resultado
-       if (!response.ok || result.status === 'rejected') {
-           const status = response.status === 409 ? 'cancelled_sold_out' : 'failed_payment';
-           await updateDoc(doc(db, "reservations", reservationId), { status });
-           
-           if (status === 'cancelled_sold_out') setIsSoldOut(true);
-           else setErrorData({ title: "Pagamento Recusado", msg: result.message || "Tente novamente." });
-           
-           setProcessing(false);
-           return;
-       }
-
-       // Sucesso
-       if (paymentMethod === 'pix' && result.point_of_interaction) {
-           setPixData(result.point_of_interaction.transaction_data);
-           setShowPixModal(true); 
-       } 
-       else if (result.status === 'approved' || result.status === 'confirmed') {
-           // 🔥 DISPARO E-MAIL E MODAL
-           const finalData = { ...reservationData, paymentId: result.id, status: result.status };
-           notifyCustomer(finalData, reservationId); 
-           notifyPartner(finalData, result.id);
-           setShowSuccess(true);
-       }
-       setProcessing(false);
-
-     } catch (err) {
-        console.error("Erro Checkout:", err);
-        setErrorData({ title: "Erro", msg: err.message || "Erro de conexão." });
-        setProcessing(false);
-     }
-  };
-
-  const handleSoldOutReturn = () => {
-      const stateSlug = getStateSlug(bookingData.item.state);
-      const nameSlug = generateSlug(bookingData.item.name);
-      navigate(`/${stateSlug}/${nameSlug}`, { state: { id: bookingData.item.id } });
-  };
+     } catch (err) {
+        console.error("Erro Checkout Crítico:", err);
+        setErrorData({ title: "Erro de Comunicação", msg: "Não foi possível processar. Se cobrou, entre em contato." });
+        setProcessing(false);
+     }
+  };
 
   // --- RENDER ---
   return (
