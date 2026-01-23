@@ -2018,7 +2018,7 @@ const CheckoutPage = () => {
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
   
-  // Feedback UI
+  // Feedback
   const [errorData, setErrorData] = useState(null);
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
@@ -2042,18 +2042,17 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
-  // 🌟 DADOS DE QUALIDADE MP (V2)
+  // 🌟 Qualidade MP
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
-  const [issuerId, setIssuerId] = useState(null); // ID do Banco (Obrigatório V2)
+  const [issuerId, setIssuerId] = useState(null);
 
   // ============================================================
-  // SISTEMA DE NOTIFICAÇÃO (EMBUTIDO PARA GARANTIR FUNCIONAMENTO)
+  // SISTEMA DE NOTIFICAÇÃO (Embutido)
   // ============================================================
   
   const notifyCustomer = async (reservationData, reservationId) => {
       try {
           const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
-          const mapLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
           
           let rulesHtml = '';
           if (reservationData.item.allowFood === false) {
@@ -2066,7 +2065,7 @@ const CheckoutPage = () => {
             <div style="font-family:sans-serif;background:#f3f4f6;padding:40px 0;">
                 <div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;">
                     <div style="background:#0097A8;padding:30px;text-align:center;">
-                        <h1 style="color:white;margin:0;">Voucher de Acesso</h1>
+                        <h1 style="color:white;margin:0;">Voucher Confirmado</h1>
                         <p style="color:#e0f2fe;margin:5px 0;">Apresente na portaria</p>
                     </div>
                     <div style="padding:30px;">
@@ -2075,11 +2074,9 @@ const CheckoutPage = () => {
                             <img src="${qrCodeUrl}" width="150" />
                             <p style="font-size:24px;font-weight:bold;margin:10px 0;">${reservationId.slice(0,6).toUpperCase()}</p>
                         </div>
-                        <p><strong>Data:</strong> ${reservationData.date.split('-').reverse().join('/')}</p>
                         <p><strong>Titular:</strong> ${reservationData.guestName}</p>
                         <p><strong>Pago:</strong> ${formatBRL(reservationData.total)}</p>
                         ${rulesHtml}
-                        <center><a href="https://mapadodayuse.com/minhas-viagens" style="background:#0097A8;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Ver Voucher Completo</a></center>
                     </div>
                 </div>
             </div>`;
@@ -2087,9 +2084,9 @@ const CheckoutPage = () => {
           await fetch('/api/send-email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ to: reservationData.guestEmail, subject: `Seu Voucher: ${reservationData.item.name}`, html: emailHtml })
+              body: JSON.stringify({ to: reservationData.guestEmail, subject: `Voucher: ${reservationData.item.name}`, html: emailHtml })
           });
-      } catch (e) { console.error("Erro email cliente:", e); }
+      } catch (e) { console.error("Erro envio email cliente:", e); }
   };
 
   const notifyPartner = async (reservationData, paymentId) => {
@@ -2100,15 +2097,10 @@ const CheckoutPage = () => {
           const emailHtml = `
             <div style="font-family:sans-serif;padding:20px;">
                 <h2 style="color:#0097A8;">Nova Venda! 🚀</h2>
-                <p>Você recebeu uma reserva para <strong>${reservationData.item.name}</strong>.</p>
-                <div style="background:#e0f7fa;padding:20px;border-radius:8px;margin:20px 0;">
-                    <p style="font-size:12px;color:#006064;">VALOR TOTAL</p>
+                <p>Reserva para <strong>${reservationData.item.name}</strong>.</p>
+                <div style="background:#e0f7fa;padding:20px;border-radius:8px;">
                     <p style="font-size:32px;font-weight:bold;color:#0097A8;margin:0;">${formatBRL(reservationData.total)}</p>
                 </div>
-                <ul>
-                    <li><strong>Cliente:</strong> ${reservationData.guestName}</li>
-                    <li><strong>Data:</strong> ${reservationData.date.split('-').reverse().join('/')}</li>
-                </ul>
             </div>`;
 
           await fetch('/api/send-email', {
@@ -2116,36 +2108,37 @@ const CheckoutPage = () => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ to: ownerSnap.data().email, subject: `Nova Venda: ${formatBRL(reservationData.total)}`, html: emailHtml })
           });
-      } catch (e) { console.error("Erro email parceiro:", e); }
+      } catch (e) { console.error("Erro envio email parceiro:", e); }
   };
 
   // ============================================================
-  // LÓGICA DE NEGÓCIO E MP V2
+  // LOGICA MP E CHECKOUT
   // ============================================================
 
-  // Fallback para bandeira (caso a API demore)
   const guessPaymentMethod = (number) => {
     const cleanNum = number.replace(/\D/g, '');
     if (/^4/.test(cleanNum)) return 'visa';
-    if (/^(5[1-5]|2[2-7])/.test(cleanNum)) return 'master'; 
-    if (/^3[47]/.test(cleanNum)) return 'amex';
-    if (/^6/.test(cleanNum)) return 'elo'; 
+    if (/^5/.test(cleanNum)) return 'master'; 
     return 'visa';
   };
 
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // 🌟 INICIALIZAÇÃO SDK V2 (Device ID automático)
+    // 🌟 CORREÇÃO DE INICIALIZAÇÃO: Verifica se já existe antes de carregar
     const initMP = async () => {
         try {
-            await loadMercadoPago(); 
+            // Só carrega se não existir globalmente
+            if (!window.MercadoPago) {
+                await loadMercadoPago(); 
+            }
+            
             const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
             
             if (window.MercadoPago && mpKey) {
                 if (!window.mpInstance) {
                     window.mpInstance = new window.MercadoPago(mpKey);
-                    console.log("✅ SDK MercadoPago V2 Inicializado");
+                    console.log("✅ SDK MercadoPago Inicializado");
                 }
             }
         } catch (e) { console.error("Erro ao carregar SDK:", e); }
@@ -2158,7 +2151,7 @@ const CheckoutPage = () => {
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
       if (!bookingData.item.coupons?.length) { 
-          setCouponMsg({ type: 'error', text: "Sem cupons disponíveis." }); return; 
+          setCouponMsg({ type: 'error', text: "Sem cupons." }); return; 
       }
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
       if(found) {
@@ -2173,7 +2166,7 @@ const CheckoutPage = () => {
       }
   };
 
-  // 🌟 QUALIDADE MP: Detecta Bandeira e Banco (Issuer)
+  // 🌟 Qualidade MP: Secure Fields simulation & Issuer ID
   const handleCardNumberChange = async (e) => {
     const val = e.target.value;
     setCardNumber(val);
@@ -2185,10 +2178,10 @@ const CheckoutPage = () => {
             const methods = await window.mpInstance.getPaymentMethods({ bin });
             if (methods?.results?.length > 0) {
                 const pm = methods.results[0];
-                setMpPaymentMethodId(pm.id); // ex: master
-                setIssuerId(pm.issuer.id);   // ex: 23 (Banco X) - OBRIGATÓRIO PARA QUALIDADE
+                setMpPaymentMethodId(pm.id); 
+                setIssuerId(pm.issuer.id);
             }
-        } catch (err) { console.warn("Erro detecção:", err); }
+        } catch (err) {}
     }
   };
 
@@ -2204,19 +2197,16 @@ const CheckoutPage = () => {
       setResendLoading(true);
       try {
           await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
-          alert(`E-mail enviado para ${user.email}`);
+          alert(`E-mail enviado!`);
       } catch (e) { alert("Erro ao enviar."); } 
       finally { setResendLoading(false); }
   };
 
-  // --- LÓGICA DE CHECKOUT ---
+  // --- PROCESSAMENTO ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
-
      const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     if (cleanDoc.length < 11) { 
-         setErrorData({ title: 'CPF Inválido', msg: 'Digite um CPF válido.' }); return; 
-     }
+     if (cleanDoc.length < 11) { alert("CPF Inválido"); return; }
      setProcessing(true);
 
      const email = user.email || "cliente@mapadodayuse.com";
@@ -2224,55 +2214,44 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria Pré-Reserva (Sanitizada)
+       // 1. Cria Reserva (Sanitizada)
        const rawRes = {
          ...bookingData, 
-         total: Number(finalTotal.toFixed(2)),
-         discount, couponCode: couponCode || null, paymentMethod,
+         total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
          status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
          createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
          parentTicketId: bookingData.parentTicketId || null
        };
        const reservationData = sanitizeForFirestore(rawRes);
-
        const docRef = await addDoc(collection(db, "reservations"), reservationData);
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
        const safeId = bookingData.item.id || bookingData.item.dayuseId;
        
-       // 2. Payload MP (Com Issuer ID e Device ID implícito no SDK)
+       // 2. Payload MP
        const finalMethodId = paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || guessPaymentMethod(cardNumber));
        const paymentPayload = {
-        token: null, 
-        transaction_amount: Number(finalTotal.toFixed(2)),
+        token: null, transaction_amount: Number(finalTotal.toFixed(2)),
         payment_method_id: finalMethodId,
-        issuer_id: issuerId ? Number(issuerId) : null,
-        installments: Number(installments),
+        issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
         payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
-        bookingDetails: {
-            dayuseId: safeId, item: { id: safeId }, date: bookingData.date,
-            total: finalTotal, adults: bookingData.adults, children: bookingData.children,
-            pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode
-        },
+        bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
         reservationId 
        };
 
-       // 3. Tokenização V2
+       // 3. Tokenização
        if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Aguarde o sistema carregar...");
+           if (!window.mpInstance) throw new Error("Aguarde sistema...");
            const [month, year] = cardExpiry.split('/');
            try {
                 const tokenObj = await window.mpInstance.createCardToken({
-                    cardNumber: cardNumber.replace(/\s/g, ''),
-                    cardholderName: cardName,
-                    cardExpirationMonth: month,
-                    cardExpirationYear: '20' + year,
-                    securityCode: cardCvv,
+                    cardNumber: cardNumber.replace(/\s/g, ''), cardholderName: cardName,
+                    cardExpirationMonth: month, cardExpirationYear: '20'+year, securityCode: cardCvv,
                     identification: { type: 'CPF', number: cleanDoc }
                 });
                 paymentPayload.token = tokenObj.id; 
-           } catch (e) { throw new Error("Verifique os dados do cartão."); }
+           } catch (e) { throw new Error("Dados do cartão inválidos."); }
        }
 
        // 4. API Backend
@@ -2282,45 +2261,36 @@ const CheckoutPage = () => {
        });
        const result = await response.json();
 
-       // 5. Tratamento de Resultado
+       // 5. Resultado
        if (!response.ok || result.status === 'rejected') {
            const status = response.status === 409 ? 'cancelled_sold_out' : 'failed_payment';
            await updateDoc(doc(db, "reservations", reservationId), { status });
            
-           if (status === 'cancelled_sold_out') {
-               setIsSoldOut(true);
-           } else {
-               const msg = result.message || "Tente novamente.";
-               setErrorData({ title: "Pagamento Recusado", msg: msg.includes('funds') ? 'Saldo insuficiente' : msg });
-           }
+           if (status === 'cancelled_sold_out') setIsSoldOut(true);
+           else setErrorData({ title: "Pagamento Recusado", msg: result.message || "Tente novamente." });
+           
            setProcessing(false);
            return;
        }
 
-       // Sucesso Pix
+       // Sucesso
        if (paymentMethod === 'pix' && result.point_of_interaction) {
            setPixData(result.point_of_interaction.transaction_data);
-           setShowPixModal(true);
+           setShowPixModal(true); // O PixModal chamará o check-payment-status
        } 
-       // Sucesso Cartão
        else if (result.status === 'approved' || result.status === 'confirmed') {
-           console.log("🔔 Aprovado! Processando sucesso...");
-           
-           // Dados completos para notificação
+           // 🔥 DISPARO E-MAILS (Background)
            const finalData = { ...reservationData, paymentId: result.id, status: result.status };
-           
-           // 🔥 Disparo de E-mails (Sem await para não travar)
            notifyCustomer(finalData, reservationId);
            notifyPartner(finalData, result.id);
            
-           // 🔥 Abre Modal de Sucesso (O usuário clica para sair depois)
            setShowSuccess(true);
        }
        setProcessing(false);
 
      } catch (err) {
         console.error("Erro Checkout:", err);
-        setErrorData({ title: 'Ops!', msg: err.message || 'Erro de conexão.' });
+        setErrorData({ title: "Erro", msg: err.message || "Erro de conexão." });
         setProcessing(false);
      }
   };
@@ -2335,40 +2305,38 @@ const CheckoutPage = () => {
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* MODAL DE SUCESSO (Não redireciona auto, espera clique) */}
-      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada! 🎉" message="Sua reserva foi realizada. Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
-
+      {/* MODAIS */}
+      {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
+      
       {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><p>As vagas acabaram.</p><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
+      
+      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-lg">{errorData.title}</h3><p>{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
 
-      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded font-bold">OK</button></div></div>}
-
-      {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} />}
+      {/* PixModal deve usar o currentReservationId para consultar o status */}
+      {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><ChevronLeft size={16}/> Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
-          {/* Dados */}
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
             {user ? (
                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <p className="font-bold">{user.displayName}</p><p className="text-sm">{user.email}</p>
-                  <div className="mt-3 flex items-center gap-2 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
-                  {!user.emailVerified && (<div className="mt-3 p-3 bg-yellow-50 rounded-lg"><p className="text-xs text-yellow-800 font-bold mb-1">E-mail não verificado</p><button className="text-xs text-[#0097A8] font-bold underline" onClick={handleResendVerification}>Reenviar confirmação</button></div>)}
+                  <div className="mt-3 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
                </div>
             ) : (
-               <div className="text-center py-8"><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm font-bold text-[#0097A8] hover:underline">Já tenho cadastro</button></div>
+               <div className="text-center py-8"><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm font-bold text-[#0097A8] hover:underline">Já tenho conta</button></div>
             )}
           </div>
           
-          {/* Pagamento */}
           <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
              <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento</h3>
              <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão de Crédito</button>
+                 <button onClick={()=>setPaymentMethod('card')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Cartão</button>
                  <button onClick={()=>setPaymentMethod('pix')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}>Pix</button>
              </div>
 
@@ -2379,7 +2347,7 @@ const CheckoutPage = () => {
                     <input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={handleCardNumberChange}/>
                     {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
                  </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
                  <div className="grid grid-cols-2 gap-4">
                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" value={cardExpiry} onChange={handleExpiryChange}/></div>
                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
