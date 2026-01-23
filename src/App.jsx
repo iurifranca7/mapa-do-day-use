@@ -1996,9 +1996,7 @@ const translateError = (code) => {
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
 // -----------------------------------------------------------------------------
 const CheckoutPage = () => {
-  // Se o useSEO estiver definido no arquivo, ok. Se não, comente a linha abaixo.
-  try { useSEO("Pagamento", "Finalize sua reserva.", true); } catch(e) {}
-
+  useSEO("Pagamento", "Finalize sua reserva.", true);
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
@@ -2008,7 +2006,7 @@ const CheckoutPage = () => {
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
   
-  // State para Modal de Erro
+  // State para Modal de Erro Bonito
   const [errorData, setErrorData] = useState(null);
 
   const [couponCode, setCouponCode] = useState("");
@@ -2031,14 +2029,16 @@ const CheckoutPage = () => {
   const [resendLoading, setResendLoading] = useState(false);
   const [isSoldOut, setIsSoldOut] = useState(false);
 
-  // --- DETECÇÃO DE BANDEIRA DO CARTÃO ---
+  // --- CORREÇÃO DO MASTERCARD ---
   const getPaymentMethodId = (number) => {
     const cleanNum = number.replace(/\D/g, '');
+    
     if (/^4/.test(cleanNum)) return 'visa';
     if (/^(5[1-5]|2[2-7])/.test(cleanNum)) return 'master'; 
     if (/^3[47]/.test(cleanNum)) return 'amex';
     if (/^(65|636368|636297|5067|4576|4011)/.test(cleanNum)) return 'elo'; 
     if (/^606282|^3841/.test(cleanNum)) return 'hipercard';
+    
     return 'visa'; // Fallback
   };
 
@@ -2046,7 +2046,7 @@ const CheckoutPage = () => {
     if(!bookingData) { navigate('/'); return; }
     
     const initMP = () => {
-        // Usa a chave do ENV
+        // Use a chave correta (TEST ou PROD)
         const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
         if (window.MercadoPago && mpKey) {
             try {
@@ -2061,7 +2061,7 @@ const CheckoutPage = () => {
     
     const unsub = onAuthStateChanged(auth, u => setUser(u));
     return unsub;
-  }, [bookingData, navigate]);
+  }, []);
 
   const handleResendVerification = async () => {
       const currentUser = auth.currentUser;
@@ -2102,7 +2102,6 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
-  // --- LÓGICA DE PAGAMENTO CORRIGIDA ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
 
@@ -2119,7 +2118,7 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria Pré-Reserva no Firebase
+       // 1. Cria Pré-Reserva
        const reservationData = {
          ...bookingData, 
          total: Number(finalTotal.toFixed(2)),
@@ -2142,6 +2141,8 @@ const CheckoutPage = () => {
 
        const safeId = bookingData.item.id || bookingData.item.dayuseId || bookingData.dayuseId;
        
+       console.log("🆔 ID sendo enviado para pagamento:", safeId); 
+
        if (!safeId) {
            alert("Erro crítico: ID do local não identificado.");
            setProcessing(false);
@@ -2174,7 +2175,6 @@ const CheckoutPage = () => {
         reservationId: reservationId 
        };
 
-       // Tokenização do Cartão (Se for Cartão)
        if (paymentMethod === 'card') {
            if (!window.mpInstance) throw new Error("Sistema de pagamento indisponível.");
            const [month, year] = cardExpiry.split('/');
@@ -2198,8 +2198,7 @@ const CheckoutPage = () => {
            }
        }
 
-       // 3. Chama API Backend
-       console.log("📡 Chamando API...");
+       // 3. Chama Backend
        const response = await fetch("/api/process-payment", { 
          method: "POST", 
          headers: { "Content-Type":"application/json" }, 
@@ -2208,80 +2207,71 @@ const CheckoutPage = () => {
 
        const result = await response.json();
 
-       // ==================================================================
-       // 4. TRATAMENTO UNIFICADO (AQUI ESTAVA O ERRO ANTES)
-       // ==================================================================
+       // =================================================================
+       // 4. SUCESSO DO PAGAMENTO - AQUI ESTÁ A CORREÇÃO
+       // =================================================================
+       if (result.status === 'approved' || result.status === 'confirmed') {
+          
+           console.log("🔔 Pagamento aprovado! Disparando e-mails...");
+           
+           // 🔥 1. DISPARAR EMAILS (Sem await para não travar o modal)
+           const finalData = { 
+               ...reservationData, 
+               paymentId: result.id,
+               status: result.status 
+           };
+           
+           // Tenta enviar o e-mail, se falhar, loga o erro mas não trava o modal
+           try {
+               notifyCustomer(finalData, result.id.toString());
+               notifyPartner(finalData, result.id.toString());
+           } catch(e) {
+               console.error("Erro disparo email front:", e);
+           }
 
-       // CENÁRIO A: ERRO NA API (Recusado, Overbooking, etc)
-       if (!response.ok || (result.status && result.status === 'rejected')) {
-           console.error("❌ Erro API:", result);
+           // 🔥 2. MOSTRAR O MODAL (Como no seu código original)
+           // Não redirecionamos aqui. O Modal de Sucesso fará isso quando o usuário clicar.
+           setShowSuccess(true);
+       }
 
-           if (response.status === 409) { // Overbooking
+       // --- TRATAMENTO DE ERROS ---
+       if (!response.ok) {
+           if (response.status === 409) {
                await updateDoc(doc(db, "reservations", reservationId), { status: 'cancelled_sold_out' });
                setIsSoldOut(true); 
                setProcessing(false);
                return;
            }
 
-           // Falha genérica ou recusa
            await updateDoc(doc(db, "reservations", reservationId), { status: 'failed_payment' });
+           
            const rawError = result.message || 'unknown_error';
            const niceError = translateError(rawError);
            
-           setErrorData(niceError); // Mostra o Modal de Erro
+           setErrorData(niceError); 
            setProcessing(false);
            return;
        }
 
-       // CENÁRIO B: SUCESSO - PIX
+       // SUCESSO PIX
        if (paymentMethod === 'pix') {
            if (result.point_of_interaction?.transaction_data) {
                setPixData(result.point_of_interaction.transaction_data);
-               setShowPixModal(true); // Abre o Modal do Pix
+               setShowPixModal(true); 
            } else {
-               throw new Error("QR Code não gerado pela API.");
+               throw new Error("QR Code não gerado.");
            }
        } 
-       // CENÁRIO C: SUCESSO - CARTÃO APROVADO
-       else if (result.status === 'approved' || result.status === 'confirmed') {
-           
-           // Dados completos para o e-mail
-           const finalReservationData = { 
-               ...bookingData, 
-               paymentId: result.id.toString(),
-               paymentMethod: paymentMethod,
-               guestName: user.displayName || firstName,
-               guestEmail: email,
-               total: Number(finalTotal.toFixed(2))
-           };
 
-           console.log("📨 Pagamento Aprovado! Enviando e-mails...");
-           
-           // 🔥 DISPARO DOS E-MAILS AGORA
-           try {
-              notifyCustomer(finalReservationData, result.id.toString());
-              notifyPartner(finalReservationData, result.id.toString());
-           } catch (notifyErr) {
-              console.error("Erro ao disparar notificação (mas pagou):", notifyErr);
-           }
-
-           // 🚀 REDIRECIONA PARA SUCESSO
-           // (Isso substitui o "Popup" da tela de checkout, levando direto ao Voucher)
-           navigate('/success', { 
-               state: { 
-                   paymentId: result.id,
-                   reservation: finalReservationData
-               } 
-           });
-       }
-
+       // Se for Cartão, o showSuccess já foi setado ali em cima no bloco "approved"
+       // setProcessing(false) fecha o loading
        setProcessing(false);
 
      } catch (err) {
-        console.error("🔥 Erro Crítico:", err);
+        console.error("Erro no Checkout:", err);
         setErrorData({ 
             title: 'Ops! Algo deu errado', 
-            msg: err.message || 'Erro de conexão.' 
+            msg: err.message || 'Não foi possível conectar com o servidor de pagamentos.' 
         });
         setProcessing(false);
      }
@@ -2291,7 +2281,10 @@ const CheckoutPage = () => {
       if (bookingData?.item) {
           const stateSlug = getStateSlug(bookingData.item.state);
           const nameSlug = generateSlug(bookingData.item.name);
-          navigate(`/${stateSlug}/${nameSlug}`, { state: { id: bookingData.item.id } });
+          
+          navigate(`/${stateSlug}/${nameSlug}`, { 
+              state: { id: bookingData.item.id } 
+          });
       } else {
           navigate(-1);
       }
@@ -2300,52 +2293,62 @@ const CheckoutPage = () => {
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* MODAL DE SUCESSO (Visual caso o redirect demore) */}
-      {showSuccess && <SuccessModal 
+      {/* MODAL DE SUCESSO */}
+      {showSuccess && createPortal(
+          <SuccessModal 
             isOpen={showSuccess} 
             onClose={()=>setShowSuccess(false)} 
             title="Reserva Confirmada!" 
             message="Sua reserva foi realizada. Seu voucher foi enviado por e-mail." 
             onAction={()=>navigate('/minhas-viagens')} 
             actionLabel="Meus Ingressos"
-      />}
+          />,
+          document.body
+      )}
 
       {/* MODAL DE SOLD OUT */}
-      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      {isSoldOut && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
               <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
                   <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      {/* Ícone CalendarX aqui se tiver, senão remove */}
-                      <span className="text-2xl">📅</span>
+                      <CalendarX size={32}/>
                   </div>
                   <h3 className="text-xl font-bold text-slate-900 mb-2">Vagas Esgotadas!</h3>
                   <p className="text-slate-600 mb-6 text-sm">
                       Poxa! Enquanto você preenchia, as últimas vagas acabaram.
                   </p>
-                  <button onClick={handleSoldOutReturn} className="w-full py-3 bg-[#0097A8] text-white rounded-xl font-bold">
+                  <Button onClick={handleSoldOutReturn} className="w-full justify-center">
                       Escolher Outra Data
-                  </button>
+                  </Button>
               </div>
-          </div>
-      }
+          </div>,
+          document.body
+      )}
 
       {/* MODAL DE ERRO DE PAGAMENTO */}
-      {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      {errorData && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
               <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
                   <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                       <span className="text-2xl">💳</span>
+                      <CreditCard size={32}/>
+                      <div className="absolute"><XCircle size={16} className="text-red-600 translate-x-4 translate-y-4 bg-white rounded-full"/></div>
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-2">{errorData.title}</h3>
                   <p className="text-slate-600 mb-6 text-sm leading-relaxed">
                       {errorData.msg}
                   </p>
-                  <button onClick={() => setErrorData(null)} className="w-full py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm">
+                  <div className="flex gap-2">
+                    <button onClick={() => setErrorData(null)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm">
                         Revisar Dados
-                  </button>
+                    </button>
+                  </div>
               </div>
-          </div>
-      }
+          </div>,
+          document.body
+      )}
 
-      {showPixModal && <PixModal 
+      {showPixModal && createPortal(
+          <PixModal 
               isOpen={showPixModal} 
               onClose={()=>setShowPixModal(false)} 
               pixData={pixData} 
@@ -2353,29 +2356,34 @@ const CheckoutPage = () => {
               paymentId={currentReservationId} 
               ownerId={bookingData.item.ownerId}
               partnerToken={null} 
-      />}
+          />,
+          document.body
+      )}
       
-      {showLogin && <LoginModal 
+      {showLogin && createPortal(
+          <LoginModal 
               isOpen={showLogin} 
               onClose={()=>setShowLogin(false)} 
               onSuccess={()=>{setShowLogin(false);}} 
               initialMode={initialAuthMode} 
-      />}
+          />,
+          document.body
+      )}
       
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium">Voltar</button>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><div className="bg-white p-2 rounded-full border shadow-sm"><ChevronLeft size={16}/></div> Voltar</button>
       
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900">Seus Dados</h3>
+            <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
             {user ? (
                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <p className="font-bold text-slate-900">{user.displayName || "Usuário"}</p>
                   <p className="text-slate-600 text-sm">{user.email}</p>
-                  <div className="mt-3 flex items-center gap-2 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full">Identidade Confirmada</div>
+                  <div className="mt-3 flex items-center gap-2 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
                   {!user.emailVerified && (
                       <div className="mt-3 p-3 bg-yellow-50 rounded-lg border border-yellow-100">
-                          <p className="text-xs text-yellow-800 font-bold flex items-center gap-1 mb-1">E-mail não verificado</p>
+                          <p className="text-xs text-yellow-800 font-bold flex items-center gap-1 mb-1"><AlertCircle size={12}/> E-mail não verificado</p>
                           <button className="text-xs text-[#0097A8] font-bold hover:underline" onClick={handleResendVerification}>Reenviar confirmação</button>
                       </div>
                   )}
@@ -2383,7 +2391,7 @@ const CheckoutPage = () => {
             ) : (
                <div className="text-center py-8">
                   <h3 className="font-bold text-slate-900 mb-2">Para continuar, crie sua conta</h3>
-                  <button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full py-4 text-lg bg-[#0097A8] text-white rounded-xl font-bold shadow-lg shadow-teal-100">Criar Conta para Reservar</button>
+                  <Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full justify-center py-4 text-lg shadow-lg shadow-teal-100">Criar Conta para Reservar</Button>
                   <button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm text-[#0097A8] font-bold hover:underline">Já tenho cadastro, quero entrar</button>
                </div>
             )}
@@ -2409,20 +2417,18 @@ const CheckoutPage = () => {
                </div>
              ) : (
                <div className="text-center py-6 animate-fade-in">
-                  <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]">
-                      <span className="text-3xl">💠</span>
-                  </div>
+                  <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 text-[#0097A8]"><QrCode size={40}/></div>
                   <p className="text-sm text-slate-600 mb-4">Ao confirmar, geraremos um código Pix para você.</p>
                   <div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF do Pagador (obrigatório)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
                </div>
              )}
              
              <div className="mt-6">
-                 <button className="w-full py-4 text-lg bg-[#0097A8] text-white rounded-xl font-bold shadow-lg hover:bg-[#007f8c] transition-colors disabled:opacity-50" onClick={processPayment} disabled={processing}>
+                 <Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>
                      {processing ? 'Processando...' : (paymentMethod === 'pix' ? 'Gerar Código Pix' : `Confirmar Reserva (${formatBRL(finalTotal)})`)}
-                 </button>
+                 </Button>
              </div>
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1">Seus dados são criptografados.</p>
+             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Seus dados são criptografados.</p>
           </div>
         </div>
 
@@ -2436,6 +2442,7 @@ const CheckoutPage = () => {
                   {bookingData.children > 0 && <div className="flex justify-between"><span>Crianças ({bookingData.children})</span><b>{formatBRL(bookingData.children * bookingData.priceSnapshot.child)}</b></div>}
                   {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
                   {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis ({bookingData.freeChildren})</span><span>R$ 0,00</span></div>)}
+                  {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => { const ticket = bookingData.item?.specialTickets?.[idx]; if(qtd > 0 && ticket) { return ( <div key={idx} className="flex justify-between text-blue-600 text-xs"><span>{ticket.name} ({qtd})</span><b>{formatBRL(ticket.price * qtd)}</b></div> ) } return null; })}
                   <div className="flex justify-between"><span>Taxa de Serviço</span><span className="text-green-600 font-bold">Grátis</span></div>
                   {discount > 0 && (<div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto</span><span>- {formatBRL(discount)}</span></div>)}
                   <div className="flex gap-2 pt-2"><input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="Cupom de Desconto" value={couponCode} onChange={e=>setCouponCode(e.target.value)} /><button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors">Aplicar</button></div>
