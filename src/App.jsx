@@ -2214,7 +2214,11 @@ const CheckoutPage = () => {
 
        if (result.status === 'approved' || result.status === 'confirmed') {
        
-       // ... (seu código que salva a reserva no banco, se houver) ...
+       const finalReservationData = { 
+        ...bookingData, 
+        paymentId: result.id.toString(),
+        paymentMethod: paymentMethod // ou formData.payment_method_id
+        };
 
        // 📧 [NOVO] Dispara os E-mails (sem await para não travar a tela)
        console.log("📨 Enviando vouchers...");

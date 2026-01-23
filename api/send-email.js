@@ -1,10 +1,7 @@
-import { MailtrapClient } from "mailtrap";
-
-const TOKEN = process.env.MAILTRAP_TOKEN;
-const SENDER_EMAIL = "noreply@mapadodayuse.com"; 
+import { MailtrapClient } from 'mailtrap';
 
 export default async function handler(req, res) {
-  // Configuração de CORS
+  // CORS (Permite que o frontend chame esta API)
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -13,31 +10,33 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (!TOKEN) {
-      return res.status(500).json({ error: 'MAILTRAP_TOKEN não configurado.' });
-  }
-
   const { to, subject, html } = req.body;
+  const token = process.env.MAILTRAP_TOKEN;
 
-  if (!to || !subject || !html) {
-      return res.status(400).json({ error: 'Faltam dados (to, subject, html).' });
+  if (!token) {
+      console.error("❌ Erro: MAILTRAP_TOKEN não configurado no .env");
+      return res.status(500).json({ error: 'Mailtrap Token missing' });
   }
 
   try {
-    const client = new MailtrapClient({ token: TOKEN });
-    
+    const client = new MailtrapClient({ token });
+    const sender = { email: "mailtrap@demomailtrap.com", name: "Mapa do Day Use" };
+
+    console.log(`📨 Tentando enviar email para: ${to}`);
+
     await client.send({
-      from: { name: "Mapa do Day Use", email: SENDER_EMAIL },
+      from: sender,
       to: [{ email: to }],
       subject: subject,
       html: html,
-      category: "Notification",
+      category: "Transactional"
     });
 
+    console.log("✅ Email enviado com sucesso!");
     return res.status(200).json({ success: true });
 
   } catch (error) {
-    console.error("Erro ao enviar e-mail:", error);
+    console.error("❌ Erro Mailtrap:", error);
     return res.status(500).json({ error: error.message });
   }
 }
