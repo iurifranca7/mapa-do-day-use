@@ -1,7 +1,7 @@
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
-// Função auxiliar para inicializar o Firebase de forma segura (Igual ao process-payment.js)
+// Inicialização segura do Firebase
 const initFirebase = () => {
     if (admin.apps.length > 0) return admin.firestore();
 
@@ -23,33 +23,25 @@ const initFirebase = () => {
             credential = admin.credential.cert(serviceAccount);
         } else if (projectId && clientEmail && privateKeyRaw) {
             const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
-            credential = admin.credential.cert({
-                projectId,
-                clientEmail,
-                privateKey,
-            });
+            credential = admin.credential.cert({ projectId, clientEmail, privateKey });
         }
     } catch (parseError) {
-        throw new Error(`Falha ao ler credenciais do Firebase: ${parseError.message}`);
+        throw new Error(`Falha credenciais Firebase: ${parseError.message}`);
     }
 
-    if (!credential) {
-        throw new Error("Nenhuma credencial do Firebase encontrada nas Variáveis de Ambiente.");
-    }
+    if (!credential) throw new Error("Credenciais Firebase não encontradas.");
 
     try {
         admin.initializeApp({ credential });
     } catch (e) {
-        if (!e.message.includes('already exists')) {
-             throw e;
-        }
+        if (!e.message.includes('already exists')) throw e;
     }
 
     return admin.firestore();
 };
 
 export default async function handler(req, res) {
-  // Configuração CORS
+  // CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -58,17 +50,46 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { paymentId, ownerId } = req.body;
+  // Recebe paymentId (pode ser MP ID ou Firebase Doc ID) e ownerId (opcional)
+  let { paymentId, ownerId } = req.body;
 
-  if (!paymentId) return res.status(400).json({ error: 'ID do pagamento é obrigatório.' });
+  if (!paymentId) return res.status(400).json({ error: 'ID é obrigatório.' });
 
   try {
     const db = initFirebase();
+    let mpPaymentId = paymentId; // Assume que é o ID numérico inicialmente
 
-    // 1. Define qual token usar (do Parceiro ou da Plataforma)
-    let accessToken = process.env.MP_ACCESS_TOKEN; // Começa com o da plataforma
+    // --- CORREÇÃO DE ID (Inteligência Híbrida) ---
+    // Se o ID não for apenas números (ou seja, é um ID do Firebase tipo "Nvt5...")
+    if (isNaN(paymentId)) {
+        console.log(`🔄 Recebido ID Firebase (${paymentId}). Buscando ID Real do MP...`);
+        
+        const docRef = await db.collection('reservations').doc(paymentId).get();
+        
+        if (!docRef.exists) {
+            return res.status(404).json({ error: 'Reserva não encontrada no sistema.' });
+        }
 
-    // Se tiver ownerId, busca o token específico do parceiro no banco
+        const data = docRef.data();
+        
+        // Tenta pegar o ID do pagamento dentro da reserva
+        // O regex remove prefixos como "PIX-" se existirem
+        if (data.paymentId) {
+            mpPaymentId = data.paymentId.toString().replace(/^(FRONT_|PIX-|CARD_)/, '');
+        } else {
+            // Se ainda não tem paymentId salvo, retorna pendente (usuário acabou de criar)
+            return res.status(200).json({ status: 'pending', status_detail: 'waiting_creation' });
+        }
+
+        // Se não veio ownerId no body, pega da reserva para garantir o token certo
+        if (!ownerId && data.ownerId) {
+            ownerId = data.ownerId;
+        }
+    }
+
+    // --- SELEÇÃO DE TOKEN ---
+    let accessToken = process.env.MP_ACCESS_TOKEN; // Default: Plataforma
+
     if (ownerId) {
         try {
             const ownerDoc = await db.collection('users').doc(ownerId).get();
@@ -76,31 +97,46 @@ export default async function handler(req, res) {
                 accessToken = ownerDoc.data().mp_access_token;
             }
         } catch (dbError) {
-            console.warn("Aviso: Não foi possível buscar token do parceiro. Usando fallback.", dbError);
+            console.warn("Falha ao buscar token do parceiro, usando padrão.", dbError);
         }
     }
 
-    if (!accessToken) throw new Error("Token MP não encontrado para consulta.");
+    if (!accessToken) throw new Error("Token MP não configurado.");
 
-    // 2. Consulta Status no Mercado Pago
+    // --- CONSULTA MERCADO PAGO ---
+    // Agora temos certeza que mpPaymentId é numérico
     const client = new MercadoPagoConfig({ accessToken });
     const payment = new Payment(client);
     
-    const paymentData = await payment.get({ id: paymentId });
+    //console.log(`🔍 Consultando MP ID: ${mpPaymentId}`);
+    const paymentData = await payment.get({ id: mpPaymentId });
+
+    // Se aprovado, podemos até atualizar o Firebase aqui para garantir sincronia
+    if (paymentData.status === 'approved' && isNaN(paymentId)) {
+        // Atualiza status se veio pelo ID do Firebase
+        await db.collection('reservations').doc(paymentId).update({ 
+            status: 'approved',
+            updatedAt: new Date()
+        });
+    }
 
     return res.status(200).json({
         id: paymentData.id,
-        status: paymentData.status, // 'approved', 'pending', 'rejected'
+        status: paymentData.status,
         status_detail: paymentData.status_detail
     });
 
   } catch (error) {
-    console.error("Erro Check Status:", error);
-    // Retorna JSON legível para debugging
+    console.error(`❌ Erro Check Status (ID: ${paymentId}):`, error.message);
+    
+    // Se erro for 404 do MP, é porque o pagamento ainda não propagou ou ID está errado
+    if (error.status === 404 || error.message.includes('not found')) {
+         return res.status(200).json({ status: 'pending', status_detail: 'not_found_yet' });
+    }
+
     return res.status(500).json({ 
         error: 'Erro na verificação', 
-        message: error.message || 'Erro interno no servidor.',
-        details: error.cause 
+        message: error.message 
     });
   }
 }
