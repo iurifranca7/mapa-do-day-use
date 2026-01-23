@@ -36,10 +36,10 @@ export default async function handler(req, res) {
 
   try {
     const db = initFirebase();
-    const { token, payment_method_id, installments, payer, bookingDetails, reservationId } = req.body;
+    // 🌟 ADICIONEI 'issuer_id' AQUI (Necessário para qualidade alta)
+    const { token, payment_method_id, issuer_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    // --- CORREÇÃO 1: Robustez na busca do ID ---
-    // Aceita tanto o formato antigo (dayuseId na raiz) quanto o novo (item.id)
+    // --- Robustez na busca do ID ---
     const targetId = bookingDetails?.dayuseId || bookingDetails?.item?.id;
 
     if (!targetId) {
@@ -63,11 +63,10 @@ export default async function handler(req, res) {
     if (!partnerAccessToken) throw new Error("Token MP ausente (Teste ou Produção).");
 
     // ==================================================================
-    // 🛑 GUARDIÃO DO ESTOQUE (CORREÇÃO 2: Lógica do Mapa)
+    // 🛑 GUARDIÃO DO ESTOQUE
     // ==================================================================
     const bookingDate = bookingDetails.date;
     
-    // Lógica inteligente para ler o limite (Mapa ou Número)
     let limit = 50;
     if (item.dailyStock) {
         if (typeof item.dailyStock === 'object' && item.dailyStock.adults) {
@@ -79,14 +78,12 @@ export default async function handler(req, res) {
         limit = Number(item.limit);
     }
     
-    // CORREÇÃO 3: Busca usando o ID garantido (targetId)
-    // E aceita todos os status de sucesso (incluindo 'approved' do MP)
     const reservationsSnapshot = await db.collection('reservations')
         .where('item.id', '==', targetId) 
         .where('date', '==', bookingDate)
         .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid']) 
         .get()
-        .catch(() => ({ empty: true, forEach: () => {} })); // Evita crash se faltar índice
+        .catch(() => ({ empty: true, forEach: () => {} })); 
 
     let currentOccupancy = 0;
     if (!reservationsSnapshot.empty) {
@@ -104,7 +101,7 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // CÁLCULOS FINANCEIROS (Seu código original)
+    // CÁLCULOS FINANCEIROS
     // ==================================================================
     let priceAdult = Number(item.priceAdult);
     let priceChild = Number(item.priceChild || 0);
@@ -143,9 +140,7 @@ export default async function handler(req, res) {
     transactionAmount = Number(transactionAmount.toFixed(2));
 
     let refDate = new Date();
-    // Tratamento de data seguro
     if (item.firstActivationDate) {
-         // Tenta converter se for Timestamp do Firebase ou string
          const d = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
          if (!isNaN(d)) refDate = d;
     } else if (item.createdAt) {
@@ -164,7 +159,7 @@ export default async function handler(req, res) {
     commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // PROCESSAMENTO MP
+    // PROCESSAMENTO MP (COM MELHORIAS DE QUALIDADE)
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
@@ -178,6 +173,12 @@ export default async function handler(req, res) {
       payment_method_id,
       application_fee: commission,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
+      
+      // 🌟 [QUALIDADE MP] CAMPOS ADICIONAIS OBRIGATÓRIOS
+      external_reference: reservationId, // Liga a venda ao seu banco de dados
+      statement_descriptor: "MAPADODAYUSE", // Nome que aparece na fatura (Max 22 chars)
+      binary_mode: true, // Força resposta imediata (Aprovado/Recusado) sem ficar "Em análise"
+      
       payer: {
         email: payer.email,
         first_name: payer.first_name,
@@ -189,6 +190,11 @@ export default async function handler(req, res) {
     if (!isPix) {
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
+      
+      // 🌟 [QUALIDADE MP] Envia o ID do Banco Emissor se disponível
+      if (issuer_id) {
+          paymentBody.issuer_id = Number(issuer_id);
+      }
     }
 
     console.log("🚀 Enviando para MP:", transactionAmount);
