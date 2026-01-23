@@ -2,11 +2,11 @@ import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
 // ==================================================================
-// 1. INICIALIZAÇÃO FIREBASE BLINDADA (Ajuste para evitar Erro 500)
+// 1. INICIALIZAÇÃO FIREBASE (Sua versão que funciona)
 // ==================================================================
 const initFirebase = () => {
-    // Se já tiver apps, retorna direto (evita reinicializar)
-    if (admin.apps && admin.apps.length > 0) return admin.firestore();
+    if (!admin || !admin.apps) throw new Error("Erro init Firebase");
+    if (admin.apps.length > 0) return admin.firestore();
 
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -16,23 +16,11 @@ const initFirebase = () => {
         if (projectId && clientEmail && privateKeyRaw) {
             const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
             const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
-            
-            // Tenta inicializar
             admin.initializeApp({ credential });
         } else {
-            // Se faltar variável, tenta usar o applicationDefault (útil para testes locais)
-            // Se não der, aí sim lança erro
-            if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-                 console.warn("⚠️ Variáveis de ambiente Firebase ausentes.");
-            }
+            throw new Error("Credenciais do Firebase incompletas nas Variáveis de Ambiente.");
         }
-    } catch (e) {
-        // CORREÇÃO CRÍTICA: Se o erro for "App already exists", ignoramos e seguimos.
-        if (!e.message.includes('already exists')) {
-            console.error("Firebase Init Error:", e);
-            throw new Error(`Erro ao conectar no banco de dados: ${e.message}`);
-        }
-    }
+    } catch (e) { throw new Error(`Credentials Error: ${e.message}`); }
 
     return admin.firestore();
 };
@@ -48,43 +36,34 @@ export default async function handler(req, res) {
 
   try {
     const db = initFirebase();
-    // Extraindo dados. Nota: Adicionei logs para ajudar a debugar se faltar algo
     const { token, payment_method_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    // --- Robustez na busca do ID ---
+    // --- CORREÇÃO 1: Robustez na busca do ID ---
+    // Aceita tanto o formato antigo (dayuseId na raiz) quanto o novo (item.id)
     const targetId = bookingDetails?.dayuseId || bookingDetails?.item?.id;
 
     if (!targetId) {
-        console.error("❌ Payload recebido sem ID:", JSON.stringify(req.body));
-        return res.status(400).json({ error: "ID do Day Use não fornecido no payload." });
+        console.error("❌ Payload sem ID:", JSON.stringify(bookingDetails));
+        throw new Error("ID do Day Use não fornecido.");
     }
 
     // 1. Busca Day Use
     const dayUseRef = db.collection('dayuses').doc(targetId);
     const dayUseSnap = await dayUseRef.get();
     
-    if (!dayUseSnap.exists) return res.status(404).json({ error: "Day Use não encontrado." });
+    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
     const item = dayUseSnap.data();
 
     // 2. Busca Token do Parceiro
-    // Se não tiver ownerId no item, usamos o token de teste ou falhamos
-    let partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST;
+    const ownerRef = db.collection('users').doc(item.ownerId);
+    const ownerSnap = await ownerRef.get();
+    
+    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
-    if (item.ownerId) {
-        const ownerRef = db.collection('users').doc(item.ownerId);
-        const ownerSnap = await ownerRef.get();
-        if (ownerSnap.exists && ownerSnap.data().mp_access_token) {
-            partnerAccessToken = ownerSnap.data().mp_access_token;
-        }
-    }
-
-    if (!partnerAccessToken) {
-        console.error(`❌ Falha de Token: Item ${item.name} (Owner: ${item.ownerId}) sem token configurado.`);
-        return res.status(500).json({ error: "Configuração de pagamento incompleta no parceiro." });
-    }
+    if (!partnerAccessToken) throw new Error("Token MP ausente (Teste ou Produção).");
 
     // ==================================================================
-    // 🛑 GUARDIÃO DO ESTOQUE
+    // 🛑 GUARDIÃO DO ESTOQUE (CORREÇÃO 2: Lógica do Mapa)
     // ==================================================================
     const bookingDate = bookingDetails.date;
     
@@ -100,16 +79,14 @@ export default async function handler(req, res) {
         limit = Number(item.limit);
     }
     
-    // Busca usando o ID garantido (targetId)
+    // CORREÇÃO 3: Busca usando o ID garantido (targetId)
+    // E aceita todos os status de sucesso (incluindo 'approved' do MP)
     const reservationsSnapshot = await db.collection('reservations')
         .where('item.id', '==', targetId) 
         .where('date', '==', bookingDate)
         .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid']) 
         .get()
-        .catch((err) => {
-            console.warn("Erro ao ler reservas (pode ser falta de índice):", err.message);
-            return { empty: true, forEach: () => {} };
-        });
+        .catch(() => ({ empty: true, forEach: () => {} })); // Evita crash se faltar índice
 
     let currentOccupancy = 0;
     if (!reservationsSnapshot.empty) {
@@ -123,11 +100,11 @@ export default async function handler(req, res) {
 
     if ((currentOccupancy + newGuests) > limit) {
         console.warn(`⛔ Bloqueio de Overbooking: Tentou ${newGuests}, Restam ${limit - currentOccupancy}`);
-        return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas para esta data.' });
+        return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas.' });
     }
 
     // ==================================================================
-    // CÁLCULOS FINANCEIROS (Lógica original mantida)
+    // CÁLCULOS FINANCEIROS (Seu código original)
     // ==================================================================
     let priceAdult = Number(item.priceAdult);
     let priceChild = Number(item.priceChild || 0);
@@ -165,14 +142,10 @@ export default async function handler(req, res) {
     }
     transactionAmount = Number(transactionAmount.toFixed(2));
 
-    // Proteção contra valor zero ou negativo
-    if (transactionAmount <= 0) {
-        return res.status(400).json({ error: "Valor da transação inválido." });
-    }
-
     let refDate = new Date();
     // Tratamento de data seguro
     if (item.firstActivationDate) {
+         // Tenta converter se for Timestamp do Firebase ou string
          const d = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
          if (!isNaN(d)) refDate = d;
     } else if (item.createdAt) {
@@ -184,9 +157,8 @@ export default async function handler(req, res) {
     const PLATFORM_RATE = diffDays <= 30 ? 0.10 : 0.12;
 
     const isPix = payment_method_id === 'pix';
-    const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398); // Taxas aproximadas MP
+    const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
     const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
-    
     let commission = platformGrossRevenue - mpFeeCost;
     if (commission < 0) commission = 0;
     commission = Math.round(commission * 100) / 100;
@@ -215,19 +187,17 @@ export default async function handler(req, res) {
     };
 
     if (!isPix) {
-      if (!token) return res.status(400).json({ error: "Token do cartão obrigatório." });
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
     }
 
-    console.log(`🚀 Enviando para MP (Valor: ${transactionAmount}, Fee: ${commission})`);
+    console.log("🚀 Enviando para MP:", transactionAmount);
 
     const result = await payment.create({ body: paymentBody });
 
-    // Atualiza Firebase com o ID real do MP
     if (reservationId) {
         await db.collection('reservations').doc(reservationId).update({
-            paymentId: result.id.toString(), // Salva como string para evitar problemas de precisão
+            paymentId: result.id.toString(),
             paymentMethod: payment_method_id,
             status: result.status === 'approved' ? 'confirmed' : 'pending',
             mpStatus: result.status,
@@ -251,17 +221,10 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("❌ Erro Backend Process Payment:", error);
-    
-    // Tratamento de erro específico do MP
-    let msg = error.message;
-    if (error.cause && error.cause[0]) {
-        msg = error.cause[0].description || error.cause[0].message;
-    }
-
+    console.error("❌ Erro Backend:", error);
     return res.status(500).json({ 
         error: 'Erro interno', 
-        message: msg,
+        message: error.message,
         details: error.cause 
     });
   }
