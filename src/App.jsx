@@ -2034,10 +2034,7 @@ const CheckoutPage = () => {
 
   // Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
-  const [cardNumber, setCardNumber] = useState('');
   const [cardName, setCardName] = useState('');
-  const [cardExpiry, setCardExpiry] = useState(''); 
-  const [cardCvv, setCardCvv] = useState('');
   const [docNumber, setDocNumber] = useState('');
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
@@ -2045,6 +2042,7 @@ const CheckoutPage = () => {
   // 🌟 Qualidade MP
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
   const [issuerId, setIssuerId] = useState(null);
+  const [isCardReady, setIsCardReady] = useState(false);
 
   // ============================================================
   // SISTEMA DE NOTIFICAÇÃO (Embutido)
@@ -2125,28 +2123,58 @@ const CheckoutPage = () => {
   useEffect(() => {
     if(!bookingData) { navigate('/'); return; }
     
-    // 🌟 CORREÇÃO DE INICIALIZAÇÃO: Verifica se já existe antes de carregar
     const initMP = async () => {
         try {
-            // Só carrega se não existir globalmente
-            if (!window.MercadoPago) {
-                await loadMercadoPago(); 
-            }
+            if (!window.MercadoPago) await loadMercadoPago();
             
             const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
             
             if (window.MercadoPago && mpKey) {
-                if (!window.mpInstance) {
-                    window.mpInstance = new window.MercadoPago(mpKey);
-                    console.log("✅ SDK MercadoPago Inicializado");
-                }
+                // 1. Inicializa Instância
+                const mp = new window.MercadoPago(mpKey);
+                window.mpInstance = mp;
+                console.log("✅ SDK V2 Inicializado");
+
+                // 2. Monta os Secure Fields (PCI Compliance)
+                const style = { color: '#1e293b', fontSize: '14px', fontFamily: 'sans-serif' }; // Estilo base
+                
+                // Campo Número
+                const cardNumberElement = mp.fields.create('cardNumber', {
+                    placeholder: "0000 0000 0000 0000",
+                    style
+                }).mount('form-checkout__cardNumber');
+
+                // Campo Validade
+                const expirationDateElement = mp.fields.create('expirationDate', {
+                    placeholder: "MM/YY",
+                    style
+                }).mount('form-checkout__expirationDate');
+
+                // Campo CVV
+                const securityCodeElement = mp.fields.create('securityCode', {
+                    placeholder: "123",
+                    style
+                }).mount('form-checkout__securityCode');
+
+                // 3. Listener para detectar Bandeira e Banco (Bin Change)
+                cardNumberElement.on('binChange', async (data) => {
+                    const { bin } = data;
+                    if (bin) {
+                        const { results } = await mp.getPaymentMethods({ bin });
+                        if (results && results[0]) {
+                            setMpPaymentMethodId(results[0].id);
+                            setIssuerId(results[0].issuer.id);
+                            setIsCardReady(true);
+                        }
+                    }
+                });
             }
-        } catch (e) { console.error("Erro ao carregar SDK:", e); }
+        } catch (e) { console.error("Erro SDK MP:", e); }
     };
     
     initMP();
-    return onAuthStateChanged(auth, u => setUser(u));
-  }, [bookingData, navigate]);
+    return () => { setMpPaymentMethodId(''); setIsCardReady(false); };
+  }, [bookingData]);
 
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
@@ -2241,17 +2269,26 @@ const CheckoutPage = () => {
        };
 
        // 3. Tokenização
-       if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Aguarde sistema...");
-           const [month, year] = cardExpiry.split('/');
+        if (paymentMethod === 'card') {
+           if (!window.mpInstance) throw new Error("Sistema carregando...");
+           
            try {
-                const tokenObj = await window.mpInstance.createCardToken({
-                    cardNumber: cardNumber.replace(/\s/g, ''), cardholderName: cardName,
-                    cardExpirationMonth: month, cardExpirationYear: '20'+year, securityCode: cardCvv,
-                    identification: { type: 'CPF', number: cleanDoc }
+                // 🔥 CRIA O TOKEN USANDO OS CAMPOS SEGUROS (IFRAMES)
+                const tokenObj = await window.mpInstance.fields.createCardToken({
+                    cardholderName: cardName,
+                    identificationType: 'CPF',
+                    identificationNumber: cleanDoc.replace(/\D/g, '')
                 });
+
                 paymentPayload.token = tokenObj.id; 
-           } catch (e) { throw new Error("Dados do cartão inválidos."); }
+                
+                // Garante que enviamos o issuer_id detectado pelo Secure Field
+                if (issuerId) paymentPayload.issuer_id = Number(issuerId);
+                
+           } catch (e) { 
+               console.error(e);
+               throw new Error("Verifique os dados do cartão (Número, Validade ou CVV)."); 
+           }
        }
 
        // 4. API Backend
@@ -2342,21 +2379,54 @@ const CheckoutPage = () => {
 
              {paymentMethod === 'card' ? (
                <div className="space-y-4 animate-fade-in">
+                 
+                 {/* NÚMERO DO CARTÃO (SECURE FIELD) */}
                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase">Número</label>
-                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={handleCardNumberChange}/>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
+                    {/* O MP injeta o iframe AQUI dentro. Mantemos a borda para parecer um input */}
+                    <div id="form-checkout__cardNumber" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
                     {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
                  </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
-                 <div className="grid grid-cols-2 gap-4">
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" value={cardExpiry} onChange={handleExpiryChange}/></div>
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                 
+                 {/* NOME (INPUT NORMAL) */}
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label>
+                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/>
                  </div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
+                 
+                 <div className="grid grid-cols-2 gap-4">
+                   {/* VALIDADE (SECURE FIELD) */}
+                   <div>
+                       <label className="text-xs font-bold text-slate-500 uppercase">Validade</label>
+                       <div id="form-checkout__expirationDate" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
+                   </div>
+                   
+                   {/* CVV (SECURE FIELD) */}
+                   <div>
+                       <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
+                       <div id="form-checkout__securityCode" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
+                   </div>
+                 </div>
+
+                 {/* CPF (INPUT NORMAL) */}
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label>
+                    <input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
+                 </div>
+                 
+                 {/* PARCELAS (INPUT NORMAL) */}
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label>
+                    <select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}>
+                        <option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option>
+                        <option value={2}>2x de {formatBRL(finalTotal/2)}</option>
+                        <option value={3}>3x de {formatBRL(finalTotal/3)}</option>
+                    </select>
+                 </div>
                </div>
              ) : (
-               <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
+                // ... Bloco Pix mantido igual ...
+                <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
              )}
              
              <div className="mt-6"><Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>{processing ? 'Processando...' : `Confirmar (${formatBRL(finalTotal)})`}</Button></div>

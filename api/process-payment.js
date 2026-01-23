@@ -174,16 +174,33 @@ export default async function handler(req, res) {
       application_fee: commission,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       
-      // 🌟 [QUALIDADE MP] CAMPOS ADICIONAIS OBRIGATÓRIOS
-      external_reference: reservationId, // Liga a venda ao seu banco de dados
-      statement_descriptor: "MAPADODAYUSE", // Nome que aparece na fatura (Max 22 chars)
-      binary_mode: true, // Força resposta imediata (Aprovado/Recusado) sem ficar "Em análise"
+      // Campos de Qualidade (Já adicionados anteriormente)
+      external_reference: reservationId,
+      statement_descriptor: "MAPADODAYUSE", 
+      binary_mode: true,
       
       payer: {
         email: payer.email,
         first_name: payer.first_name,
         last_name: payer.last_name,
         identification: payer.identification
+      },
+
+      // 🔥 [NOVO] BLOCO DE QUALIDADE DOS ITENS (Adicione isto aqui)
+      additional_info: {
+          items: [
+              {
+                  id: item.id, // items.id (Código do item no seu banco)
+                  title: item.name, // items.title (Nome do produto)
+                  description: `Reserva para ${bookingDetails.date.split('-').reverse().join('/')} - ${bookingDetails.adults} Adultos`, // items.description
+                  picture_url: item.images && item.images.length > 0 ? item.images[0] : null, // Ajuda na visualização
+                  category_id: "tickets", // items.category_id (Categoria sugerida)
+                  quantity: 1, // items.quantity (Enviamos como 1 pacote fechado)
+                  unit_price: transactionAmount // items.unit_price (Preço total final)
+              }
+          ],
+          // IP do cliente também ajuda muito no anti-fraude
+          ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress
       }
     };
 
