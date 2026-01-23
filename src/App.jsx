@@ -1996,7 +1996,9 @@ const translateError = (code) => {
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
 // -----------------------------------------------------------------------------
 const CheckoutPage = () => {
+  // Hook de SEO (Se der erro, comente esta linha)
   useSEO("Pagamento", "Finalize sua reserva.", true);
+
   const navigate = useNavigate();
   const location = useLocation();
   const { bookingData } = location.state || {};
@@ -2029,17 +2031,14 @@ const CheckoutPage = () => {
   const [resendLoading, setResendLoading] = useState(false);
   const [isSoldOut, setIsSoldOut] = useState(false);
 
-  // --- CORREÇÃO DO MASTERCARD ---
+  // --- DETECÇÃO DE BANDEIRA DO CARTÃO ---
   const getPaymentMethodId = (number) => {
     const cleanNum = number.replace(/\D/g, '');
-    
     if (/^4/.test(cleanNum)) return 'visa';
-    // MasterCard (Série 5 e Série 2 novas)
     if (/^(5[1-5]|2[2-7])/.test(cleanNum)) return 'master'; 
     if (/^3[47]/.test(cleanNum)) return 'amex';
     if (/^(65|636368|636297|5067|4576|4011)/.test(cleanNum)) return 'elo'; 
     if (/^606282|^3841/.test(cleanNum)) return 'hipercard';
-    
     return 'visa'; // Fallback
   };
 
@@ -2047,7 +2046,7 @@ const CheckoutPage = () => {
     if(!bookingData) { navigate('/'); return; }
     
     const initMP = () => {
-        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
+        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; // Use _TEST ou _PROD conforme seu env
         if (window.MercadoPago && mpKey) {
             try {
                 if (!window.mpInstance) {
@@ -2061,7 +2060,7 @@ const CheckoutPage = () => {
     
     const unsub = onAuthStateChanged(auth, u => setUser(u));
     return unsub;
-  }, []);
+  }, [bookingData, navigate]);
 
   const handleResendVerification = async () => {
       const currentUser = auth.currentUser;
@@ -2077,7 +2076,6 @@ const CheckoutPage = () => {
   if (!bookingData) return null;
 
   const handleApplyCoupon = () => {
-      // (Lógica do cupom mantida igual...)
       setCouponMsg(null); 
       if (!bookingData.item.coupons || bookingData.item.coupons.length === 0) { 
           setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." });
@@ -2103,6 +2101,7 @@ const CheckoutPage = () => {
     setCardExpiry(value);
   };
 
+  // --- LÓGICA DE PAGAMENTO REESCRITA E SEGURA ---
   const processPayment = async () => {
      if (!user) { setShowLogin(true); return; }
 
@@ -2119,7 +2118,7 @@ const CheckoutPage = () => {
      const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
 
      try {
-       // 1. Cria Pré-Reserva
+       // 1. Cria Pré-Reserva no Firebase
        const reservationData = {
          ...bookingData, 
          total: Number(finalTotal.toFixed(2)),
@@ -2140,13 +2139,9 @@ const CheckoutPage = () => {
        const reservationId = docRef.id;
        setCurrentReservationId(reservationId);
 
-       // --- SOLUÇÃO BLINDADA PARA ID ---
-       // 1. Tenta pegar do .id direto (padrão)
-       // 2. Tenta pegar de dentro das props (se foi salvo junto com os dados)
-       // 3. Tenta pegar de um campo legado dayuseId
        const safeId = bookingData.item.id || bookingData.item.dayuseId || bookingData.dayuseId;
        
-       console.log("🆔 ID sendo enviado para pagamento:", safeId); // Log para conferência
+       console.log("🆔 ID sendo enviado para pagamento:", safeId);
 
        if (!safeId) {
            alert("Erro crítico: ID do local não identificado. Por favor, volte e selecione o local novamente.");
@@ -2154,7 +2149,7 @@ const CheckoutPage = () => {
            return;
        }
 
-       // 2. Prepara Payload
+       // 2. Prepara Payload para API
        const paymentPayload = {
         token: null, 
         transaction_amount: Number(finalTotal.toFixed(2)),
@@ -2167,8 +2162,8 @@ const CheckoutPage = () => {
             identification: { type: 'CPF', number: cleanDoc }
         },
         bookingDetails: {
-            dayuseId: safeId,         // Compatibilidade
-            item: { id: safeId },     // Formato Novo (Prioritário)
+            dayuseId: safeId,         
+            item: { id: safeId },     
             date: bookingData.date,
             total: Number(finalTotal.toFixed(2)),
             adults: Number(bookingData.adults),
@@ -2180,6 +2175,7 @@ const CheckoutPage = () => {
         reservationId: reservationId 
        };
 
+       // Tokenização do Cartão (Frontend)
        if (paymentMethod === 'card') {
            if (!window.mpInstance) throw new Error("Sistema de pagamento indisponível.");
            const [month, year] = cardExpiry.split('/');
@@ -2203,7 +2199,8 @@ const CheckoutPage = () => {
            }
        }
 
-       // 3. Chama Backend
+       // 3. Chama API Backend
+       console.log("📡 Enviando requisição para API...");
        const response = await fetch("/api/process-payment", { 
          method: "POST", 
          headers: { "Content-Type":"application/json" }, 
@@ -2212,78 +2209,71 @@ const CheckoutPage = () => {
 
        const result = await response.json();
 
-       if (result.status === 'approved' || result.status === 'confirmed') {
-       
-       const finalReservationData = { 
-        ...bookingData, 
-        paymentId: result.id.toString(),
-        paymentMethod: paymentMethod // ou formData.payment_method_id
-        };
+       // ==================================================================
+       // 4. TRATAMENTO DE RESPOSTA (Lógica Unificada)
+       // ==================================================================
 
-       // 📧 [NOVO] Dispara os E-mails (sem await para não travar a tela)
-       console.log("📨 Enviando vouchers...");
-       
-       // O objeto 'bookingData' ou 'result.reservation' depende de como você montou. 
-       // Se você tiver os dados da reserva salvos em 'bookingData', use-o.
-       // O segundo parâmetro deve ser o ID da transação ou da reserva.
-       
-       const reservationData = { 
-           ...bookingData, 
-           paymentId: result.id, 
-           status: result.status 
-       };
+       // CENÁRIO A: ERRO NA API
+       if (!response.ok || (result.status && result.status === 'rejected')) {
+           console.error("❌ Erro API:", result);
 
-       notifyCustomer(reservationData, result.id.toString());
-       notifyPartner(reservationData, result.id.toString());
-
-       // 🚀 Redireciona
-       navigate('/success', { 
-          state: { 
-             paymentId: result.id,
-             reservation: reservationData
-          } 
-       });
-    }
-
-       // --- TRATAMENTO DE ERROS COM DESIGN BONITO ---
-       if (!response.ok) {
-           // Overbooking (409)
-           if (response.status === 409) {
+           if (response.status === 409) { // Overbooking
                await updateDoc(doc(db, "reservations", reservationId), { status: 'cancelled_sold_out' });
                setIsSoldOut(true); 
                setProcessing(false);
                return;
            }
 
-           // Erro de Pagamento (400/402)
+           // Falha genérica ou recusa bancária
            await updateDoc(doc(db, "reservations", reservationId), { status: 'failed_payment' });
-           
-           // Traduz o erro feio do MP para português bonito
            const rawError = result.message || 'unknown_error';
            const niceError = translateError(rawError);
            
-           setErrorData(niceError); // Aciona o Modal
+           setErrorData(niceError);
            setProcessing(false);
            return;
        }
 
-       // 4. Sucesso
+       // CENÁRIO B: PIX (Mostra QR Code)
        if (paymentMethod === 'pix') {
            if (result.point_of_interaction?.transaction_data) {
                setPixData(result.point_of_interaction.transaction_data);
                setShowPixModal(true); 
            } else {
-               throw new Error("QR Code não gerado.");
+               throw new Error("QR Code não gerado pela API.");
            }
-       } else {
-           setShowSuccess(true);
+       } 
+       // CENÁRIO C: CARTÃO APROVADO (Sucesso + Email)
+       else if (result.status === 'approved' || result.status === 'confirmed') {
+           
+           const finalReservationData = { 
+               ...bookingData, 
+               paymentId: result.id.toString(),
+               paymentMethod: paymentMethod,
+               guestName: user.displayName || firstName,
+               guestEmail: email,
+               total: Number(finalTotal.toFixed(2))
+           };
+
+           console.log("📨 Pagamento Aprovado! Enviando e-mails...");
+           
+           // 🔥 DISPARO DOS E-MAILS (Funções importadas do utils/notifications)
+           notifyCustomer(finalReservationData, result.id.toString());
+           notifyPartner(finalReservationData, result.id.toString());
+
+           // Redireciona
+           navigate('/success', { 
+               state: { 
+                   paymentId: result.id,
+                   reservation: finalReservationData
+               } 
+           });
        }
 
        setProcessing(false);
 
      } catch (err) {
-        console.error("Erro no Checkout:", err);
-        // Erro genérico de conexão ou JS
+        console.error("🔥 Erro Crítico no Checkout:", err);
         setErrorData({ 
             title: 'Ops! Algo deu errado', 
             msg: err.message || 'Não foi possível conectar com o servidor de pagamentos.' 
@@ -2293,17 +2283,13 @@ const CheckoutPage = () => {
   };
 
   const handleSoldOutReturn = () => {
-      // Se tivermos os dados do item, voltamos para a página dele
       if (bookingData?.item) {
           const stateSlug = getStateSlug(bookingData.item.state);
           const nameSlug = generateSlug(bookingData.item.name);
-          
-          // Navega para a URL correta, passando o ID no state para garantir o carregamento
           navigate(`/${stateSlug}/${nameSlug}`, { 
               state: { id: bookingData.item.id } 
           });
       } else {
-          // Fallback de segurança: volta uma página ou vai pra home
           navigate(-1);
       }
   };
@@ -2311,7 +2297,7 @@ const CheckoutPage = () => {
   return (
     <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
       
-      {/* MODAL DE SUCESSO */}
+      {/* MODAL DE SUCESSO (Fallback visual, caso não redirecione rápido) */}
       {showSuccess && createPortal(
           <SuccessModal 
             isOpen={showSuccess} 
@@ -2335,7 +2321,6 @@ const CheckoutPage = () => {
                   <p className="text-slate-600 mb-6 text-sm">
                       Poxa! Enquanto você preenchia, as últimas vagas acabaram.
                   </p>
-                  {/* ATUALIZADO AQUI: Chama a função que redireciona para o Day Use */}
                   <Button onClick={handleSoldOutReturn} className="w-full justify-center">
                       Escolher Outra Data
                   </Button>
@@ -2344,13 +2329,15 @@ const CheckoutPage = () => {
           document.body
       )}
 
-      {/* [NOVO] MODAL DE ERRO DE PAGAMENTO (DESIGN BONITO) */}
+      {/* MODAL DE ERRO DE PAGAMENTO */}
       {errorData && createPortal(
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
               <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm text-center border-b-4 border-red-500">
                   <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <CreditCard size={32}/>
-                      <div className="absolute"><XCircle size={16} className="text-red-600 translate-x-4 translate-y-4 bg-white rounded-full"/></div>
+                      <div className="relative">
+                        <CreditCard size={32}/>
+                        <div className="absolute -right-2 -bottom-2"><XCircle size={16} className="text-red-600 bg-white rounded-full"/></div>
+                      </div>
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-2">{errorData.title}</h3>
                   <p className="text-slate-600 mb-6 text-sm leading-relaxed">
@@ -2428,8 +2415,8 @@ const CheckoutPage = () => {
                  <div><label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="0000 0000 0000 0000" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}/></div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase">Nome do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="Como no cartão" value={cardName} onChange={e=>setCardName(e.target.value)}/></div>
                  <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade (MM/AA)</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="MM/AA" maxLength={5} value={cardExpiry} onChange={handleExpiryChange}/></div>
+                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="123" maxLength={4} value={cardCvv} onChange={e=>setCardCvv(e.target.value)}/></div>
                  </div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
