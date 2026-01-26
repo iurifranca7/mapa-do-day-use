@@ -2258,6 +2258,31 @@ const CheckoutPage = () => {
     </div>
   );
 
+  // Função para lidar com a aprovação do Pix
+  const handlePixSuccess = async () => {
+      // 1. Fecha o Modal do Pix
+      setShowPixModal(false);
+      
+      // 2. Prepara os dados (Assume sucesso pois o PixModal validou)
+      const finalData = { 
+          ...bookingData, 
+          status: 'approved', 
+          paymentId: currentReservationId 
+      };
+
+      console.log("🚀 Pix Aprovado! Enviando e-mails...");
+
+      // 3. Dispara os e-mails (sem await para não travar a tela)
+      notifyCustomer(finalData, currentReservationId)
+          .catch(err => console.error("Erro email cliente:", err));
+          
+      notifyPartner(finalData, currentReservationId)
+          .catch(err => console.error("Erro email parceiro:", err));
+
+      // 4. Mostra o Modal de Sucesso (Igual ao cartão)
+      setShowSuccess(true);
+  };
+
   // --- RENDER ---
   return (
       <>
@@ -2265,7 +2290,7 @@ const CheckoutPage = () => {
       {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
       {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
       {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
-      {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
+      {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>handlePixSuccess} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
 
       <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
