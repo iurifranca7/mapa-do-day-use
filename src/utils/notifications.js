@@ -137,11 +137,20 @@ export const notifyCustomer = async (reservationData, reservationId) => {
 
 // --- 2. NOTIFICAÇÃO PARCEIRO (NOVA VENDA) ---
 export const notifyPartner = async (reservationData, paymentId) => {
-    try {
-        // Busca e-mail do dono
-        const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
-        if (!ownerSnap.exists()) return;
-        const ownerEmail = ownerSnap.data().email;
+      try {
+          // BLINDAGEM: Se não tiver ID do dono, aborta sem quebrar
+          if (!reservationData || !reservationData.ownerId) {
+              console.warn("⚠️ notifyPartner chamado sem ownerId:", reservationData);
+              return;
+          }
+
+          const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
+
+          // 🛡️ BLINDAGEM 2: Se o dono não existir no banco
+          if (!ownerSnap.exists()) {
+             console.warn("⚠️ Dono não encontrado no banco de dados.");
+             return;
+          }
 
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">

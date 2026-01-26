@@ -2260,26 +2260,44 @@ const CheckoutPage = () => {
 
   // Função para lidar com a aprovação do Pix
   const handlePixSuccess = async () => {
-      // Trava de segurança: Se já mostrou sucesso, não faz nada
       if (showSuccess) return; 
       
       console.log("🎉 Iniciando fluxo de sucesso do Pix...");
-      setShowSuccess(true); // Já seta true para bloquear chamadas duplas
+      setShowSuccess(true);
       setShowPixModal(false);
 
+      // 1. Garante os dados do Usuário (Mesma lógica do cartão)
+      const email = user?.email || "cliente@mapadodayuse.com";
+      const firstName = user?.displayName ? user.displayName.split(' ')[0] : "Cliente";
+      
+      // 2. Reconstrói o objeto completo para garantir que nada falte
       const finalData = { 
           ...bookingData, 
+          // Garante que o ID do dono está acessível na raiz
+          ownerId: bookingData.item.ownerId, 
+          // Garante dados do hóspede
+          guestName: firstName,
+          guestEmail: email,
+          // Status
           status: 'approved', 
           paymentId: currentReservationId 
       };
 
-      // Dispara E-mails
-      console.log("📧 Enviando e-mails...");
+      console.log("📦 Dados para envio:", finalData);
+
+      // 3. Dispara E-mails com tratamento de erro individual
       notifyCustomer(finalData, currentReservationId)
-          .catch(err => console.error("Erro email cliente:", err));
+          .catch(err => console.error("❌ Falha email cliente:", err));
           
-      notifyPartner(finalData, currentReservationId)
-          .catch(err => console.error("Erro email parceiro:", err));
+      // Pequeno delay para não sobrecarregar
+      setTimeout(() => {
+          if (finalData.ownerId) {
+             notifyPartner(finalData, currentReservationId)
+                .catch(err => console.error("❌ Falha email parceiro:", err));
+          } else {
+             console.warn("⚠️ OwnerId não encontrado, pulando email parceiro.");
+          }
+      }, 500);
   };
 
   // --- VIGIA DO PIX (Garantia de Disparo) ---
