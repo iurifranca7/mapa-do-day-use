@@ -39,6 +39,7 @@ import {
 import { loadMercadoPago } from '@mercadopago/sdk-js';
 import RefundModal from './components/RefundModal';
 import { notifyCustomer, notifyPartner } from './utils/notifications';
+import CreditCardForm from './CreditCardForm';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
 const STATE_NAMES = {
@@ -2016,6 +2017,28 @@ const sanitizeForFirestore = (obj) => {
     });
     return cleanObj;
 };
+const MPCardFields = React.memo(() => {
+    return (
+        <>
+            <div>
+                <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
+                {/* Removi o 'flex items-center' que pode bugar a altura do iframe */}
+                <div id="form-checkout__cardNumber" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white"></div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Validade</label>
+                    <div id="form-checkout__expirationDate" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white"></div>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
+                    <div id="form-checkout__securityCode" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white"></div>
+                </div>
+            </div>
+        </>
+    );
+});
 
 // -----------------------------------------------------------------------------
 // CHECKOUT PAGE (FRONTEND MP SDK + SAVING TO FIRESTORE)
@@ -2027,12 +2050,11 @@ const CheckoutPage = () => {
   const location = useLocation();
   const { bookingData } = location.state || {};
   
+  // States de Autenticação e Feedback
   const [user, setUser] = useState(auth.currentUser);
   const [showLogin, setShowLogin] = useState(false);
   const [initialAuthMode, setInitialAuthMode] = useState('login'); 
   const [showSuccess, setShowSuccess] = useState(false);
-  
-  // Feedback
   const [errorData, setErrorData] = useState(null);
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixData, setPixData] = useState(null);
@@ -2040,7 +2062,7 @@ const CheckoutPage = () => {
   const [currentReservationId, setCurrentReservationId] = useState(null);
   const [resendLoading, setResendLoading] = useState(false);
 
-  // Valores
+  // Valores e Cupons
   const [couponCode, setCouponCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [finalTotal, setFinalTotal] = useState(bookingData?.total || 0);
@@ -2053,172 +2075,39 @@ const CheckoutPage = () => {
   const [installments, setInstallments] = useState(1);
   const [processing, setProcessing] = useState(false);
   
-  // 🌟 Qualidade MP
+  // MP Instance State (A Lógica que fizemos funcionar)
+  const [mpInstance, setMpInstance] = useState(null); 
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
   const [issuerId, setIssuerId] = useState(null);
-  const [isCardReady, setIsCardReady] = useState(false);
-  const cardFormMounted = useRef(false);
-  const changeMethod = (method) => {
-      setPaymentMethod(method);
-      if (method === 'pix') {
-          cardFormMounted.current = false; // Reseta para poder montar o cartão de novo se o usuário voltar
-      }
-  };
 
-  // ============================================================
-  // SISTEMA DE NOTIFICAÇÃO (Embutido)
-  // ============================================================
-  
-  const notifyCustomer = async (reservationData, reservationId) => {
-      try {
-          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
-          let rulesHtml = reservationData.item.allowFood === false 
-             ? `<div style="background:#fef2f2;color:#991b1b;padding:15px;border-radius:8px;margin:20px 0;">🚫 <strong>Proibida entrada de alimentos/bebidas</strong></div>`
-             : `<div style="background:#f0fdf4;color:#166534;padding:15px;border-radius:8px;margin:20px 0;">✅ <strong>Entrada de alimentos permitida</strong></div>`;
-
-          const emailHtml = `
-            <div style="font-family:sans-serif;background:#f3f4f6;padding:40px 0;">
-                <div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;">
-                    <div style="background:#0097A8;padding:30px;text-align:center;">
-                        <h1 style="color:white;margin:0;">Voucher Confirmado</h1>
-                        <p style="color:#e0f2fe;margin:5px 0;">Apresente na portaria</p>
-                    </div>
-                    <div style="padding:30px;">
-                        <h2 style="text-align:center;color:#0f172a;">${reservationData.item.name}</h2>
-                        <div style="text-align:center;background:#f8fafc;padding:20px;border-radius:12px;margin:20px 0;">
-                            <img src="${qrCodeUrl}" width="150" />
-                            <p style="font-size:24px;font-weight:bold;margin:10px 0;">${reservationId.slice(0,6).toUpperCase()}</p>
-                        </div>
-                        <p><strong>Titular:</strong> ${reservationData.guestName}</p>
-                        <p><strong>Pago:</strong> ${formatBRL(reservationData.total)}</p>
-                        ${rulesHtml}
-                        <center><a href="https://mapadodayuse.com/minhas-viagens" style="background:#0097A8;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Ver Voucher Completo</a></center>
-                    </div>
-                </div>
-            </div>`;
-
-          await fetch('/api/send-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ to: reservationData.guestEmail, subject: `Voucher: ${reservationData.item.name}`, html: emailHtml })
-          });
-      } catch (e) { console.error("Erro email cliente:", e); }
-  };
-
-  const notifyPartner = async (reservationData, paymentId) => {
-      try {
-          const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
-          if (!ownerSnap.exists()) return;
-          
-          const emailHtml = `
-            <div style="font-family:sans-serif;padding:20px;">
-                <h2 style="color:#0097A8;">Nova Venda! 🚀</h2>
-                <p>Reserva para <strong>${reservationData.item.name}</strong>.</p>
-                <div style="background:#e0f7fa;padding:20px;border-radius:8px;">
-                    <p style="font-size:32px;font-weight:bold;color:#0097A8;margin:0;">${formatBRL(reservationData.total)}</p>
-                </div>
-                <ul><li>Cliente: ${reservationData.guestName}</li><li>Data: ${reservationData.date}</li></ul>
-            </div>`;
-
-          await fetch('/api/send-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ to: ownerSnap.data().email, subject: `Nova Venda: ${formatBRL(reservationData.total)}`, html: emailHtml })
-          });
-      } catch (e) { console.error("Erro email parceiro:", e); }
-  };
-
-  // ============================================================
-  // LOGICA MP E CHECKOUT
-  // ============================================================
-
-  const guessPaymentMethod = (number) => {
-    const cleanNum = number.replace(/\D/g, '');
-    if (/^4/.test(cleanNum)) return 'visa';
-    if (/^5/.test(cleanNum)) return 'master'; 
-    return 'visa';
-  };
-
-  useEffect(() => {
-    if(!bookingData) { navigate('/'); return; }
-    
-    const initMP = async () => {
-        // 🌟 CORREÇÃO 3: Previne erro de "Duplicate Import"
-        if (cardFormMounted.current) return; 
-
-        try {
-            // Só carrega o script se ele ainda não existir na janela
-            if (!window.MercadoPago) {
-                await loadMercadoPago(); 
-            }
-            
-            const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
-            
-            if (window.MercadoPago && mpKey) {
-                // Cria a instância apenas se não existir
-                if (!window.mpInstance) {
-                    window.mpInstance = new window.MercadoPago(mpKey);
-                    console.log("✅ SDK V2 Inicializado");
-                }
-
-                // Só monta os campos se o método for cartão
-                if (paymentMethod === 'card') {
-                    mountSecureFields(window.mpInstance);
-                }
-            }
-        } catch (e) { console.error("Erro SDK:", e); }
-    };
-    
-    initMP();
-    
-    // Limpeza ao sair da página
-    return () => { 
-        cardFormMounted.current = false; 
-    };
-  }, [bookingData, navigate, paymentMethod]);
-
-  const mountSecureFields = (mp) => {
-      try {
-          if (cardFormMounted.current) return;
-          
-          console.log("🔒 Montando Secure Fields...");
-          const style = { color: '#1e293b', fontSize: '14px', fontFamily: 'sans-serif', placeholderColor: '#94a3b8' };
-
-          // Cria campos seguros
-          const cardNumberElement = mp.fields.create('cardNumber', { placeholder: "0000 0000 0000 0000", style });
-          const expirationDateElement = mp.fields.create('expirationDate', { placeholder: "MM/YY", style });
-          const securityCodeElement = mp.fields.create('securityCode', { placeholder: "123", style });
-
-          // Monta nos IDs (iframes)
-          cardNumberElement.mount('form-checkout__cardNumber');
-          expirationDateElement.mount('form-checkout__expirationDate');
-          securityCodeElement.mount('form-checkout__securityCode');
-
-          cardFormMounted.current = true;
-
-          // Listener de Bin para qualidade
-          cardNumberElement.on('binChange', async (data) => {
-              const { bin } = data;
-              if (bin) {
-                  const { results } = await mp.getPaymentMethods({ bin });
-                  if (results && results[0]) {
-                      setMpPaymentMethodId(results[0].id);
-                      setIssuerId(results[0].issuer.id);
-                  }
-              }
-          });
-      } catch (e) { console.warn("Campos já montados ou erro de mount:", e); }
-  };
-    
-
+  // Listener de Auth
   useEffect(() => {
       return onAuthStateChanged(auth, u => setUser(u));
   }, []);
 
+  // Inicializa SDK do Mercado Pago (Mantido igual)
+  useEffect(() => {
+    const initSDK = async () => {
+        if (window.mpInstance) { setMpInstance(window.mpInstance); return; }
+        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY; // Ajustado conforme seu env
+        if (!mpKey) return;
+        try {
+            if (!window.MercadoPago) await loadMercadoPago();
+            if (window.MercadoPago) {
+                const instance = new window.MercadoPago(mpKey);
+                window.mpInstance = instance;
+                setMpInstance(instance);
+            }
+        } catch (e) { console.error("Erro SDK:", e); }
+    };
+    initSDK();
+  }, []);
+
+  // Lógica de Cupom
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
       if (!bookingData.item.coupons?.length) { 
-          setCouponMsg({ type: 'error', text: "Sem cupons." }); return; 
+          setCouponMsg({ type: 'error', text: "Sem cupons disponíveis." }); return; 
       }
       const found = bookingData.item.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
       if(found) {
@@ -2233,251 +2122,320 @@ const CheckoutPage = () => {
       }
   };
 
-  const handleResendVerification = async () => {
-      if (!user) return;
-      setResendLoading(true);
-      try {
-          await sendEmailVerification(user, { url: window.location.href, handleCodeInApp: true });
-          alert(`E-mail enviado!`);
-      } catch (e) { alert("Erro ao enviar."); } 
-      finally { setResendLoading(false); }
+  const changeMethod = (method) => {
+      setPaymentMethod(method);
+      // Limpa dados sensíveis ao trocar
+      if (method === 'pix') {
+          setCardName('');
+      }
   };
 
-  // 🌟 Qualidade MP: Secure Fields simulation & Issuer ID
-  const handleCardNumberChange = async (e) => {
-    const val = e.target.value;
-    setCardNumber(val);
-    const cleanVal = val.replace(/\s/g, '');
-
-    if (cleanVal.length >= 6 && window.mpInstance) {
-        try {
-            const bin = cleanVal.substring(0, 6);
-            const methods = await window.mpInstance.getPaymentMethods({ bin });
-            if (methods?.results?.length > 0) {
-                const pm = methods.results[0];
-                setMpPaymentMethodId(pm.id); 
-                setIssuerId(pm.issuer.id);
-            }
-        } catch (err) {}
-    }
-  };
-
-  const handleExpiryChange = (e) => {
-    let val = e.target.value.replace(/\D/g, '');
-    if (val.length > 4) val = val.slice(0, 4);
-    if (val.length > 2) val = `${val.slice(0, 2)}/${val.slice(2)}`;
-    setCardExpiry(val);
-  };
-
-  // --- PROCESSAMENTO ---
+  // --- PROCESSAMENTO (Mantido igual) ---
   const processPayment = async () => {
-     if (!user) { setShowLogin(true); return; }
-     
-     const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-     if (cleanDoc.length < 11) { alert("CPF Inválido"); return; }
-     
-     setProcessing(true);
-
-     const email = user.email || "cliente@mapadodayuse.com";
-     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
-     const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
-
-     // Variáveis para escopo de erro
-     let reservationIdRef = null;
-
-     try {
-       // 1. Cria Reserva no Firestore (Status Waiting)
-       const rawRes = {
-         ...bookingData, 
-         total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
-         status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
-         createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
-         parentTicketId: bookingData.parentTicketId || null
-       };
-       
-       const reservationData = sanitizeForFirestore(rawRes);
-       const docRef = await addDoc(collection(db, "reservations"), reservationData);
-       reservationIdRef = docRef.id;
-       setCurrentReservationId(reservationIdRef); // Salva no state para uso no Pix se necessário
-
-       // 2. Prepara Payload do MP
-       const safeId = bookingData.item.id || bookingData.item.dayuseId;
-       const paymentPayload = {
-           token: null, transaction_amount: Number(finalTotal.toFixed(2)),
-           payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
-           issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
-           payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
-           bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
-           reservationId: reservationIdRef 
-       };
-
-       // 3. Tokenização Cartão (Se aplicável)
-       if (paymentMethod === 'card') {
-           if (!window.mpInstance) throw new Error("Sistema de pagamento carregando...");
-           const tokenObj = await window.mpInstance.fields.createCardToken({
-               cardholderName: cardName,
-               identificationType: 'CPF',
-               identificationNumber: cleanDoc
-           });
-           paymentPayload.token = tokenObj.id; 
-       }
-
-       // 4. Processa Pagamento (Backend)
-       const response = await fetch("/api/process-payment", { 
-         method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
-       });
-       const result = await response.json();
-
-       // 5. Trata Falha ou Rejeição
-       if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
-           const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
-           
-           // Atualiza o doc criado para falha
-           await updateDoc(doc(db, "reservations", reservationIdRef), { status });
-           
-           if (status === 'cancelled_sold_out') setIsSoldOut(true);
-           else setErrorData({ title: "Pagamento não aprovado", msg: result.message || "Verifique os dados do cartão." });
-           
-           setProcessing(false);
-           return; 
-       }
-
-       // 6. SUCESSO! (Pix ou Cartão Aprovado)
-       if (paymentMethod === 'pix' && result.point_of_interaction) {
-           setPixData(result.point_of_interaction.transaction_data);
-           setShowPixModal(true); 
-            setProcessing(false);
-       } 
-       else if (result.status === 'approved' || result.status === 'confirmed') {
-           
-            // A. Atualiza State Visual IMEDIATAMENTE (UX Rápida)
-           setProcessing(false);
-           setShowSuccess(true); 
-
-            // B. Atualiza Firestore (opcional se seu webhook já faz isso, mas bom garantir)
-            // Não usamos await aqui para não travar, ou usamos se for muito rápido.
-            // O ideal é confiar no retorno do backend, mas vamos atualizar o objeto local:
-           const finalData = { ...reservationData, paymentId: result.id, status: result.status };
-
-            // C. Dispara e-mails em SEGUNDO PLANO (Sem await)
-            // Isso garante que se o email falhar, o cliente ainda vê o sucesso da compra.
-           notifyCustomer(finalData, reservationIdRef)
-                .catch(err => console.error("⚠️ Falha silenciada envio email cliente:", err));
-                
-           notifyPartner(finalData, result.id)
-                .catch(err => console.error("⚠️ Falha silenciada envio email parceiro:", err));
-       } else {
-            // Status pendente (ex: análise manual)
-            setProcessing(false);
-            alert("Pagamento em análise. Você receberá um e-mail em breve.");
-            navigate('/minhas-viagens');
+       if (!user) { 
+           // UX: Scrolla para o topo para ele ver o aviso de login se clicar direto em pagar
+           window.scrollTo({ top: 0, behavior: 'smooth' });
+           setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se ali em cima para continuar. É rapidinho!" });
+           return; 
        }
 
-     } catch (err) {
-        console.error("Erro Checkout Crítico:", err);
-        setErrorData({ title: "Erro de Comunicação", msg: "Não foi possível processar. Se cobrou, entre em contato." });
-        setProcessing(false);
-     }
-  };
+       const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
+       if (cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
+
+       setProcessing(true);
+
+       const email = user.email || "cliente@mapadodayuse.com";
+       const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
+       const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+       let reservationIdRef = null;
+
+       try {
+           const rawRes = {
+           ...bookingData, 
+           total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
+           status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
+           createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
+           parentTicketId: bookingData.parentTicketId || null
+           };
+
+           const reservationData = sanitizeForFirestore(rawRes);
+           const docRef = await addDoc(collection(db, "reservations"), reservationData);
+           reservationIdRef = docRef.id;
+           setCurrentReservationId(reservationIdRef); 
+
+           const safeId = bookingData.item.id || bookingData.item.dayuseId;
+           const paymentPayload = {
+               token: null, transaction_amount: Number(finalTotal.toFixed(2)),
+               payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
+               issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
+               payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
+               bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
+               reservationId: reservationIdRef 
+           };
+
+           if (paymentMethod === 'card') {
+               if (!window.mpInstance) throw new Error("Sistema de pagamento carregando...");
+               const tokenObj = await window.mpInstance.fields.createCardToken({
+                   cardholderName: cardName,
+                   identificationType: 'CPF',
+                   identificationNumber: cleanDoc
+               });
+               paymentPayload.token = tokenObj.id; 
+           }
+
+           const response = await fetch("/api/process-payment", { 
+               method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
+           });
+           const result = await response.json();
+
+           if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
+               const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
+               await updateDoc(doc(db, "reservations", reservationIdRef), { status });
+               if (status === 'cancelled_sold_out') setIsSoldOut(true);
+               else setErrorData({ title: "Pagamento não aprovado", msg: result.message || "Verifique os dados do cartão." });
+               setProcessing(false);
+               return; 
+           }
+
+           if (paymentMethod === 'pix' && result.point_of_interaction) {
+               setPixData(result.point_of_interaction.transaction_data);
+               setShowPixModal(true); 
+               setProcessing(false);
+           } 
+           else if (result.status === 'approved' || result.status === 'confirmed') {
+               setProcessing(false);
+               setShowSuccess(true); 
+               const finalData = { ...reservationData, paymentId: result.id, status: result.status };
+               notifyCustomer(finalData, reservationIdRef).catch(err => console.error(err));
+               notifyPartner(finalData, result.id).catch(err => console.error(err));
+           } else {
+               setProcessing(false);
+               alert("Pagamento em análise. Você receberá um e-mail em breve.");
+               navigate('/minhas-viagens');
+          }
+       } catch (err) {
+           console.error("Erro Checkout Crítico:", err);
+           setErrorData({ title: "Erro de Comunicação", msg: "Não foi possível processar. Se cobrou, entre em contato." });
+           setProcessing(false);
+       }
+   };
+
+  const handleSoldOutReturn = () => { navigate(-1); };
+
+  // Componente de Resumo (Reutilizável para Mobile/Desktop)
+  const renderOrderSummary = (isMobile = false) => (
+    <div className={`bg-white p-6 rounded-3xl border border-slate-100 shadow-xl ${!isMobile ? 'sticky top-24' : ''}`}>
+        <h3 className="font-bold text-xl text-slate-900 mb-1">{bookingData.item.name}</h3>
+        <p className="text-sm text-slate-500 mb-6 flex items-center gap-1"><Calendar size={14}/> {bookingData.date.split('-').reverse().join('/')}</p>
+        
+        <div className="space-y-3 text-sm text-slate-600 border-t pt-4 border-dashed">
+            <div className="flex justify-between"><span>Adultos ({bookingData.adults})</span><b>{formatBRL(bookingData.adults * bookingData.priceSnapshot.adult)}</b></div>
+            {bookingData.children > 0 && <div className="flex justify-between"><span>Crianças ({bookingData.children})</span><b>{formatBRL(bookingData.children * bookingData.priceSnapshot.child)}</b></div>}
+            {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
+            {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis</span><span>R$ 0,00</span></div>)}
+            
+            {/* Cupom */}
+            {discount > 0 && (<div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto aplicado</span><span>- {formatBRL(discount)}</span></div>)}
+            
+            <div className="flex gap-2 pt-2">
+                <input className="border border-slate-200 bg-slate-50 p-3 rounded-xl flex-1 text-xs uppercase font-bold tracking-wide outline-none focus:border-[#0097A8]" placeholder="CUPOM DE DESCONTO" value={couponCode} onChange={e=>setCouponCode(e.target.value)} />
+                <button onClick={handleApplyCoupon} className="bg-slate-800 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-900 transition-colors">APLICAR</button>
+            </div>
+            {couponMsg && (<div className={`text-xs p-2 rounded text-center font-bold mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{couponMsg.text}</div>)}
+            
+            <div className="flex justify-between pt-4 border-t border-slate-100 mt-4 items-center">
+                <span className="font-bold text-lg text-slate-700">Total</span>
+                <span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span>
+            </div>
+
+            {/* AVISO LEGAL PEDIDO */}
+            <div className="mt-4 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                <p className="text-[10px] text-yellow-800 leading-tight text-justify">
+                    📢 <strong>Importante:</strong> O Mapa do Day Use atua como intermediador. A prestação do serviço, alimentação e segurança local são de responsabilidade exclusiva do estabelecimento.
+                </p>
+            </div>
+        </div>
+    </div>
+  );
 
   // --- RENDER ---
   return (
-    <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
-      
-      {/* MODAIS */}
+      <>
+      {/* MODAIS (Success, Error, Pix, Login) mantidos */}
       {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
       {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
       {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={()=>navigate('/minhas-viagens')} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
-      
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium"><ChevronLeft size={16}/> Voltar</button>
-      
-      <div className="grid md:grid-cols-2 gap-12">
-        <div className="space-y-6">
-          <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-slate-900"><User className="text-[#0097A8]"/> Seus Dados</h3>
+
+      <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><ChevronLeft size={18}/> Voltar para o local</button>
+
+      <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
+        <div className="space-y-8">
+          
+          {/* 1. CARD DE IDENTIFICAÇÃO (Simpático e Educado) */}
+          <div className={`bg-white p-6 rounded-3xl border shadow-sm transition-all ${user ? 'border-green-200 ring-1 ring-green-100' : 'border-[#0097A8]/30 ring-4 ring-[#0097A8]/5'}`}>
+            <div className="flex items-center gap-3 mb-4">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${user ? 'bg-green-100 text-green-600' : 'bg-[#e0f7fa] text-[#0097A8]'}`}>
+                    <User size={20} />
+                </div>
+                <div>
+                    <h3 className="font-bold text-lg text-slate-900">{user ? `Olá, ${user.displayName?.split(' ')[0]}!` : 'Vamos começar?'}</h3>
+                    <p className="text-xs text-slate-500">{user ? 'Seus dados já estão confirmados.' : 'Precisamos identificar você para emitir o voucher.'}</p>
+                </div>
+            </div>
+
             {user ? (
-               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <p className="font-bold">{user.displayName}</p><p className="text-sm">{user.email}</p>
-                  <div className="mt-3 text-xs font-bold text-green-600 bg-green-100 w-fit px-3 py-1 rounded-full"><Lock size={10}/> Identidade Confirmada</div>
+               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex justify-between items-center">
+                  <div>
+                    <p className="font-bold text-slate-700 text-sm">{user.displayName}</p>
+                    <p className="text-xs text-slate-500">{user.email}</p>
+                  </div>
+                  <div className="text-[10px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full flex items-center gap-1"><Lock size={8}/> Confirmado</div>
                </div>
             ) : (
-               <div className="text-center py-8"><Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button><button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="mt-4 text-sm font-bold text-[#0097A8] hover:underline">Já tenho conta</button></div>
+               <div className="space-y-3">
+                   <p className="text-sm text-slate-600 leading-relaxed">Para sua segurança e para enviarmos seu voucher, faça login ou cadastre-se rapidinho.</p>
+                   <div className="grid grid-cols-2 gap-3">
+                       <Button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="w-full !bg-white border-2 border-[#0097A8] !text-[#0097A8] font-bold hover:!bg-[#e0f7fa] transition-colors">Entrar</Button>
+                       <Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button>
+                   </div>
+               </div>
             )}
           </div>
+
+          {/* 🔥 NOVO LOCAL DO RESUMO MOBILE (Cole aqui) */}
+          <div className="block md:hidden mb-6">
+            {/* Era <OrderSummary isMobile={true} /> */}
+             {renderOrderSummary(true)} 
+                </div>
           
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-8 ${!user ? 'opacity-50 pointer-events-none grayscale':''}`}>
-             <h3 className="font-bold text-xl mb-4 text-slate-900">Pagamento Seguro</h3>
-             <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
+          {/* 2. CARD DE PAGAMENTO */}
+          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 transition-all duration-300 ${!user ? 'opacity-60 pointer-events-none grayscale-[0.8] blur-[1px]' : ''}`}>
+             <div className="flex items-center justify-between mb-6">
+                <h3 className="font-bold text-xl text-slate-900 flex items-center gap-2">Pagamento Seguro <Lock size={16} className="text-green-500"/></h3>
+             </div>
+
+             {/* Abas de Seleção */}
+             <div className="flex p-1 bg-slate-100 rounded-xl mb-8">
                  <button 
-                    onClick={() => changeMethod('card')} // <--- USE A FUNÇÃO changeMethod
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'card' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}
+                    onClick={() => changeMethod('card')} 
+                    className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${paymentMethod === 'card' ? 'bg-white shadow-md text-[#0097A8] transform scale-[1.02]' : 'text-slate-500 hover:text-slate-700'}`}
                  >
-                    Cartão de Crédito
+                    <CreditCard size={16}/> Cartão de Crédito
                  </button>
                  
                  <button 
-                    onClick={() => changeMethod('pix')} // <--- USE A FUNÇÃO changeMethod
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${paymentMethod === 'pix' ? 'bg-white shadow text-[#0097A8]' : 'text-slate-500'}`}
+                    onClick={() => changeMethod('pix')} 
+                    className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${paymentMethod === 'pix' ? 'bg-white shadow-md text-[#0097A8] transform scale-[1.02]' : 'text-slate-500 hover:text-slate-700'}`}
                  >
-                    Pix
+                    <QrCode size={16}/> Pix (Aprovação Imediata)
                  </button>
              </div>
 
-             {paymentMethod === 'card' ? (
-               <div className="space-y-4 animate-fade-in">
-                 
-                 {/* 🔒 SECURE FIELDS (IFRAMES) */}
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
-                    <div id="form-checkout__cardNumber" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div>
-                    {mpPaymentMethodId && <p className="text-xs text-green-600 mt-1 font-bold">✅ Bandeira: {mpPaymentMethodId.toUpperCase()}</p>}
-                 </div>
+             <div className="relative z-10 min-h-[300px]">
+                {/* --- CARTÃO DE CRÉDITO (CÓDIGO PROTEGIDO) --- */}
+                {paymentMethod === 'card' && (
+                    <div className="animate-fade-in space-y-5">
+                         {/* Form do MP Isolado que fizemos funcionar */}
+                         <CreditCardForm 
+                             mp={mpInstance} 
+                             onCardDataChange={(data) => {
+                                 if (data.bin && window.mpInstance) {
+                                     window.mpInstance.getPaymentMethods({ bin: data.bin }).then(({ results }) => {
+                                         if(results?.[0]) {
+                                            setMpPaymentMethodId(results[0].id);
+                                            setIssuerId(results[0].issuer.id);
+                                         }
+                                     }).catch(console.error);
+                                 }
+                             }}
+                         />
+                         
+                         {/* Campos complementares (Nome e CPF) */}
+                         <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">Nome no Cartão</label>
+                                <input className="w-full border border-slate-300 p-3 rounded-lg mt-1 focus:ring-2 focus:ring-[#0097A8] focus:border-transparent outline-none transition-all" value={cardName} onChange={e=>setCardName(e.target.value)} placeholder="Como está impresso" />
+                            </div>
+                            <div>
+                                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">CPF do Titular</label>
+                                <input className="w-full border border-slate-300 p-3 rounded-lg mt-1 focus:ring-2 focus:ring-[#0097A8] focus:border-transparent outline-none transition-all" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/>
+                            </div>
+                         </div>
+                         
+                         <div>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">Parcelamento</label>
+                            <div className="relative">
+                                <select className="w-full border border-slate-300 p-3 rounded-lg mt-1 bg-white appearance-none focus:ring-2 focus:ring-[#0097A8] outline-none" value={installments} onChange={e=>setInstallments(e.target.value)}>
+                                    <option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option>
+                                    <option value={2}>2x de {formatBRL(finalTotal/2)}</option>
+                                    <option value={3}>3x de {formatBRL(finalTotal/3)}</option>
+                                </select>
+                                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
+                            </div>
+                         </div>
+                    </div>
+                )}
 
-                 {/* Nome (Input Normal) */}
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label><input className="w-full border p-3 rounded-lg mt-1" value={cardName} onChange={e=>setCardName(e.target.value)} placeholder="Igual no cartão"/></div>
-                 
-                 <div className="grid grid-cols-2 gap-4">
-                   {/* 🔒 Validade */}
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">Validade</label><div id="form-checkout__expirationDate" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div></div>
-                   {/* 🔒 CVV */}
-                   <div><label className="text-xs font-bold text-slate-500 uppercase">CVV</label><div id="form-checkout__securityCode" className="w-full border p-3 rounded-lg mt-1 h-12 bg-white flex items-center"></div></div>
-                 </div>
+                {/* --- PIX --- */}
+                {paymentMethod === 'pix' && (
+                    <div className="animate-fade-in text-center py-4">
+                        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-6 text-left flex items-start gap-3">
+                            <Info size={20} className="text-blue-600 mt-0.5 shrink-0"/>
+                            <div>
+                                <p className="text-sm text-blue-900 font-bold mb-1">Atenção ao CPF</p>
+                                <p className="text-xs text-blue-700 leading-relaxed">Para gerarmos o QR Code do Pix com segurança, é <strong>obrigatório</strong> informar o CPF do pagador abaixo.</p>
+                            </div>
+                        </div>
 
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">CPF Titular</label><input className="w-full border p-3 rounded-lg mt-1" placeholder="000.000.000-00" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div>
-                 
-                 <div><label className="text-xs font-bold text-slate-500 uppercase">Parcelas</label><select className="w-full border p-3 rounded-lg mt-1 bg-white" value={installments} onChange={e=>setInstallments(e.target.value)}><option value={1}>1x de {formatBRL(finalTotal)}</option><option value={2}>2x de {formatBRL(finalTotal/2)}</option><option value={3}>3x de {formatBRL(finalTotal/3)}</option></select></div>
-               </div>
-             ) : (
-               <div className="text-center py-6 animate-fade-in"><QrCode size={40} className="mx-auto text-[#0097A8]"/><p className="text-sm mt-4 text-slate-600">Gera código Pix.</p><div className="text-left mt-4"><label className="text-xs font-bold text-slate-500 uppercase">CPF Pagador</label><input className="w-full border p-3 rounded-lg mt-1" value={docNumber} onChange={e=>setDocNumber(e.target.value)}/></div></div>
-             )}
-             
-             <div className="mt-6"><Button className="w-full py-4 text-lg" onClick={processPayment} disabled={processing}>{processing ? 'Processando...' : `Confirmar (${formatBRL(finalTotal)})`}</Button></div>
-             <p className="text-center text-xs text-slate-400 mt-3 flex justify-center items-center gap-1"><Lock size={10}/> Ambiente PCI Seguro</p>
+                        <div className="text-left">
+                            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">CPF do Pagador (Obrigatório)</label>
+                            <input 
+                                className="w-full border border-slate-300 p-3 rounded-lg mt-1 focus:ring-2 focus:ring-[#0097A8] focus:border-transparent outline-none transition-all text-lg tracking-wide" 
+                                placeholder="000.000.000-00" 
+                                value={docNumber} 
+                                onChange={e=>setDocNumber(e.target.value)}
+                            />
+                        </div>
+                        
+                        <div className="mt-8 flex flex-col items-center justify-center text-slate-400 gap-2 opacity-60">
+                            <QrCode size={64} className="animate-pulse"/>
+                            <p className="text-xs">O QR Code será gerado na próxima tela</p>
+                        </div>
+                    </div>
+                )}
+             </div>
+
+             {/* Botão de Ação */}
+             <div className="mt-8">
+                 <Button className="w-full py-4 text-lg shadow-lg shadow-[#0097A8]/20 hover:shadow-[#0097A8]/40 transition-all" onClick={processPayment} disabled={processing}>
+                    {processing ? <span className="flex items-center gap-2 justify-center"><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/> Processando...</span> : `Pagar ${formatBRL(finalTotal)}`}
+                 </Button>
+             </div>
+
+             {/* Rodapé de Segurança (Logo MP) */}
+             <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col items-center gap-2">
+        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold flex items-center gap-1">
+        <Lock size={10}/> Ambiente Criptografado e Seguro
+        </p>
+        <div className="flex flex-col items-center justify-center">
+        <span className="text-[10px] text-slate-500 mb-1">Processado via Mercado Pago</span>
+        </div>
+        </div>
+
           </div>
         </div>
 
-        {/* Resumo */}
-        <div>
-           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl sticky top-24">
-              <h3 className="font-bold text-xl text-slate-900">{bookingData.item.name}</h3>
-              <p className="text-sm text-slate-500 mb-6">{bookingData.date.split('-').reverse().join('/')}</p>
-              <div className="space-y-3 text-sm text-slate-600 border-t pt-4">
-                  <div className="flex justify-between"><span>Adultos ({bookingData.adults})</span><b>{formatBRL(bookingData.adults * bookingData.priceSnapshot.adult)}</b></div>
-                  {bookingData.children > 0 && <div className="flex justify-between"><span>Crianças ({bookingData.children})</span><b>{formatBRL(bookingData.children * bookingData.priceSnapshot.child)}</b></div>}
-                  {bookingData.pets > 0 && <div className="flex justify-between"><span>Pets ({bookingData.pets})</span><b>{formatBRL(bookingData.pets * bookingData.priceSnapshot.pet)}</b></div>}
-                  {bookingData.freeChildren > 0 && (<div className="flex justify-between text-green-600 font-bold text-xs"><span>Crianças Grátis</span><span>R$ 0,00</span></div>)}
-                  {bookingData.selectedSpecial && Object.entries(bookingData.selectedSpecial).map(([idx, qtd]) => { const ticket = bookingData.item?.specialTickets?.[idx]; if(qtd > 0 && ticket) { return ( <div key={idx} className="flex justify-between text-blue-600 text-xs"><span>{ticket.name} ({qtd})</span><b>{formatBRL(ticket.price * qtd)}</b></div> ) } return null; })}
-                  {discount > 0 && (<div className="flex justify-between text-green-600 font-bold bg-green-50 p-2 rounded"><span>Desconto</span><span>- {formatBRL(discount)}</span></div>)}
-                  <div className="flex gap-2 pt-2"><input className="border p-2 rounded-lg flex-1 text-xs uppercase" placeholder="CUPOM" value={couponCode} onChange={e=>setCouponCode(e.target.value)} /><button onClick={handleApplyCoupon} className="bg-slate-200 px-4 rounded-lg text-xs font-bold hover:bg-slate-300">Aplicar</button></div>
-                  {couponMsg && (<div className={`text-xs p-2 rounded text-center font-medium mt-1 ${couponMsg.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{couponMsg.text}</div>)}
-                  <div className="flex justify-between pt-4 border-t border-slate-100"><span className="font-bold text-lg">Total</span><span className="font-bold text-2xl text-[#0097A8]">{formatBRL(finalTotal)}</span></div>
-              </div>
-           </div>
+        {/* 💻 RESUMO DESKTOP (Escondido no mobile, aparece no MD) */}
+        <div className="hidden md:block">
+            {/* Era <OrderSummary /> */}
+        {renderOrderSummary(false)}
         </div>
       </div>
     </div>
+    </>
   );
 };
 

@@ -6,9 +6,7 @@ import { BrowserRouter } from 'react-router-dom'
 
 // Inicializa o App com o Sistema de Rotas (BrowserRouter)
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
     <BrowserRouter>
       <App />
     </BrowserRouter>
-  </React.StrictMode>,
 )

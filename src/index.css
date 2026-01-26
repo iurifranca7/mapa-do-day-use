@@ -21,3 +21,22 @@ body {
 .animate-fade-in {
   animation: fadeIn 0.5s ease-out forwards;
 }
+
+/* Força o iframe a ficar clicável */
+iframe[src*="mercadolibre"], 
+iframe[src*="mercadopago"] {
+    position: relative !important;
+    z-index: 9999 !important;
+    pointer-events: auto !important;
+}
+
+/* Garante que a div container tenha altura */
+#form-checkout__cardNumber,
+#form-checkout__expirationDate,
+#form-checkout__securityCode {
+    display: block;
+    min-height: 45px; /* Altura mínima vital */
+    position: relative;
+    z-index: 50;
+    background: white; /* As vezes o fundo transparente buga o clique */
+}

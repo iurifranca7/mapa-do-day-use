@@ -1,54 +1,11 @@
-export default async function handler(req, res) {
-    // PROTEÇÃO SIMPLES
-    const { secret } = req.query;
-    // Defina uma senha difícil aqui ou no .env
-    if (secret !== '5691Av!d7991') {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }}
-
-import admin from 'firebase-admin';
 import { MailtrapClient } from 'mailtrap';
+import admin from 'firebase-admin';
 
-// ==================================================================
-// 1. CONFIGURAÇÃO DE EMAIL (MAILTRAP API)
-// ==================================================================
-// Se estiver usando o modo de TESTE (Sandbox), o remetente não importa tanto.
-// Se estiver em PRODUÇÃO (Sending), o 'from' deve ser seu domínio verificado.
-const SENDER_EMAIL = "noreplyp@mapadodayuse.com"; // Ou seu e-mail verificado no Mailtrap
-const SENDER_NAME = "Mapa do Day Use";
+// --- CONFIGURAÇÕES ---
+const MIN_MINUTES_AGO = 20; // Só recupera após 20 min
+const MAX_HOURS_AGO = 24;   // Não recupera coisas muito velhas
 
-const getRecoveryHtml = (guestName, itemName, date, link) => {
-    return `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0;">
-        <div style="background-color: #0097A8; padding: 24px; text-align: center;">
-            <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Mapa do Day Use</h1>
-        </div>
-        <div style="padding: 32px;">
-            <h2 style="color: #1e293b; margin-top: 0;">Olá, ${guestName}!</h2>
-            <p style="color: #475569; font-size: 16px; line-height: 1.6;">
-                Notamos que você começou uma reserva para <strong>${itemName}</strong> no dia <strong>${date.split('-').reverse().join('/')}</strong>, mas não concluiu o pagamento.
-            </p>
-            <p style="color: #475569; font-size: 16px; line-height: 1.6;">
-                As vagas para este dia estão muito concorridas! Garanta seu lugar antes que esgote.
-            </p>
-            
-            <div style="text-align: center; margin: 32px 0;">
-                <a href="${link}" style="background-color: #0097A8; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
-                    Continuar Minha Reserva
-                </a>
-            </div>
-            
-            <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 24px;">
-                Se você já realizou esta compra, por favor desconsidere este e-mail.
-            </p>
-        </div>
-    </div>
-    `;
-};
-
-// ==================================================================
-// 2. INICIALIZAÇÃO FIREBASE
-// ==================================================================
+// --- INICIALIZAÇÃO SEGURA DO FIREBASE ---
 const initFirebase = () => {
     if (admin.apps.length > 0) return admin.firestore();
 
@@ -56,123 +13,114 @@ const initFirebase = () => {
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
-    if (projectId && clientEmail && privateKeyRaw) {
-        const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
-        admin.initializeApp({
-            credential: admin.credential.cert({ projectId, clientEmail, privateKey })
-        });
-    } else {
-        console.error("❌ Credenciais do Firebase ausentes no Cron.");
+    try {
+        if (projectId && clientEmail && privateKeyRaw) {
+            const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, ''); 
+            const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
+            admin.initializeApp({ credential });
+        } else {
+            console.warn("⚠️ Variáveis do Firebase ausentes no Cron.");
+        }
+    } catch (e) {
+        if (!e.message.includes('already exists')) {
+            throw new Error(`Firebase Init Error: ${e.message}`);
+        }
     }
     return admin.firestore();
 };
 
-// ==================================================================
-// 3. HANDLER DO CRON
-// ==================================================================
+// --- TEMPLATE DE EMAIL ---
+const getRecoveryHtml = (userName, productName, link) => `
+<div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9;">
+    <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+        <h2 style="color: #0097A8; text-align: center;">Olá, ${userName}! 👋</h2>
+        <p style="font-size: 16px; color: #555;">Notamos que você começou uma reserva para <strong>${productName}</strong>, mas não finalizou.</p>
+        <p style="font-size: 16px; color: #555;">As vagas para essa data estão acabando. Que tal garantir seu lugar agora?</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="${link}" style="background-color: #0097A8; color: white; padding: 15px 25px; text-decoration: none; font-weight: bold; border-radius: 5px; font-size: 16px;">RETOMAR MINHA RESERVA</a>
+        </div>
+        <p style="font-size: 12px; color: #999; text-align: center;">Se você já realizou a compra, desconsidere este e-mail.</p>
+    </div>
+</div>
+`;
+
 export default async function handler(req, res) {
-    console.log("⏰ Iniciando Cron de Recuperação de Carrinho...");
+    // 1. Logs Iniciais
+    console.log("🤖 Robô de Recuperação Iniciado...");
     
-    // Verifica Token Mailtrap
-    const token = process.env.MAILTRAP_TOKEN;
-    if (!token) {
-        console.error("❌ MAILTRAP_TOKEN não encontrado.");
-        return res.status(500).json({ error: "Configuração de e-mail ausente." });
-    }
-
-    const db = initFirebase();
-    const mailtrapClient = new MailtrapClient({ token });
-    
-    // Janela de Tempo: 20 min a 24 horas atrás
-    const now = new Date();
-    const minTime = new Date(now.getTime() - 20 * 60 * 1000); 
-    const maxTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); 
-
     try {
+        const db = initFirebase();
+        const mailtrapToken = process.env.MAILTRAP_TOKEN;
+
+        if (!mailtrapToken) {
+            console.error("❌ MAILTRAP_TOKEN não configurado.");
+            return res.status(500).json({ error: "Configuração de email ausente." });
+        }
+
+        // 2. Define Janela de Tempo
+        const now = new Date();
+        const timeStart = new Date(now.getTime() - (MAX_HOURS_AGO * 60 * 60 * 1000)); // 24h atrás
+        const timeEnd = new Date(now.getTime() - (MIN_MINUTES_AGO * 60 * 1000));     // 20min atrás
+
+        console.log(`🔎 Buscando reservas entre ${timeStart.toISOString()} e ${timeEnd.toISOString()}`);
+
+        // 3. Busca no Banco
+        // Reservas Pendentes, criadas nessa janela, que AINDA NÃO receberam email
         const snapshot = await db.collection('reservations')
-            .where('status', 'in', ['waiting_payment', 'pending'])
-            .where('createdAt', '<=', minTime)
-            .where('createdAt', '>=', maxTime)
-            .where('recoverySent', '!=', true) 
+            .where('status', 'in', ['pending', 'waiting_payment'])
+            .where('createdAt', '>=', timeStart)
+            .where('createdAt', '<=', timeEnd)
             .get();
 
         if (snapshot.empty) {
-            return res.status(200).json({ message: 'Nenhum carrinho para recuperar.' });
+            console.log("✅ Nenhuma reserva abandonada encontrada nesta janela.");
+            return res.status(200).json({ processed: 0, message: "Nenhum carrinho abandonado." });
         }
 
-        let stats = { processed: 0, sent: 0, cancelled: 0 };
-        const baseUrl = (process.env.VITE_BASE_URL || 'https://mapadodayuse.com').replace(/\/$/, "");
+        // 4. Processa Envios
+        const client = new MailtrapClient({ token: mailtrapToken });
+        const sender = { email: "mailtrap@demomailtrap.com", name: "Mapa do Day Use" };
+        let count = 0;
+        let errors = 0;
 
-        // Processamento em Paralelo
-        await Promise.all(snapshot.docs.map(async (docSnap) => {
-            const reservation = docSnap.data();
-            const dayUseId = reservation.item?.id || reservation.dayuseId;
+        // Processa em paralelo
+        const promises = snapshot.docs.map(async (doc) => {
+            const data = doc.data();
 
-            if (!dayUseId) return;
+            // Proteção extra: Se já enviou, pula (caso o filtro do firebase falhe por falta de index)
+            if (data.recoverySent === true) return;
+            if (!data.guestEmail) return;
 
-            // 1. Checa Estoque
-            const dayUseRef = await db.collection('dayuses').doc(dayUseId).get();
-            if (!dayUseRef.exists) return; 
-            const item = dayUseRef.data();
+            try {
+                // Link para retomar (direto para 'minhas viagens' ou checkout)
+                const recoveryLink = "https://mapadodayuse.com/minhas-viagens"; 
 
-            let limit = 50;
-            if (item.dailyStock) {
-                 if (typeof item.dailyStock === 'object' && item.dailyStock.adults) limit = Number(item.dailyStock.adults);
-                 else if (typeof item.dailyStock === 'string' || typeof item.dailyStock === 'number') limit = Number(item.dailyStock);
-            } else if (item.limit) limit = Number(item.limit);
-
-            const occSnap = await db.collection('reservations')
-                .where('item.id', '==', dayUseId)
-                .where('date', '==', reservation.date)
-                .where('status', 'in', ['confirmed', 'validated', 'approved', 'paid'])
-                .get();
-
-            let occupied = 0;
-            occSnap.forEach(d => occupied += (Number(d.data().adults || 0) + Number(d.data().children || 0)));
-            
-            const guestsInCart = Number(reservation.adults || 0) + Number(reservation.children || 0);
-
-            // 2. Decisão
-            if ((occupied + guestsInCart) > limit) {
-                // A) SEM ESTOQUE: Cancela
-                await docSnap.ref.update({ 
-                    status: 'cancelled_sold_out', 
-                    autoCancelled: true,
-                    updatedAt: new Date() 
+                await client.send({
+                    from: sender,
+                    to: [{ email: data.guestEmail }],
+                    subject: `Não perca sua vaga no ${data.itemName || 'Day Use'}!`,
+                    html: getRecoveryHtml(data.guestName || 'Viajante', data.itemName || 'seu passeio', recoveryLink),
+                    category: "Cart Recovery"
                 });
-                stats.cancelled++;
-            } else {
-                // B) TEM VAGA: Envia E-mail via Mailtrap API
-                if (reservation.guestEmail) {
-                    const recoveryLink = `${baseUrl}/minhas-viagens`;
 
-                    await mailtrapClient.send({
-                        from: { email: SENDER_EMAIL, name: SENDER_NAME },
-                        to: [{ email: reservation.guestEmail }],
-                        subject: `🔥 Não perca sua reserva em ${item.name}!`,
-                        html: getRecoveryHtml(
-                            reservation.guestName || 'Viajante', 
-                            item.name, 
-                            reservation.date, 
-                            recoveryLink
-                        ),
-                        category: "Cart Recovery"
-                    });
+                // Marca como enviado para não mandar de novo
+                await doc.ref.update({ recoverySent: true, recoverySentAt: new Date() });
+                count++;
+                console.log(`📧 Recuperação enviada para: ${data.guestEmail}`);
 
-                    await docSnap.ref.update({ 
-                        recoverySent: true, 
-                        recoveryAt: new Date() 
-                    });
-                    stats.sent++;
-                }
+            } catch (err) {
+                console.error(`❌ Erro ao enviar para ${data.guestEmail}:`, err.message);
+                errors++;
             }
-            stats.processed++;
-        }));
+        });
 
-        return res.status(200).json({ success: true, ...stats });
+        await Promise.all(promises);
 
-    } catch (e) {
-        console.error("Erro no Cron:", e);
-        return res.status(500).json({ error: e.message });
+        console.log(`🏁 Robô finalizado. Enviados: ${count}, Erros: ${errors}`);
+        return res.status(200).json({ success: true, processed: count, errors });
+
+    } catch (error) {
+        console.error("🔥 CRASH NO ROBÔ:", error);
+        return res.status(500).json({ error: error.message, stack: error.stack });
     }
 }
