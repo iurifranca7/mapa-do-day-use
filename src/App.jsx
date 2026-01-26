@@ -2283,8 +2283,6 @@ const CheckoutPage = () => {
           paymentId: currentReservationId 
       };
 
-      console.log("📦 Dados para envio:", finalData);
-
       // 3. Dispara E-mails com tratamento de erro individual
       notifyCustomer(finalData, currentReservationId)
           .catch(err => console.error("❌ Falha email cliente:", err));
