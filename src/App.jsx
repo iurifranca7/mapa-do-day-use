@@ -2332,7 +2332,33 @@ const CheckoutPage = () => {
       <>
       {/* MODAIS (Success, Error, Pix, Login) mantidos */}
       {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
-      {isSoldOut && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center"><h3 className="font-bold text-red-600 text-xl">Esgotado!</h3><Button onClick={handleSoldOutReturn} className="w-full mt-4">Voltar</Button></div></div>}
+      {/* MODAL DE ESGOTADO (SOLD OUT) */}
+      {isSoldOut && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white p-8 rounded-3xl text-center max-w-sm w-full shadow-2xl relative overflow-hidden">
+                {/* Faixa decorativa no topo */}
+                <div className="absolute top-0 left-0 w-full h-2 bg-red-400"></div>
+                
+                <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
+                    <span className="text-4xl">📅</span>
+                </div>
+
+                <h3 className="font-bold text-slate-800 text-2xl mb-3">Ops! Vagas esgotadas</h3>
+                
+                <p className="text-slate-500 text-sm leading-relaxed mb-8">
+                    Parece que alguém comprou o último ingresso antes de você. <br/>
+                    Mas não se preocupe, você pode garantir seu ingresso para outra data!
+                </p>
+
+                <Button 
+                    onClick={handleSoldOutReturn} 
+                    className="w-full bg-[#0097A8] hover:bg-[#007f8c] py-4 rounded-xl font-bold text-white shadow-lg shadow-cyan-500/20 transition-transform hover:scale-[1.02] active:scale-95"
+                >
+                    Ver datas disponíveis
+                </Button>
+            </div>
+        </div>
+      )}
       {errorData && <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60"><div className="bg-white p-8 rounded-3xl text-center max-w-sm"><h3 className="text-lg font-bold text-red-600 mb-2">{errorData.title}</h3><p className="mb-4">{errorData.msg}</p><button onClick={()=>setErrorData(null)} className="w-full bg-slate-100 py-2 rounded mt-4">OK</button></div></div>}
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={() => handlePixSuccess()} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
