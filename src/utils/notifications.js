@@ -152,6 +152,13 @@ export const notifyPartner = async (reservationData, paymentId) => {
              return;
           }
 
+          const ownerEmail = ownerSnap.data().email; 
+
+          if (!ownerEmail) {
+             console.warn("⚠️ O dono do Day Use não tem e-mail cadastrado.");
+             return;
+          }
+
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
               <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #eee;">
@@ -183,16 +190,16 @@ export const notifyPartner = async (reservationData, paymentId) => {
           </div>`;
 
         await fetch('/api/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                to: ownerEmail, 
-                subject: `Venda Confirmada: ${formatBRL(reservationData.total)} - ${reservationData.guestName}`, 
-                html: emailHtml 
-            })
-        });
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  to: ownerEmail, // <--- Agora essa variável existe!
+                  subject: `Nova Venda: ${formatBRL(reservationData.total)}`, 
+                  html: emailHtml 
+              })
+          });
+          
+          console.log("✅ E-mail enviado para o parceiro:", ownerEmail);
 
-    } catch (e) {
-        console.error("Erro ao notificar parceiro:", e);
-    }
-};
+      } catch (e) { console.error("Erro email parceiro:", e); }
+  };
