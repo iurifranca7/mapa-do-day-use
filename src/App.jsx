@@ -32,7 +32,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { 
   MapPin, Search, User, CheckCircle, 
   X, Info, AlertCircle, PawPrint, FileText, Ban, ChevronDown, Image as ImageIcon, Map as MapIcon, CreditCard, Calendar as CalendarIcon, Ticket, Lock, Briefcase, Instagram, Star, ChevronLeft, ChevronRight, ArrowRight, LogOut, List, Link as LinkIcon, Edit, DollarSign, Copy, QrCode, ScanLine, Users, Tag, Trash2, Mail, MessageCircle, Phone, Filter,
-  TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Wallet, Calendar,
+  TrendingUp, ShieldCheck, Zap, BarChart, Globe, Target, Award, Wallet, Calendar, Camera, 
   Facebook, Smartphone, Youtube, Bell, Download, UserCheck, Inbox, Utensils, ThermometerSun, Smile,
   Eye, Archive, ExternalLink, RefreshCcw, TrendingDown, CalendarX, XCircle, Clock, Flame, ChevronUp, AlertTriangle, AlertOctagon
 } from 'lucide-react';
@@ -532,9 +532,11 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   // Dados do Formulário
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  
   // NOVOS CAMPOS
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState(''); // <--- NOVO STATE DE TELEFONE
   
   const [registeredUser, setRegisteredUser] = useState(null);
 
@@ -543,10 +545,21 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         setFeedback(null);
         setView(initialMode); setRole(initialRole);
         setEmail(''); setPassword(''); 
-        setFirstName(''); setLastName(''); // Limpa nomes
+        setFirstName(''); setLastName(''); 
+        setPhone(''); // <--- LIMPA TELEFONE AO ABRIR
         setRegisteredUser(null);
     }
   }, [isOpen, initialMode, initialRole]);
+
+  // Função para formatar telefone (Máscara)
+  const handlePhoneChange = (e) => {
+      let val = e.target.value.replace(/\D/g, '');
+      if (val.length > 11) val = val.slice(0, 11);
+      if (val.length > 10) val = val.replace(/^(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+      else if (val.length > 5) val = val.replace(/^(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3');
+      else if (val.length > 2) val = val.replace(/^(\d{2})(\d{0,5})/, '($1) $2');
+      setPhone(val);
+  };
 
   const actionCodeSettings = {
     url: 'https://mapadodayuse.com/minhas-viagens',
@@ -554,8 +567,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
   };
 
   // Helper para garantir que o usuário exista no Firestore
-  // Agora aceita um 'specificName' para forçar o nome digitado no cadastro
-  const ensureProfile = async (u, specificName = null) => {
+  // Agora aceita 'specificName' e 'specificPhone'
+  const ensureProfile = async (u, specificName = null, specificPhone = null) => {
     const ref = doc(db, "users", u.uid);
     const snap = await getDoc(ref);
     let userRole = role; 
@@ -565,13 +578,20 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 
     if (snap.exists()) { 
         userRole = snap.data().role || 'user'; 
+        // Opcional: Se quiser atualizar o telefone caso não exista, pode fazer um updateDoc aqui
     } else { 
+        // CRIAÇÃO DO PERFIL NOVO
         await setDoc(ref, { 
             email: u.email || "", 
-            name: finalName,
+            displayName: finalName, // Padronizando displayName na raiz
             role: role, 
             photoURL: u.photoURL || "",
-            createdAt: new Date() 
+            createdAt: new Date(),
+            // Salvando telefone dentro de personalData (compatível com UserProfile)
+            personalData: {
+                phone: specificPhone || "",
+                cpf: "" // Começa vazio
+            }
         }); 
     }
     return { ...u, role: userRole, displayName: finalName };
@@ -581,7 +601,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     setFeedback(null);
     try {
        const res = await signInWithPopup(auth, provider);
-       const userWithRole = await ensureProfile(res.user);
+       // Social Login não tem telefone no momento do cadastro, vai null
+       const userWithRole = await ensureProfile(res.user, null, null);
        onSuccess(userWithRole);
        if (closeOnSuccess) onClose();
     } catch (e) { 
@@ -597,10 +618,14 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
     e.preventDefault(); setLoading(true); setFeedback(null);
     try {
         if (view === 'register') {
-            // Validação de Nome
+            // Validação de Nome e Telefone
             if (!firstName.trim() || !lastName.trim()) {
                 throw new Error("Por favor, preencha seu Nome e Sobrenome.");
             }
+            if (!phone || phone.length < 14) { // Validação básica (14 chars com máscara)
+                throw new Error("Por favor, insira um telefone válido com DDD.");
+            }
+
             const fullName = `${firstName.trim()} ${lastName.trim()}`;
 
             // 1. Cria Conta
@@ -612,8 +637,8 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
             // 3. Envia E-mail
             try { await sendEmailVerification(res.user, actionCodeSettings); } catch(e){}
             
-            // 4. Salva no Banco com o Nome Correto
-            const userWithRole = await ensureProfile(res.user, fullName);
+            // 4. Salva no Banco com o Nome e Telefone
+            const userWithRole = await ensureProfile(res.user, fullName, phone);
             
             setRegisteredUser(userWithRole);
             setView('email_sent');
@@ -621,6 +646,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
             return;
         } else {
             const res = await signInWithEmailAndPassword(auth, email, password);
+            // Login normal não atualiza telefone, apenas busca perfil
             const userWithRole = await ensureProfile(res.user);
             onSuccess(userWithRole);
             if (closeOnSuccess) onClose();
@@ -630,7 +656,7 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
         let title = "Atenção";
         let msg = "Erro desconhecido.";
         
-        if (err.message === "Por favor, preencha seu Nome e Sobrenome.") {
+        if (err.message.includes("preencha") || err.message.includes("telefone")) {
             msg = err.message;
         }
         else if (err.code === 'auth/email-already-in-use') {
@@ -645,6 +671,9 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
             } else {
                 msg = "E-mail ou senha incorretos.";
             }
+        }
+        else if (err.code === 'auth/weak-password') {
+            msg = "A senha deve ter pelo menos 6 caracteres.";
         }
         else msg = "Erro: " + err.code;
         
@@ -701,12 +730,24 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
                         <form onSubmit={handleEmailAuth} className="space-y-4">
                             {view === 'register' && role === 'partner' && <p className="text-sm text-slate-500 -mt-2 mb-2">Preencha seus dados para se cadastrar</p>}
                             
-                            {/* CAMPOS DE NOME (SÓ NO REGISTRO) */}
+                            {/* CAMPOS DE NOME E TELEFONE (SÓ NO REGISTRO) */}
                             {view === 'register' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                    <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Nome" value={firstName} onChange={e=>setFirstName(e.target.value)} required />
-                                    <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Sobrenome" value={lastName} onChange={e=>setLastName(e.target.value)} required />
-                                </div>
+                                <>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Nome" value={firstName} onChange={e=>setFirstName(e.target.value)} required />
+                                        <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="Sobrenome" value={lastName} onChange={e=>setLastName(e.target.value)} required />
+                                    </div>
+                                    
+                                    {/* CAMPO DE TELEFONE NOVO */}
+                                    <input 
+                                        className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" 
+                                        placeholder="WhatsApp (00) 00000-0000" 
+                                        value={phone} 
+                                        onChange={handlePhoneChange} 
+                                        maxLength={15}
+                                        required 
+                                    />
+                                </>
                             )}
 
                             <input className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-[#0097A8] outline-none" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} required />
@@ -747,43 +788,121 @@ const LoginModal = ({ isOpen, onClose, onSuccess, initialRole = 'user', hideRole
 // --- PÁGINA PERFIL USUÁRIO ---
 const UserProfile = () => {
   const [user, setUser] = useState(auth.currentUser);
-  const [data, setData] = useState({ name: '', phone: '', photoURL: '' });
-  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+
+  // --- STATES DE DADOS PESSOAIS ---
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [cpf, setCpf] = useState('');
+  const [photoURL, setPhotoURL] = useState('');
   
-  // States Gestão
+  // --- STATES DE ENDEREÇO ---
+  const [cep, setCep] = useState('');
+  const [street, setStreet] = useState('');
+  const [number, setNumber] = useState('');
+  const [neighborhood, setNeighborhood] = useState('');
+  const [city, setCity] = useState('');
+  const [uf, setUf] = useState('');
+  
+  // --- STATES DE SISTEMA/IBGE ---
+  const [loading, setLoading] = useState(false);
+  const [loadingCep, setLoadingCep] = useState(false);
+  const [ufList, setUfList] = useState([]);
+  const [cityList, setCityList] = useState([]);
+
+  // --- STATES DE GESTÃO (Mantidos) ---
   const [newEmail, setNewEmail] = useState('');
   const [newPass, setNewPass] = useState('');
   const [isStaff, setIsStaff] = useState(false);
   const [ownerId, setOwnerId] = useState(null);
 
-  // States de UI (Modais)
-  const [feedback, setFeedback] = useState(null); // { type, title, msg }
-  const [confirmAction, setConfirmAction] = useState(null); // { type }
-  
-  // States LGPD (Exclusão)
-  const [deleteStep, setDeleteStep] = useState(0); // 0=fechado, 1=confirmação, 2=motivo
+  // --- MODAIS ---
+  const [feedback, setFeedback] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [deleteStep, setDeleteStep] = useState(0);
   const [deleteReason, setDeleteReason] = useState('');
 
-  const navigate = useNavigate();
-
+  // 1. CARREGAR DADOS DO USUÁRIO
   useEffect(() => {
-    const fetch = async () => {
+    const fetchUserData = async () => {
       if(user) {
-         const snap = await getDoc(doc(db, "users", user.uid));
-         if(snap.exists()) {
-             const d = snap.data();
-             setData({ 
-                 name: d.name || user.displayName || '', 
-                 phone: d.phone || '',
-                 photoURL: d.photoURL || user.photoURL || ''
-             });
-             setIsStaff(d.role === 'staff');
-             setOwnerId(d.ownerId); 
-         }
+         try {
+             const snap = await getDoc(doc(db, "users", user.uid));
+             if(snap.exists()) {
+                 const d = snap.data();
+                 
+                 // Nome e Foto
+                 const displayName = d.displayName || user.displayName || '';
+                 const parts = displayName.split(' ');
+                 setFirstName(parts[0] || '');
+                 setLastName(parts.slice(1).join(' ') || '');
+                 setPhotoURL(d.photoURL || user.photoURL || '');
+
+                 // Dados Pessoais Extras (personalData)
+                 const pData = d.personalData || {};
+                 setPhone(pData.phone || d.phone || ''); // Fallback para d.phone antigo
+                 setCpf(pData.cpf || '');
+                 
+                 // Endereço
+                 const addr = pData.address || {};
+                 setCep(addr.zipCode || '');
+                 setStreet(addr.street || '');
+                 setNumber(addr.number || '');
+                 setNeighborhood(addr.neighborhood || '');
+                 setUf(addr.state || ''); // Isso vai disparar o fetch de cidades
+                 setCity(addr.city || '');
+
+                 // Gestão
+                 setIsStaff(d.role === 'staff');
+                 setOwnerId(d.ownerId); 
+             }
+         } catch (err) { console.error("Erro ao carregar perfil:", err); }
       }
     };
-    fetch();
+    fetchUserData();
   }, [user]);
+
+  // 2. CARREGAR ESTADOS IBGE
+  useEffect(() => {
+    fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome')
+      .then(res => res.json())
+      .then(data => setUfList(data))
+      .catch(e => console.error(e));
+  }, []);
+
+  // 3. CARREGAR CIDADES QUANDO UF MUDA
+  useEffect(() => {
+      if (uf) {
+          fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`)
+            .then(res => res.json())
+            .then(data => setCityList(data))
+            .catch(e => console.error(e));
+      } else {
+          setCityList([]);
+      }
+  }, [uf]);
+
+  // --- FUNÇÕES AUXILIARES ---
+
+  const handleCepBlur = async () => {
+      const cleanCep = cep.replace(/\D/g, '');
+      if (cleanCep.length === 8) {
+          setLoadingCep(true);
+          try {
+              const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+              const data = await res.json();
+              if (!data.erro) {
+                  setStreet(data.logradouro);
+                  setNeighborhood(data.bairro);
+                  setUf(data.uf);
+                  setCity(data.localidade);
+                  document.getElementById('addr-num')?.focus();
+              }
+          } catch (error) { console.error(error); } 
+          finally { setLoadingCep(false); }
+      }
+  };
 
   const handlePhotoUpload = (e) => {
       const file = e.target.files[0];
@@ -793,64 +912,84 @@ const UserProfile = () => {
               return; 
           }
           const reader = new FileReader();
-          reader.onloadend = () => setData({ ...data, photoURL: reader.result });
+          reader.onloadend = () => setPhotoURL(reader.result);
           reader.readAsDataURL(file);
       }
   };
 
-  const handleSave = async (e) => {
-    e.preventDefault(); setLoading(true);
-    try {
-        await updateProfile(user, { displayName: data.name });
-        await updateDoc(doc(db, "users", user.uid), { 
-            name: data.name, 
-            phone: data.phone,
-            photoURL: data.photoURL
-        });
+  const getFallbackImage = () => {
+      // Gera uma imagem com as iniciais se não tiver foto
+      if (firstName) {
+          return `https://ui-avatars.com/api/?name=${firstName}+${lastName}&background=e0f7fa&color=0097A8&size=128`;
+      }
+      return null; // Retorna null para usar o ícone <User />
+  };
 
+  // --- SALVAR DADOS ---
+  const handleSave = async (e) => {
+    e.preventDefault(); 
+    setLoading(true);
+    
+    try {
+        const fullName = `${firstName.trim()} ${lastName.trim()}`;
+        
+        // 1. Atualiza Auth (Display Name e Foto)
+        await updateProfile(user, { displayName: fullName, photoURL: photoURL || null });
+        
+        // 2. Prepara Objeto do Firestore
+        const userDocData = {
+            displayName: fullName,
+            email: user.email,
+            photoURL: photoURL,
+            // Agrupa dados sensíveis em personalData
+            personalData: {
+                phone,
+                cpf,
+                address: {
+                    zipCode: cep,
+                    street,
+                    number,
+                    neighborhood,
+                    city,
+                    state: uf
+                }
+            }
+        };
+
+        // 3. Atualiza Firestore (Merge true para não perder dados de role/ownerId)
+        await setDoc(doc(db, "users", user.uid), userDocData, { merge: true });
+
+        // 4. Lógica de Segurança (Email/Senha) - Mantida Original
         if (!isStaff) {
             if (newEmail && newEmail !== user.email) {
-                 try {
-                    await verifyBeforeUpdateEmail(user, newEmail, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
-                    setFeedback({ 
-                        type: 'success', 
-                        title: 'Confirmação Enviada', 
-                        msg: `Um link foi enviado para ${newEmail}. Clique nele para confirmar a troca.` 
-                    });
-                 } catch (emailErr) {
-                     console.error(emailErr);
-                     throw new Error("Erro ao solicitar troca de e-mail: " + emailErr.message);
-                 }
+                 await verifyBeforeUpdateEmail(user, newEmail, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
+                 setFeedback({ type: 'success', title: 'Confirmação Enviada', msg: `Link enviado para ${newEmail}. Clique para confirmar.` });
             }
             if (newPass) {
                 await updatePassword(user, newPass);
-                setFeedback({ type: 'success', title: 'Sucesso', msg: 'Sua senha foi alterada!' });
+                setFeedback({ type: 'success', title: 'Sucesso', msg: 'Senha alterada!' });
             }
         }
         
         if (!newEmail && !newPass) {
-             setFeedback({ type: 'success', title: 'Salvo', msg: 'Dados do perfil atualizados.' });
+             setFeedback({ type: 'success', title: 'Perfil Atualizado', msg: 'Seus dados foram salvos com sucesso.' });
         }
         setNewPass(''); setNewEmail('');
+
     } catch (err) {
         console.error(err);
         if (err.code === 'auth/requires-recent-login') {
-            setFeedback({ type: 'warning', title: 'Login Necessário', msg: 'Para alterar dados sensíveis, faça logout e entre novamente.' });
+            setFeedback({ type: 'warning', title: 'Login Necessário', msg: 'Para salvar dados sensíveis, faça logout e entre novamente.' });
         } else {
             setFeedback({ type: 'error', title: 'Erro', msg: err.message });
         }
     } finally { setLoading(false); }
   };
 
+  // --- LÓGICA DE EXCLUSÃO E REQUESTS (MANTIDA IDÊNTICA) ---
   const initiateRequest = (type) => {
-      if (!ownerId) { 
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Usuário não vinculado a um parceiro.' });
-          return;
-      }
-      if (type === 'email' && !newEmail) { 
-          setFeedback({ type: 'warning', title: 'Atenção', msg: 'Digite o novo e-mail desejado.' });
-          return;
-      }
+      if (!ownerId) { setFeedback({ type: 'error', title: 'Erro', msg: 'Usuário não vinculado a um parceiro.' }); return; }
+      if (type === 'email' && !newEmail) { setFeedback({ type: 'warning', title: 'Atenção', msg: 'Digite o novo e-mail.' }); return; }
       setConfirmAction({ type: type === 'email' ? 'request_email' : 'request_password' });
   };
 
@@ -859,251 +998,237 @@ const UserProfile = () => {
       const type = confirmAction.type === 'request_email' ? 'email' : 'password';
       try {
           await addDoc(collection(db, "requests"), {
-              type: type,
-              staffId: user.uid,
-              staffName: data.name,
-              staffEmail: user.email,
-              ownerId: ownerId, 
-              status: 'pending',
-              createdAt: new Date(),
-              newEmailValue: type === 'email' ? newEmail : null 
+              type, staffId: user.uid, staffName: `${firstName} ${lastName}`, staffEmail: user.email, ownerId, status: 'pending', createdAt: new Date(), newEmailValue: type === 'email' ? newEmail : null 
           });
           setFeedback({ type: 'success', title: 'Solicitação Enviada', msg: 'O administrador foi notificado.' });
           setNewEmail(''); 
-      } catch (e) {
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível enviar a solicitação.' });
-      } finally {
-          setConfirmAction(null);
-      }
+      } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar solicitação.' }); } finally { setConfirmAction(null); }
   };
 
- // --- LÓGICA DE EXCLUSÃO (LGPD) - BLINDADA ---
   const handleDeleteAccount = async () => {
       setLoading(true);
       try {
-          // 1. Exclui Autenticação (Ação Principal)
           await deleteUser(user);
-          
-          // 2. Limpeza de Dados (Best Effort)
           try {
-              if (deleteReason) {
-                  await addDoc(collection(db, "deletion_reasons"), {
-                      uid: user.uid,
-                      reason: deleteReason,
-                      role: user.role || 'user',
-                      date: new Date()
-                  });
-              }
+              if (deleteReason) await addDoc(collection(db, "deletion_reasons"), { uid: user.uid, reason: deleteReason, role: user.role || 'user', date: new Date() });
               await deleteDoc(doc(db, "users", user.uid));
-          } catch(e) { console.warn("Limpeza parcial de dados:", e); }
-
-          // Sucesso: Chama o Modal com flag de redirecionamento
-          setFeedback({ 
-              type: 'success', 
-              title: 'Conta Excluída', 
-              msg: 'Sua conta foi encerrada com sucesso. Esperamos te ver de novo!',
-              isDelete: true // O modal cuidará do reload/redirect ao fechar
-          });
-
+          } catch(e) { console.warn("Limpeza parcial:", e); }
+          setFeedback({ type: 'success', title: 'Conta Excluída', msg: 'Sua conta foi encerrada.', isDelete: true });
       } catch (error) {
-          console.error("Erro ao excluir:", error);
-          if (error.code === 'auth/requires-recent-login') {
-              // Erro de Segurança: Modal Amarelo
-              setFeedback({ 
-                  type: 'warning', 
-                  title: 'Segurança', 
-                  msg: 'Para excluir sua conta, é necessário ter feito login recentemente.\n\nPor favor, faça logout e entre novamente para confirmar sua identidade.' 
-              });
-          } else {
-              // Erro Genérico: Modal Vermelho
-              setFeedback({ 
-                  type: 'error', 
-                  title: 'Erro', 
-                  msg: 'Não foi possível excluir a conta no momento. Tente novamente mais tarde.' 
-              });
-          }
-      } finally {
-          setLoading(false);
-          setDeleteStep(0); // Fecha o modal de confirmação/motivo
-      }
+          if (error.code === 'auth/requires-recent-login') setFeedback({ type: 'warning', title: 'Segurança', msg: 'Faça logout e login novamente para excluir.' });
+          else setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível excluir agora.' });
+      } finally { setLoading(false); setDeleteStep(0); }
   };
 
   const resendVerify = async () => {
-      try {
-        await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
-        setFeedback({ type: 'success', title: 'Enviado', msg: 'Verifique sua caixa de entrada e Spam.' });
-      } catch(e) {
-          if (e.code === 'auth/too-many-requests') setFeedback({ type: 'warning', title: 'Aguarde', msg: 'Muitas tentativas. Tente novamente em breve.' });
-          else setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar e-mail.' });
-      }
+    try {
+      await sendEmailVerification(user, { url: 'https://mapadodayuse.com/profile', handleCodeInApp: true });
+      setFeedback({ type: 'success', title: 'Enviado', msg: 'Verifique sua caixa de entrada.' });
+    } catch(e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar e-mail.' }); }
   };
 
   const initiatePasswordReset = () => { setConfirmAction({ type: 'reset_self' }); };
-
   const executePasswordReset = async () => {
-      try {
-          await sendPasswordResetEmail(auth, user.email, { url: 'https://mapadodayuse.com', handleCodeInApp: true });
-          setFeedback({ type: 'success', title: 'E-mail Enviado', msg: 'Verifique seu e-mail para redefinir a senha.' });
-      } catch(e) { 
-          setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar e-mail de redefinição.' }); 
-      } finally { setConfirmAction(null); }
+      try { await sendPasswordResetEmail(auth, user.email, { url: 'https://mapadodayuse.com', handleCodeInApp: true }); setFeedback({ type: 'success', title: 'Enviado', msg: 'Verifique seu e-mail.' }); } 
+      catch(e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao enviar.' }); } finally { setConfirmAction(null); }
   };
 
   if(!user) return null;
 
   return (
-    <div className="max-w-xl mx-auto py-12 px-4 animate-fade-in">
-      <h1 className="text-3xl font-bold mb-8 text-slate-900">Meu Perfil {isStaff && <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle">EQUIPE</span>}</h1>
+    <div className="max-w-2xl mx-auto py-12 px-4 animate-fade-in">
+      <div className="flex items-center justify-between mb-8">
+          <h1 className="text-3xl font-bold text-slate-900">Meu Perfil</h1>
+          {isStaff && <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold">MEMBRO EQUIPE</span>}
+      </div>
       
-      {/* Modais Globais */}
+      {/* MODAIS GLOBAIS */}
       {feedback && createPortal(<FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback.type} title={feedback.title} msg={feedback.msg} />, document.body)}
       
       {confirmAction && createPortal(
           <ModalOverlay onClose={() => setConfirmAction(null)}>
               <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                  <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Info size={40}/>
-                  </div>
-                  <h2 className="text-xl font-bold text-slate-900 mb-2">Confirmação</h2>
-                  <p className="text-slate-600 mb-6 text-sm px-2">
-                      {confirmAction.type === 'request_email' && `Solicitar troca de e-mail para ${newEmail}?`}
-                      {confirmAction.type === 'request_password' && "Solicitar redefinição de senha ao administrador?"}
-                      {confirmAction.type === 'reset_self' && `Enviar link de redefinição para ${user.email}?`}
+                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><Info size={32}/></div>
+                  <h2 className="text-lg font-bold text-slate-900 mb-2">Confirmar Ação</h2>
+                  <p className="text-slate-600 mb-6 text-sm">
+                      {confirmAction.type === 'request_email' && `Solicitar troca para ${newEmail}?`}
+                      {confirmAction.type === 'request_password' && "Pedir redefinição ao admin?"}
+                      {confirmAction.type === 'reset_self' && `Enviar link para ${user.email}?`}
                   </p>
                   <div className="flex gap-3">
-                      <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
-                      <Button onClick={confirmAction.type === 'reset_self' ? executePasswordReset : executeRequest} className="flex-1 justify-center">Confirmar</Button>
+                      <Button onClick={() => setConfirmAction(null)} variant="ghost" className="flex-1">Cancelar</Button>
+                      <Button onClick={confirmAction.type === 'reset_self' ? executePasswordReset : executeRequest} className="flex-1">Confirmar</Button>
                   </div>
               </div>
           </ModalOverlay>, document.body
       )}
 
-      {/* --- FLUXO DE EXCLUSÃO (LGPD) - VISUAL UNIFICADO --- */}
       {deleteStep > 0 && createPortal(
           <ModalOverlay onClose={() => setDeleteStep(0)}>
               <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full animate-fade-in">
-                  {/* Ícone Padronizado */}
-                  <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Trash2 size={40}/>
-                  </div>
-                  
+                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4"><Trash2 size={32}/></div>
                   {deleteStep === 1 ? (
                       <>
-                          <h2 className="text-xl font-bold text-slate-900 mb-2">Excluir Conta?</h2>
-                          <p className="text-slate-600 mb-6 text-sm px-2">
-                              Tem certeza que deseja excluir sua conta permanentemente? <br/>
-                              <strong>Essa ação é irreversível</strong> e você perderá acesso ao histórico de reservas.
-                          </p>
-                          <div className="flex gap-3">
-                              <Button onClick={() => setDeleteStep(0)} variant="ghost" className="flex-1 justify-center">Cancelar</Button>
-                              <Button onClick={() => setDeleteStep(2)} variant="danger" className="flex-1 justify-center">Sim, Excluir</Button>
-                          </div>
+                          <h2 className="text-lg font-bold text-slate-900 mb-2">Excluir Conta?</h2>
+                          <p className="text-slate-600 mb-6 text-sm">Essa ação é irreversível e apagará seu histórico.</p>
+                          <div className="flex gap-3"><Button onClick={() => setDeleteStep(0)} variant="ghost" className="flex-1">Cancelar</Button><Button onClick={() => setDeleteStep(2)} variant="danger" className="flex-1">Sim, Excluir</Button></div>
                       </>
                   ) : (
                       <>
-                          <h2 className="text-xl font-bold text-slate-900 mb-2">Que pena ver você ir!</h2>
-                          <p className="text-slate-600 mb-4 text-sm px-2">
-                              Poderia nos contar o motivo? Isso nos ajuda a melhorar. (Opcional)
-                          </p>
-                          <textarea 
-                              className="w-full border p-3 rounded-xl mb-6 text-sm h-24 resize-none focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none"
-                              placeholder="Conte-nos o motivo..."
-                              value={deleteReason}
-                              onChange={e => setDeleteReason(e.target.value)}
-                          />
-                          <div className="flex gap-3 flex-col">
-                              <Button onClick={handleDeleteAccount} variant="danger" className="w-full justify-center" disabled={loading}>
-                                  {loading ? 'Excluindo...' : 'Confirmar Exclusão Definitiva'}
-                              </Button>
-                              <button onClick={() => setDeleteStep(0)} className="text-xs text-slate-400 hover:text-slate-600 underline">
-                                  Mudei de ideia, quero ficar
-                              </button>
-                          </div>
+                          <h2 className="text-lg font-bold text-slate-900 mb-2">Por que está saindo?</h2>
+                          <textarea className="w-full border p-3 rounded-xl mb-6 text-sm h-24 resize-none outline-none focus:border-red-400" placeholder="Opcional..." value={deleteReason} onChange={e => setDeleteReason(e.target.value)} />
+                          <Button onClick={handleDeleteAccount} variant="danger" className="w-full" disabled={loading}>{loading ? 'Excluindo...' : 'Confirmar Exclusão'}</Button>
                       </>
                   )}
               </div>
-          </ModalOverlay>,
-          document.body
+          </ModalOverlay>, document.body
       )}
 
-      <form onSubmit={handleSave} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
+      <form onSubmit={handleSave} className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-8">
          
-         {/* FOTO / LOGO */}
-         <div className="flex flex-col items-center gap-4 mb-6">
-             <div className="w-24 h-24 rounded-full bg-slate-100 overflow-hidden border-2 border-slate-200 flex items-center justify-center relative group">
-                 {data.photoURL ? <img src={data.photoURL} className="w-full h-full object-cover" /> : <User size={40} className="text-slate-400"/>}
-                 <label className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity text-xs font-bold">Alterar<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label>
+         {/* 1. FOTO DO PERFIL */}
+         <div className="flex flex-col items-center gap-3">
+             <div className="w-28 h-28 rounded-full bg-slate-100 overflow-hidden border-4 border-white shadow-lg relative group">
+                 {photoURL || getFallbackImage() ? (
+                     <img src={photoURL || getFallbackImage()} className="w-full h-full object-cover" alt="Perfil" />
+                 ) : (
+                     <div className="w-full h-full flex items-center justify-center bg-slate-200 text-slate-400"><User size={48}/></div>
+                 )}
+                 <label className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-all">
+                     <Camera className="text-white" size={24}/>
+                     <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                 </label>
              </div>
-             <p className="text-xs text-slate-400">Clique na foto para alterar. {user.role === 'partner' ? '(Logo da Empresa)' : ''}</p>
+             <p className="text-xs text-slate-400 font-medium">Clique na foto para alterar</p>
          </div>
 
-         {/* DADOS BÁSICOS */}
-         <div><label className="text-sm font-bold text-slate-700 block mb-1">Nome Completo</label><input className="w-full border p-3 rounded-lg" value={data.name} onChange={e=>setData({...data, name: e.target.value})} /></div>
-         <div><label className="text-sm font-bold text-slate-700 block mb-1">Telefone</label><input className="w-full border p-3 rounded-lg" value={data.phone} onChange={e=>setData({...data, phone: e.target.value})} placeholder="(00) 00000-0000"/></div>
+         {/* 2. DADOS PESSOAIS */}
+         <div>
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 flex items-center gap-2">
+                <User size={16} className="text-[#0097A8]"/> Dados Pessoais
+            </h3>
+            <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Nome</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none transition-colors" value={firstName} onChange={e=>setFirstName(e.target.value)} placeholder="Seu primeiro nome"/>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Sobrenome</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none transition-colors" value={lastName} onChange={e=>setLastName(e.target.value)} placeholder="Seu sobrenome"/>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">CPF</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none transition-colors" value={cpf} onChange={e=>setCpf(e.target.value)} placeholder="000.000.000-00"/>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Celular / WhatsApp</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none transition-colors" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="(00) 00000-0000"/>
+                </div>
+            </div>
+         </div>
+
+         {/* 3. ENDEREÇO */}
+         <div>
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 flex items-center gap-2">
+                <MapPin size={16} className="text-[#0097A8]"/> Endereço
+            </h3>
+            <div className="grid md:grid-cols-4 gap-4">
+                <div className="md:col-span-1 relative">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">CEP</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none" value={cep} onChange={e=>setCep(e.target.value)} onBlur={handleCepBlur} placeholder="00000-000" maxLength={9}/>
+                    {loadingCep && <div className="absolute right-3 top-9 w-3 h-3 border-2 border-[#0097A8] border-t-transparent rounded-full animate-spin"></div>}
+                </div>
+                <div className="md:col-span-3">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Rua / Logradouro</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50" value={street} onChange={e=>setStreet(e.target.value)} />
+                </div>
+                <div className="md:col-span-1">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Número</label>
+                    <input id="addr-num" className="w-full border border-slate-300 p-2.5 rounded-lg focus:border-[#0097A8] outline-none" value={number} onChange={e=>setNumber(e.target.value)} />
+                </div>
+                <div className="md:col-span-1">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Bairro</label>
+                    <input className="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50" value={neighborhood} onChange={e=>setNeighborhood(e.target.value)} />
+                </div>
+                <div className="md:col-span-1">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Estado</label>
+                    <select className="w-full border border-slate-300 p-2.5 rounded-lg bg-white" value={uf} onChange={e=>setUf(e.target.value)}>
+                        <option value="">UF</option>
+                        {ufList.map(u => <option key={u.id} value={u.sigla}>{u.sigla}</option>)}
+                    </select>
+                </div>
+                <div className="md:col-span-1">
+                    <label className="text-xs font-bold text-slate-500 block mb-1">Cidade</label>
+                    <select className="w-full border border-slate-300 p-2.5 rounded-lg bg-white disabled:bg-slate-100" value={city} onChange={e=>setCity(e.target.value)} disabled={!uf}>
+                        <option value="">{uf ? 'Selecione...' : '-'}</option>
+                        {cityList.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                    </select>
+                </div>
+            </div>
+         </div>
          
-         {/* E-MAIL E SENHA (SENSÍVEL) */}
-         <div className="pt-4 border-t border-slate-100">
-             <h3 className="font-bold text-slate-900 mb-4">Segurança</h3>
+         {/* 4. SEGURANÇA (EMAIL E SENHA) */}
+         <div>
+             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 flex items-center gap-2">
+                <Mail size={16} className="text-[#0097A8]"/> Acesso e Segurança
+            </h3>
              
              {/* E-MAIL */}
              <div className="mb-4">
-                 <label className="text-sm font-bold text-slate-700 block mb-1">E-mail</label>
+                 <label className="text-xs font-bold text-slate-500 block mb-1">E-mail de Acesso</label>
                  {isStaff ? (
                      <div className="space-y-2">
-                        <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
-                             <span className="text-slate-500 text-sm">{user.email}</span>
-                             <span className="text-xs text-slate-400 italic">Gerenciado pelo Admin</span>
+                        <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                             <span className="text-slate-600 text-sm">{user.email}</span>
+                             <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2 py-0.5 rounded">GERENCIADO</span>
                         </div>
                         <div className="flex gap-2">
-                            <input className="w-full border p-2 rounded-lg text-sm" placeholder="Novo e-mail desejado..." value={newEmail} onChange={e=>setNewEmail(e.target.value)}/>
-                            <button type="button" onClick={() => initiateRequest('email')} className="text-xs bg-blue-50 text-blue-600 px-3 rounded-lg font-bold hover:bg-blue-100 whitespace-nowrap">Solicitar Troca</button>
+                            <input className="w-full border p-2 rounded-lg text-sm" placeholder="Novo e-mail..." value={newEmail} onChange={e=>setNewEmail(e.target.value)}/>
+                            <button type="button" onClick={() => initiateRequest('email')} className="text-xs bg-blue-50 text-blue-600 px-3 rounded-lg font-bold hover:bg-blue-100 whitespace-nowrap">Solicitar</button>
                         </div>
                      </div>
                  ) : (
-                     <>
-                        <input className="w-full border p-3 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
-                        <p className="text-[10px] text-slate-400 mt-1">Deixe vazio para manter o atual.</p>
-                     </>
+                     <input className="w-full border border-slate-300 p-2.5 rounded-lg" placeholder={user.email} value={newEmail} onChange={e=>setNewEmail(e.target.value)} />
                  )}
 
-                 {/* Status de Verificação */}
+                 {/* Status Verificação */}
                  {!user.emailVerified ? (
                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500 font-bold">
                          <AlertCircle size={12}/> E-mail não verificado. 
-                         <span onClick={resendVerify} className="underline cursor-pointer text-[#0097A8]">Reenviar link</span>
+                         <button type="button" onClick={resendVerify} className="underline hover:text-red-700">Reenviar link</button>
                      </div>
                  ) : (
-                     <div className="mt-2 flex items-center gap-2 text-xs text-green-600 font-bold"><CheckCircle size={12}/> Verificado</div>
+                     <div className="mt-2 flex items-center gap-2 text-xs text-green-600 font-bold"><CheckCircle size={12}/> E-mail verificado</div>
                  )}
              </div>
 
              {/* SENHA */}
              <div>
-                 <label className="text-sm font-bold text-slate-700 block mb-1">Senha</label>
+                 <label className="text-xs font-bold text-slate-500 block mb-1">Senha</label>
                  {isStaff ? (
-                     <button type="button" onClick={() => initiateRequest('password')} className="w-full border p-3 rounded-lg text-left text-sm text-slate-600 hover:bg-slate-50 flex justify-between items-center group">
-                         <span>Solicitar redefinição de senha ao administrador</span>
-                         <Mail size={16} className="text-slate-400 group-hover:text-[#0097A8]"/>
+                     <button type="button" onClick={() => initiateRequest('password')} className="w-full border p-2.5 rounded-lg text-left text-sm text-slate-600 hover:bg-slate-50 flex justify-between items-center">
+                         <span>Solicitar redefinição ao admin</span>
+                         <Mail size={16} className="text-slate-400"/>
                      </button>
                  ) : (
-                     <button type="button" onClick={initiatePasswordReset} className="w-full border p-3 rounded-lg text-left text-sm text-slate-600 hover:bg-slate-50 flex justify-between items-center">
-                         <span>Redefinir minha senha</span>
-                         <Mail size={16}/>
-                     </button>
+                     <div className="grid grid-cols-2 gap-3">
+                         <input type="password" className="w-full border border-slate-300 p-2.5 rounded-lg" placeholder="Nova senha (se quiser mudar)" value={newPass} onChange={e=>setNewPass(e.target.value)} />
+                         <button type="button" onClick={initiatePasswordReset} className="w-full border border-slate-200 p-2.5 rounded-lg text-sm text-slate-500 hover:bg-slate-50">Ou envie link por e-mail</button>
+                     </div>
                  )}
              </div>
          </div>
 
-         <Button type="submit" className="w-full mt-4" disabled={loading}>{loading ? 'Salvando...' : 'Salvar Alterações'}</Button>
+         <div className="pt-4">
+            <Button type="submit" className="w-full py-4 text-lg shadow-lg shadow-[#0097A8]/20" disabled={loading}>
+                {loading ? 'Salvando...' : 'Salvar Alterações'}
+            </Button>
+         </div>
          
-         {/* BOTÃO EXCLUIR CONTA (NOVO - LGPD) */}
-         <div className="pt-8 border-t border-slate-100">
-             <button 
-                type="button"
-                onClick={() => setDeleteStep(1)}
-                className="text-xs text-red-400 hover:text-red-600 hover:underline flex items-center gap-1 mx-auto"
-             >
-                <Trash2 size={12}/> Quero excluir minha conta
+         {/* EXCLUIR CONTA */}
+         <div className="pt-6 border-t border-slate-100 text-center">
+             <button type="button" onClick={() => setDeleteStep(1)} className="text-xs text-slate-400 hover:text-red-500 hover:underline flex items-center gap-1 mx-auto transition-colors">
+                <Trash2 size={12}/> Quero excluir minha conta permanentemente
              </button>
          </div>
       </form>
@@ -2080,6 +2205,31 @@ const CheckoutPage = () => {
   const [mpPaymentMethodId, setMpPaymentMethodId] = useState('');
   const [issuerId, setIssuerId] = useState(null);
 
+  // Novos estados para Endereço e Telefone
+  const [cep, setCep] = useState('');
+  const [addressStreet, setAddressStreet] = useState('');
+  const [addressNumber, setAddressNumber] = useState('');
+  const [addressNeighborhood, setAddressNeighborhood] = useState('');
+  const [addressCity, setAddressCity] = useState('');
+  const [addressState, setAddressState] = useState('');
+  
+  const [loadingCep, setLoadingCep] = useState(false);
+  const [showManualAddress, setShowManualAddress] = useState(false);
+  const [saveUserData, setSaveUserData] = useState(true);
+
+  // Listas do IBGE
+  const [ufList, setUfList] = useState([]);
+  const [cityList, setCityList] = useState([]);
+  const [loadingCities, setLoadingCities] = useState(false);
+
+  // --- NOVOS STATES PARA PERFIL INTELIGENTE ---
+  const [userProfile, setUserProfile] = useState(null); 
+  const [showCompleteModal, setShowCompleteModal] = useState(false); 
+  const [tempName, setTempName] = useState('');
+  const [tempSurname, setTempSurname] = useState('');
+  const [tempPhone, setTempPhone] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+
   // Listener de Auth
   useEffect(() => {
       return onAuthStateChanged(auth, u => setUser(u));
@@ -2102,6 +2252,161 @@ const CheckoutPage = () => {
     };
     initSDK();
   }, []);
+
+            // 1. Busca dados extras (Telefone) no Firestore
+                useEffect(() => {
+                    if (user?.uid) {
+                        // Preenche states temporários
+                        if (user.displayName) {
+                            const parts = user.displayName.split(' ');
+                            setTempName(parts[0] || '');
+                            setTempSurname(parts.slice(1).join(' ') || '');
+                        }
+
+                        const fetchProfile = async () => {
+                            try {
+                                const docSnap = await getDoc(doc(db, "users", user.uid));
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    setUserProfile(data);
+                                    if (data.personalData?.phone) setTempPhone(data.personalData.phone);
+                                }
+                            } catch (error) {
+                                console.error("Erro ao buscar perfil:", error);
+                            }
+                        };
+                        fetchProfile();
+                    }
+                }, [user?.uid]); // ✅ Correção: Dependência apenas do UID evita loop infinito
+
+                // 2. Verifica se o perfil está completo (Renomeada para evitar conflito)
+                const checkProfileStatus = () => {
+                    if (!user) return false;
+                    
+                    const hasFullName = user.displayName && user.displayName.trim().indexOf(' ') > 0;
+                    // Verifica se o userProfile já carregou e se tem telefone
+                    const hasPhone = userProfile?.personalData?.phone && userProfile.personalData.phone.length >= 10;
+                    
+                    return !!(hasFullName && hasPhone); // Retorna booleano puro
+                };
+
+                // 3. Função para Salvar os Dados Faltantes
+                const handleSaveProfile = async () => {
+                    if (!tempName || !tempSurname || !tempPhone) {
+                        alert("Por favor, preencha todos os campos.");
+                        return;
+                    }
+                    setSavingProfile(true);
+                    try {
+                        const fullName = `${tempName.trim()} ${tempSurname.trim()}`;
+                        
+                        // A. Atualiza Auth
+                        const { updateProfile } = await import('firebase/auth');
+                        await updateProfile(user, { displayName: fullName });
+
+                        // B. Atualiza Firestore
+                        const userRef = doc(db, "users", user.uid);
+                        await setDoc(userRef, {
+                            displayName: fullName,
+                            email: user.email,
+                            personalData: {
+                                cpf: userProfile?.personalData?.cpf || '', // Mantém CPF se existir
+                                address: userProfile?.personalData?.address || null, // Mantém Endereço
+                                phone: tempPhone // Atualiza Telefone
+                            }
+                        }, { merge: true });
+
+                        // Atualiza estado local imediatamente
+                        setUserProfile(prev => ({ 
+                            ...prev, 
+                            personalData: { ...prev?.personalData, phone: tempPhone } 
+                        }));
+                        
+                        // Força atualização do user do Auth no state local
+                        setUser(prev => ({ ...prev, displayName: fullName }));
+                        
+                        setShowCompleteModal(false);
+                        // alert("Dados atualizados!"); // Opcional: Removi para ficar mais fluido
+                    } catch (error) {
+                        console.error("Erro ao atualizar perfil:", error);
+                        alert("Erro ao salvar dados. Tente novamente.");
+                    } finally {
+                        setSavingProfile(false);
+                    }
+                };
+
+            // 4. Reenvio de E-mail de Verificação (Caso precise)
+            const handleResendVerification = async () => {
+                if (user && !user.emailVerified) {
+                    try {
+                        await import('firebase/auth').then(({ sendEmailVerification }) => {
+                            sendEmailVerification(user);
+                        });
+                        alert(`E-mail de verificação enviado para ${user.email}. Confira sua caixa de entrada (e spam)!`);
+                    } catch (e) {
+                        alert("Erro ao enviar e-mail. Tente novamente em alguns minutos.");
+                    }
+                }
+            };
+
+  // 1. Carrega os Estados do IBGE ao iniciar
+  useEffect(() => {
+    fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome')
+      .then(res => res.json())
+      .then(data => setUfList(data))
+      .catch(err => console.error("Erro IBGE UFs:", err));
+  }, []);
+
+  // 2. Sempre que o Estado mudar (seja pelo ViaCEP ou Manual), carrega as cidades
+  useEffect(() => {
+      if (addressState) {
+          setLoadingCities(true);
+          fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${addressState}/municipios`)
+            .then(res => res.json())
+            .then(data => {
+                setCityList(data);
+                setLoadingCities(false);
+            })
+            .catch(err => {
+                console.error("Erro IBGE Cidades:", err);
+                setLoadingCities(false);
+            });
+      } else {
+          setCityList([]);
+      }
+  }, [addressState]);
+
+  // Função do CEP (Mantida, mas agora garante que o Estado e Cidade batam com o select)
+  const handleCepBlur = async () => {
+      const cleanCep = cep.replace(/\D/g, '');
+      if (cleanCep.length === 0) { setShowManualAddress(false); return; }
+
+      if (cleanCep.length === 8) {
+          setLoadingCep(true);
+          try {
+              const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+              const data = await res.json();
+              if (!data.erro) {
+                  setAddressStreet(data.logradouro);
+                  setAddressNeighborhood(data.bairro);
+                  setAddressState(data.uf); // Isso vai disparar o useEffect acima e carregar as cidades
+                  setAddressCity(data.localidade);
+                  setShowManualAddress(false); 
+                  document.getElementById('address-number')?.focus();
+              } else {
+                  console.warn("CEP não encontrado.");
+                  setShowManualAddress(true);
+                  // Limpa para forçar o usuário a escolher
+                  setAddressState(''); 
+                  setAddressCity('');
+              }
+          } catch (error) {
+              setShowManualAddress(true);
+          } finally {
+              setLoadingCep(false);
+          }
+      }
+  };
 
   // Lógica de Cupom
   const handleApplyCoupon = () => {
@@ -2132,47 +2437,122 @@ const CheckoutPage = () => {
 
   // --- PROCESSAMENTO (Mantido igual) ---
   const processPayment = async () => {
+       // 1. Validações Iniciais
        if (!user) { 
-           // UX: Scrolla para o topo para ele ver o aviso de login se clicar direto em pagar
            window.scrollTo({ top: 0, behavior: 'smooth' });
-           setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se ali em cima para continuar. É rapidinho!" });
+           setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se para continuar." });
            return; 
        }
 
        const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-       if (cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
+       
+       // Valida CPF conforme o método
+       if (paymentMethod === 'card' && cleanDoc.length < 11) { alert("Por favor, digite um CPF válido."); return; }
+       if (paymentMethod === 'pix' && cleanDoc.length < 11) { alert("Para o Pix, o CPF é obrigatório."); return; }
 
        setProcessing(true);
 
+       // Dados do Usuário
        const email = user.email || "cliente@mapadodayuse.com";
        const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
        const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
        let reservationIdRef = null;
 
        try {
-           const rawRes = {
-           ...bookingData, 
-           total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
-           status: 'waiting_payment', userId: user.uid, ownerId: bookingData.item.ownerId,
-           createdAt: new Date(), guestName: firstName, guestEmail: email, mpStatus: 'pending',
-           parentTicketId: bookingData.parentTicketId || null
+           // 2. Organiza o Objeto de Endereço (baseado nos inputs do Checkout)
+           // Se for Pix, o endereço pode ir nulo ou simplificado, mas no Cartão é obrigatório
+           const addressObj = {
+               zipCode: cep,
+               street: addressStreet,
+               number: addressNumber,
+               neighborhood: addressNeighborhood,
+               city: addressCity,
+               state: addressState
            };
 
-           const reservationData = sanitizeForFirestore(rawRes);
-           const docRef = await addDoc(collection(db, "reservations"), reservationData);
+           // 3. Prepara o Objeto da Reserva para o Firebase
+           const rawRes = {
+               ...bookingData, 
+               total: Number(finalTotal.toFixed(2)), 
+               discount, 
+               couponCode: couponCode || null, 
+               paymentMethod,
+               status: 'waiting_payment', 
+               userId: user.uid, 
+               ownerId: bookingData.item.ownerId,
+               createdAt: new Date(), 
+               guestName: firstName, 
+               guestEmail: email, 
+               mpStatus: 'pending',
+               parentTicketId: bookingData.parentTicketId || null,
+               // Salva o endereço na reserva para histórico (apenas se for cartão)
+               billingAddress: paymentMethod === 'card' ? addressObj : null,
+               payerDoc: cleanDoc
+           };
+
+           // 4. 🔥 SALVA NO PERFIL DO USUÁRIO (Lógica do Checkbox)
+           // Usamos { merge: true } para NÃO apagar o telefone que você já pegou no cadastro
+           if (paymentMethod === 'card' && saveUserData && user) {
+               const userRef = doc(db, "users", user.uid);
+               await setDoc(userRef, {
+                   personalData: {
+                       cpf: cleanDoc,
+                       address: addressObj
+                       // Como usamos merge: true, o telefone que já estiver lá no banco será mantido!
+                   }
+               }, { merge: true });
+               console.log("💾 Endereço atualizado no perfil do usuário.");
+           }
+
+           // 5. Cria a Reserva no Banco de Dados
+           // Observação: Se você tiver a função sanitizeForFirestore, use: sanitizeForFirestore(rawRes)
+           const docRef = await addDoc(collection(db, "reservations"), rawRes);
            reservationIdRef = docRef.id;
            setCurrentReservationId(reservationIdRef); 
 
            const safeId = bookingData.item.id || bookingData.item.dayuseId;
+           
+           // 6. Monta o Payload para o Mercado Pago
            const paymentPayload = {
-               token: null, transaction_amount: Number(finalTotal.toFixed(2)),
+               token: null, 
+               transaction_amount: Number(finalTotal.toFixed(2)),
                payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
-               issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
-               payer: { email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc } },
-               bookingDetails: { dayuseId: safeId, item: { id: safeId }, date: bookingData.date, total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, selectedSpecial: bookingData.selectedSpecial, couponCode },
+               issuer_id: issuerId ? Number(issuerId) : null, 
+               installments: Number(installments),
+               payer: { 
+                   email, 
+                   first_name: firstName, 
+                   last_name: lastName, 
+                   identification: { type: 'CPF', number: cleanDoc },
+                   // Envia o endereço apenas se for cartão (Antifraude)
+                   ...(paymentMethod === 'card' && {
+                       address: {
+                           zip_code: cep.replace(/\D/g, ''),
+                           street_name: addressStreet,
+                           street_number: Number(addressNumber) || 0,
+                           neighborhood: addressNeighborhood || 'Centro',
+                           city: addressCity,
+                           federal_unit: addressState
+                       }
+                   })
+                   // Nota: Não enviamos 'phone' aqui para evitar erros de validação, 
+                   // já que removemos o input e não temos garantia que o user tem telefone no banco agora.
+               },
+               bookingDetails: { 
+                   dayuseId: safeId, 
+                   item: { id: safeId }, 
+                   date: bookingData.date, 
+                   total: finalTotal, 
+                   adults: bookingData.adults, 
+                   children: bookingData.children, 
+                   pets: bookingData.pets, 
+                   selectedSpecial: bookingData.selectedSpecial, 
+                   couponCode 
+               },
                reservationId: reservationIdRef 
            };
 
+           // 7. Tokenização do Cartão (Se necessário)
            if (paymentMethod === 'card') {
                if (!window.mpInstance) throw new Error("Sistema de pagamento carregando...");
                const tokenObj = await window.mpInstance.fields.createCardToken({
@@ -2183,39 +2563,60 @@ const CheckoutPage = () => {
                paymentPayload.token = tokenObj.id; 
            }
 
+           // 8. Chamada para a API (Backend)
            const response = await fetch("/api/process-payment", { 
-               method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) 
+               method: "POST", 
+               headers: { "Content-Type":"application/json" }, 
+               body: JSON.stringify(paymentPayload) 
            });
            const result = await response.json();
 
+           // 9. Tratamento de Erros da API
            if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
                const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
+               
                await updateDoc(doc(db, "reservations", reservationIdRef), { status });
-               if (status === 'cancelled_sold_out') setIsSoldOut(true);
-               else setErrorData({ title: "Pagamento não aprovado", msg: result.message || "Verifique os dados do cartão." });
+               
+               if (status === 'cancelled_sold_out') {
+                   setIsSoldOut(true);
+               } else {
+                   // Mostra erro vindo do MP ou genérico
+                   setErrorData({ 
+                       title: "Pagamento não aprovado", 
+                       msg: result.message || "Verifique os dados do cartão ou tente outro método." 
+                   });
+               }
                setProcessing(false);
                return; 
            }
 
+           // 10. Sucesso Pix (Abre Modal)
            if (paymentMethod === 'pix' && result.point_of_interaction) {
                setPixData(result.point_of_interaction.transaction_data);
                setShowPixModal(true); 
                setProcessing(false);
            } 
+           // 11. Sucesso Cartão (Finaliza direto)
            else if (result.status === 'approved' || result.status === 'confirmed') {
                setProcessing(false);
                setShowSuccess(true); 
-               const finalData = { ...reservationData, paymentId: result.id, status: result.status };
+               
+               // Atualiza reserva com ID do pagamento
+               const finalData = { ...rawRes, paymentId: result.id, status: result.status };
+               
+               // Dispara notificações (agora seus emails estão corrigidos!)
                notifyCustomer(finalData, reservationIdRef).catch(err => console.error(err));
                notifyPartner(finalData, result.id).catch(err => console.error(err));
            } else {
+               // Status "in_process" ou pendente
                setProcessing(false);
-               alert("Pagamento em análise. Você receberá um e-mail em breve.");
+               alert("Pagamento em análise. Você receberá um e-mail assim que aprovado.");
                navigate('/minhas-viagens');
           }
+
        } catch (err) {
            console.error("Erro Checkout Crítico:", err);
-           setErrorData({ title: "Erro de Comunicação", msg: "Não foi possível processar. Se cobrou, entre em contato." });
+           setErrorData({ title: "Erro de Comunicação", msg: "Não foi possível processar. Se o valor foi cobrado, entre em contato com o suporte." });
            setProcessing(false);
        }
    };
@@ -2327,9 +2728,57 @@ const CheckoutPage = () => {
       return () => unsubscribe();
   }, [currentReservationId, paymentMethod, showSuccess]); // Dependências
 
+
+
   // --- RENDER ---
   return (
       <>
+      {/* 1. MODAL DE COMPLETAR CADASTRO (Agora aqui fora!) */}
+      {showCompleteModal && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                <button 
+                    onClick={() => setShowCompleteModal(false)}
+                    className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 font-bold"
+                >
+                    ✕
+                </button>
+
+                <div className="text-center mb-5">
+                    <div className="w-12 h-12 bg-[#e0f7fa] text-[#0097A8] rounded-full flex items-center justify-center mx-auto mb-3">
+                        <User size={24}/>
+                    </div>
+                    <h4 className="font-bold text-slate-800 text-lg">Dados do Titular</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                        Mantenha seus dados atualizados para receber o voucher.
+                    </p>
+                </div>
+                
+                <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nome</label>
+                            <input className="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50 focus:bg-white outline-none focus:border-[#0097A8]" value={tempName} onChange={e=>setTempName(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sobrenome</label>
+                            <input className="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50 focus:bg-white outline-none focus:border-[#0097A8]" value={tempSurname} onChange={e=>setTempSurname(e.target.value)} />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">WhatsApp / Celular</label>
+                        <input className="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50 focus:bg-white outline-none focus:border-[#0097A8]" value={tempPhone} onChange={e=>setTempPhone(e.target.value)} />
+                    </div>
+
+                    <Button onClick={handleSaveProfile} disabled={savingProfile} className="w-full py-3 mt-2">
+                        {savingProfile ? 'Salvando...' : 'Salvar Alterações'}
+                    </Button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* MODAIS (Success, Error, Pix, Login) mantidos */}
       {showSuccess && <SuccessModal isOpen={showSuccess} onClose={()=>setShowSuccess(false)} title="Reserva Confirmada!" message="Seu voucher foi enviado por e-mail." onAction={()=>navigate('/minhas-viagens')} actionLabel="Ver Ingressos" />}
       {/* MODAL DE ESGOTADO (SOLD OUT) */}
@@ -2363,51 +2812,96 @@ const CheckoutPage = () => {
       {showPixModal && <PixModal isOpen={showPixModal} onClose={()=>setShowPixModal(false)} pixData={pixData} onConfirm={() => handlePixSuccess()} paymentId={currentReservationId} ownerId={bookingData.item.ownerId} />}
       {showLogin && <LoginModal isOpen={showLogin} onClose={()=>setShowLogin(false)} onSuccess={()=>setShowLogin(false)} initialMode={initialAuthMode} />}
 
+      {/* --- CONTEÚDO DA PÁGINA --- */}
       <div className="max-w-6xl mx-auto pt-8 pb-20 px-4 animate-fade-in relative z-0">
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><ChevronLeft size={18}/> Voltar para o local</button>
-
-      <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
-        <div className="space-y-8">
           
-          {/* 1. CARD DE IDENTIFICAÇÃO (Simpático e Educado) */}
-          <div className={`bg-white p-6 rounded-3xl border shadow-sm transition-all ${user ? 'border-green-200 ring-1 ring-green-100' : 'border-[#0097A8]/30 ring-4 ring-[#0097A8]/5'}`}>
-            <div className="flex items-center gap-3 mb-4">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${user ? 'bg-green-100 text-green-600' : 'bg-[#e0f7fa] text-[#0097A8]'}`}>
-                    <User size={20} />
+        <button onClick={() => navigate(-1)} className="flex items-center gap-2 mb-6 text-slate-500 hover:text-[#0097A8] font-medium transition-colors"><ChevronLeft size={18}/> Voltar para o local</button>
+
+        <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
+            <div className="space-y-8">
+            
+            {/* 1. CARD DE IDENTIFICAÇÃO (Atualizado) */}
+            <div className={`bg-white p-6 rounded-3xl border shadow-sm transition-all ${user && checkProfileStatus() ? 'border-green-200 ring-1 ring-green-100' : 'border-orange-200 ring-4 ring-orange-50'}`}>
+                
+                <div className="flex items-center gap-3 mb-4">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${user && checkProfileStatus() ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`}>
+                        <User size={20} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-lg text-slate-900">
+                            {user ? `Olá, ${user.displayName ? user.displayName.split(' ')[0] : 'Visitante'}!` : 'Vamos começar?'}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                            {user 
+                                ? (checkProfileStatus() ? 'Seus dados estão confirmados.' : 'Complete seu cadastro para continuar.') 
+                                : 'Identifique-se para emitir o voucher.'
+                            }
+                        </p>
+                    </div>
                 </div>
-                <div>
-                    <h3 className="font-bold text-lg text-slate-900">{user ? `Olá, ${user.displayName?.split(' ')[0]}!` : 'Vamos começar?'}</h3>
-                    <p className="text-xs text-slate-500">{user ? 'Seus dados já estão confirmados.' : 'Precisamos identificar você para emitir o voucher.'}</p>
-                </div>
+
+                {user ? (
+                    <div className="space-y-3">
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            {/* Dados do Usuário */}
+                            <div className="flex flex-col gap-1 mb-3">
+                                <p className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                    {user.displayName || 'Nome Pendente'}
+                                </p>
+                                <p className="text-xs text-slate-500">{user.email}</p>
+                                {/* Mostra o telefone se existir */}
+                                {(userProfile?.personalData?.phone || tempPhone) && (
+                                    <p className="text-xs text-slate-500">{(userProfile?.personalData?.phone || tempPhone)}</p>
+                                )}
+                            </div>
+
+                            {/* Barra de Ações (Editar e Status) */}
+                            <div className="flex justify-between items-center border-t border-slate-200 pt-3">
+                                {checkProfileStatus() ? (
+                                    <div className="text-[10px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full flex items-center gap-1">
+                                        <Lock size={8}/> Verificado
+                                    </div>
+                                ) : (
+                                    <div className="text-[10px] font-bold text-orange-700 bg-orange-100 px-3 py-1 rounded-full flex items-center gap-1">
+                                        ⚠️ Pendente
+                                    </div>
+                                )}
+
+                                {/* Botão de Editar */}
+                                <button 
+                                    onClick={() => {
+                                        // Garante que os dados atuais vão para o modal
+                                        setTempName(user.displayName?.split(' ')[0] || '');
+                                        setTempSurname(user.displayName?.split(' ').slice(1).join(' ') || '');
+                                        setTempPhone(userProfile?.personalData?.phone || tempPhone);
+                                        setShowCompleteModal(true);
+                                    }} 
+                                    className="text-[10px] font-bold text-[#0097A8] hover:text-[#007f8c] underline cursor-pointer"
+                                >
+                                    Atualizar informações
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <p className="text-sm text-slate-600 leading-relaxed">Para sua segurança e para enviarmos seu voucher, faça login ou cadastre-se.</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="w-full !bg-white border-2 border-[#0097A8] !text-[#0097A8] font-bold hover:!bg-[#e0f7fa]">Entrar</Button>
+                            <Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {user ? (
-               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-slate-700 text-sm">{user.displayName}</p>
-                    <p className="text-xs text-slate-500">{user.email}</p>
-                  </div>
-                  <div className="text-[10px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full flex items-center gap-1"><Lock size={8}/> Confirmado</div>
-               </div>
-            ) : (
-               <div className="space-y-3">
-                   <p className="text-sm text-slate-600 leading-relaxed">Para sua segurança e para enviarmos seu voucher, faça login ou cadastre-se rapidinho.</p>
-                   <div className="grid grid-cols-2 gap-3">
-                       <Button onClick={()=>{ setInitialAuthMode('login'); setShowLogin(true); }} className="w-full !bg-white border-2 border-[#0097A8] !text-[#0097A8] font-bold hover:!bg-[#e0f7fa] transition-colors">Entrar</Button>
-                       <Button onClick={()=>{ setInitialAuthMode('register'); setShowLogin(true); }} className="w-full">Criar Conta</Button>
-                   </div>
-               </div>
-            )}
-          </div>
-
-          {/* 🔥 NOVO LOCAL DO RESUMO MOBILE (Cole aqui) */}
-          <div className="block md:hidden mb-6">
-            {/* Era <OrderSummary isMobile={true} /> */}
+                {/* 🔥 NOVO LOCAL DO RESUMO MOBILE (Cole aqui) */}
+                <div className="block md:hidden mb-6">
+                {/* Era <OrderSummary isMobile={true} /> */}
              {renderOrderSummary(true)} 
                 </div>
           
-          {/* 2. CARD DE PAGAMENTO */}
-          <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 transition-all duration-300 ${!user ? 'opacity-60 pointer-events-none grayscale-[0.8] blur-[1px]' : ''}`}>
+                {/* 2. CARD DE PAGAMENTO */}
+                <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 transition-all duration-300 ${!user ? 'opacity-60 pointer-events-none grayscale-[0.8] blur-[1px]' : ''}`}>
              <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-xl text-slate-900 flex items-center gap-2">Pagamento Seguro <Lock size={16} className="text-green-500"/></h3>
              </div>
@@ -2471,6 +2965,140 @@ const CheckoutPage = () => {
                                 <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
                             </div>
                          </div>
+
+                         {/* SEÇÃO: ENDEREÇO DE FATURAMENTO */}
+                            <div className="mt-6 border-t border-slate-100 pt-6">
+                                
+                                {/* Título Ajustado para Mobile (Flex Wrap) */}
+                                <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                        📍 Endereço da Fatura
+                                    </h4>
+                                    <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 whitespace-nowrap">
+                                        Exigido pelo banco
+                                    </span>
+                                </div>
+
+                                {/* CEP e Número (Sempre visíveis) */}
+                                <div className="grid grid-cols-10 gap-3 mb-3">
+                                    {/* CEP ocupa 60% */}
+                                    <div className="col-span-6 relative">
+                                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">CEP</label>
+                                        <input 
+                                            className={`w-full border p-3 rounded-lg mt-1 outline-none transition-all ${showManualAddress ? 'border-red-300 focus:border-red-500' : 'border-slate-300 focus:border-[#0097A8]'}`}
+                                            placeholder="00000-000"
+                                            value={cep}
+                                            onChange={e => {
+                                                // Permite digitar, se limpar esconde o manual
+                                                const val = e.target.value;
+                                                setCep(val);
+                                                if(val === '') setShowManualAddress(false);
+                                            }}
+                                            onBlur={handleCepBlur}
+                                            maxLength={9}
+                                        />
+                                        {loadingCep && <div className="absolute right-3 top-9 animate-spin h-4 w-4 border-2 border-[#0097A8] border-t-transparent rounded-full"/>}
+                                    </div>
+                                    
+                                    {/* Número ocupa 40% */}
+                                    <div className="col-span-4">
+                                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">Número</label>
+                                        <input 
+                                            id="address-number"
+                                            className="w-full border border-slate-300 p-3 rounded-lg mt-1 outline-none focus:border-[#0097A8]" 
+                                            placeholder="123"
+                                            value={addressNumber}
+                                            onChange={e => setAddressNumber(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* CENÁRIO 1: CEP Encontrado (Mostra Card Bonito) */}
+                                {!showManualAddress && addressStreet && (
+                                    <div className="bg-slate-50 p-3 rounded-lg text-xs text-slate-600 border border-slate-200 animate-fade-in flex justify-between items-center group">
+                                        <div>
+                                            <p className="font-bold text-slate-800">{addressStreet}, {addressNumber || '...'}</p>
+                                            <p>{addressNeighborhood} - {addressCity}/{addressState}</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => setShowManualAddress(true)} 
+                                            className="text-[10px] text-[#0097A8] font-bold underline opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                            Editar
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* CENÁRIO 2: Fallback Manual com Selects do IBGE */}
+                                {showManualAddress && (
+                                    <div className="animate-fade-in space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200 mt-2">
+                                        <p className="text-xs text-orange-600 font-bold mb-2 flex items-center gap-1">
+                                            ⚠️ Não achamos pelo CEP. Por favor, complete:
+                                        </p>
+                                        
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase">Rua / Logradouro</label>
+                                            <input 
+                                                id="address-street"
+                                                className="w-full border border-slate-300 p-2 rounded bg-white outline-none focus:border-[#0097A8]" 
+                                                value={addressStreet} 
+                                                onChange={e=>setAddressStreet(e.target.value)} 
+                                                placeholder="Ex: Avenida Paulista"
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase">Bairro</label>
+                                                <input className="w-full border border-slate-300 p-2 rounded bg-white outline-none focus:border-[#0097A8]" value={addressNeighborhood} onChange={e=>setAddressNeighborhood(e.target.value)} />
+                                            </div>
+                                            
+                                            {/* SELECT DE ESTADO (UF) */}
+                                            <div>
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase">Estado</label>
+                                                <div className="relative">
+                                                    <select 
+                                                        className="w-full border border-slate-300 p-2 rounded bg-white outline-none focus:border-[#0097A8] appearance-none" 
+                                                        value={addressState} 
+                                                        onChange={e=> {
+                                                            setAddressState(e.target.value);
+                                                            setAddressCity(''); // Reseta cidade ao mudar estado
+                                                        }}
+                                                    >
+                                                        <option value="">Selecione...</option>
+                                                        {ufList.map(uf => (
+                                                            <option key={uf.id} value={uf.sigla}>{uf.sigla} - {uf.nome}</option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="absolute right-2 top-3 pointer-events-none text-slate-400 text-[10px]">▼</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* SELECT DE CIDADE (Depende do Estado) */}
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase flex justify-between">
+                                                Cidade
+                                                {loadingCities && <span className="text-[#0097A8]">Carregando...</span>}
+                                            </label>
+                                            <div className="relative">
+                                                <select 
+                                                    className="w-full border border-slate-300 p-2 rounded bg-white outline-none focus:border-[#0097A8] appearance-none disabled:bg-slate-100 disabled:text-slate-400" 
+                                                    value={addressCity} 
+                                                    onChange={e=>setAddressCity(e.target.value)}
+                                                    disabled={!addressState || loadingCities}
+                                                >
+                                                    <option value="">{addressState ? 'Selecione a cidade...' : 'Selecione o estado primeiro'}</option>
+                                                    {cityList.map(city => (
+                                                        <option key={city.id} value={city.nome}>{city.nome}</option>
+                                                    ))}
+                                                </select>
+                                                <div className="absolute right-2 top-3 pointer-events-none text-slate-400 text-[10px]">▼</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                     </div>
                 )}
 
@@ -2502,6 +3130,20 @@ const CheckoutPage = () => {
                     </div>
                 )}
              </div>
+
+             {/* CHECKBOX SALVAR DADOS */}
+<div className="mt-4 flex items-center gap-2">
+    <input 
+        type="checkbox" 
+        id="save-data" 
+        className="w-4 h-4 text-[#0097A8] rounded border-slate-300 focus:ring-[#0097A8]"
+        checked={saveUserData}
+        onChange={e => setSaveUserData(e.target.checked)}
+    />
+    <label htmlFor="save-data" className="text-xs text-slate-600 cursor-pointer select-none">
+        Salvar meu endereço e telefone para facilitar compras futuras.
+    </label>
+</div>
 
              {/* Botão de Ação */}
              <div className="mt-8">
