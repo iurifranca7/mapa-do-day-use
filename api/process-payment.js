@@ -152,7 +152,7 @@ export default async function handler(req, res) {
         console.log("🛒 [5.1] Usando Lógica de Carrinho (Produtos Dinâmicos)");
         
         // Busca produtos no banco para validar preços
-        const productsRef = db.collection('products').where('dayuseId', '==', targetId);
+        const productsRef = db.collection('products').where('dayUseId', '==', targetId);
         const productsSnap = await productsRef.get();
         
         console.log(`🔎 [5.2] Produtos encontrados no banco: ${productsSnap.size}`);
