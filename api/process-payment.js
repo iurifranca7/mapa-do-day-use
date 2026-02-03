@@ -100,45 +100,87 @@ export default async function handler(req, res) {
         return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas.' });
     }
 
+// ==================================================================
+    // CÁLCULOS FINANCEIROS (Versão Dinâmica: Produtos/Carrinho)
     // ==================================================================
-    // CÁLCULOS FINANCEIROS
-    // ==================================================================
-    let priceAdult = Number(item.priceAdult);
-    let priceChild = Number(item.priceChild || 0);
-    let pricePet = Number(item.petFee || 0);
-
-    const dateParts = bookingDetails.date.split('-'); 
-    const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12); 
-    const dayOfWeek = dateObj.getDay();
-
-    if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
-        const dayConfig = item.weeklyPrices[dayOfWeek];
-        if (typeof dayConfig === 'object') {
-            if (dayConfig.adult) priceAdult = Number(dayConfig.adult);
-            if (dayConfig.child) priceChild = Number(dayConfig.child);
-            if (dayConfig.pet) pricePet = Number(dayConfig.pet);
-        } else if (!isNaN(dayConfig)) priceAdult = Number(dayConfig);
+    
+    // 1. Buscar os produtos reais no banco para validar preços (Segurança)
+    // Assumindo que bookingDetails.cartItems contém [{id, quantity, type, ...}]
+    if (!bookingDetails.cartItems || bookingDetails.cartItems.length === 0) {
+        throw new Error("Carrinho vazio ou formato inválido.");
     }
 
-    let calculatedGrossTotal = 
-        (Number(bookingDetails.adults) * priceAdult) + 
-        (Number(bookingDetails.children) * priceChild) + 
-        (Number(bookingDetails.pets) * pricePet);
+    // Vamos buscar todos os produtos deste DayUse de uma vez para evitar N consultas
+    const productsRef = db.collection('products').where('dayuseId', '==', targetId);
+    const productsSnap = await productsRef.get();
+    
+    // Mapa rápido: ID do Produto -> Dados Reais do Banco
+    const dbProductsMap = {};
+    productsSnap.forEach(doc => {
+        dbProductsMap[doc.id] = { ...doc.data(), id: doc.id };
+    });
 
-    if (bookingDetails.selectedSpecial && item.specialTickets) {
-        Object.entries(bookingDetails.selectedSpecial).forEach(([idx, qtd]) => {
-            const ticket = item.specialTickets[idx];
-            if (ticket && qtd > 0) calculatedGrossTotal += (Number(ticket.price) * Number(qtd));
+    let calculatedGrossTotal = 0;
+    const mpItemsList = []; // Lista para enviar ao Mercado Pago (Qualidade)
+
+    // 2. Iterar sobre o carrinho enviado pelo Frontend
+    for (const cartItem of bookingDetails.cartItems) {
+        // Pula itens com quantidade zero
+        if (Number(cartItem.quantity) <= 0) continue;
+
+        // Verifica se o produto existe no banco
+        const realProduct = dbProductsMap[cartItem.id];
+        
+        // Se não achar pelo ID, tenta validar se é um item legado ou lança erro
+        // Aqui estou sendo rígido: Se não está no banco 'products', é fraude ou erro.
+        if (!realProduct) {
+             console.error(`Produto não encontrado no banco: ${cartItem.id} - ${cartItem.title}`);
+             throw new Error(`Produto indisponível ou alterado: ${cartItem.title}`);
+        }
+
+        // Pega o PREÇO REAL do banco (Ignora o preço enviado pelo front)
+        const unitPrice = Number(realProduct.price || 0); 
+        const quantity = Number(cartItem.quantity);
+
+        // Soma ao total
+        calculatedGrossTotal += (unitPrice * quantity);
+
+        // Monta o item para o Mercado Pago (Antifraude adora isso)
+        mpItemsList.push({
+            id: cartItem.id,
+            title: realProduct.name || realProduct.title || cartItem.title, // Prioriza nome do banco
+            description: realProduct.description || `Tipo: ${cartItem.type}`,
+            picture_url: realProduct.images?.[0] || item.images?.[0] || null,
+            category_id: "tickets",
+            quantity: quantity,
+            unit_price: unitPrice
         });
     }
 
+    // 3. Aplica Cupons (Se houver lógica de cupom no 'item' principal ou global)
     let transactionAmount = calculatedGrossTotal;
     if (bookingDetails.couponCode && item.coupons) {
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
-        if (coupon) transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
+        if (coupon) {
+            const discountAmount = (calculatedGrossTotal * coupon.percentage / 100);
+            transactionAmount -= discountAmount;
+            
+            // Adiciona item negativo para representar desconto no MP (Opcional, mas elegante)
+            // mpItemsList.push({ id: 'coupon', title: 'Desconto', quantity: 1, unit_price: -discountAmount });
+        }
     }
+    
+    // Arredondamento final de segurança
     transactionAmount = Number(transactionAmount.toFixed(2));
 
+    // Validação final de valor (Evita cobrar R$ 0,00 se não for intencional)
+    if (transactionAmount <= 0) {
+        throw new Error("Valor total da transação inválido (Zero ou negativo).");
+    }
+
+    // ==================================================================
+    // CÁLCULO DE COMISSÃO (Mantido a lógica original)
+    // ==================================================================
     let refDate = new Date();
     if (item.firstActivationDate) {
          const d = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
@@ -153,13 +195,16 @@ export default async function handler(req, res) {
 
     const isPix = payment_method_id === 'pix';
     const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
-    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE;
+    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE; // Comissão sobre o Bruto sem desconto? Ou com? (Geralmente é com desconto)
+    // Se quiser comissão sobre o valor REAL cobrado (com desconto):
+    // const platformGrossRevenue = transactionAmount * PLATFORM_RATE; 
+
     let commission = platformGrossRevenue - mpFeeCost;
     if (commission < 0) commission = 0;
     commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // PROCESSAMENTO MP (COM MELHORIAS DE QUALIDADE)
+    // PROCESSAMENTO MP (Atualizado para incluir os itens)
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
@@ -168,29 +213,21 @@ export default async function handler(req, res) {
     const baseUrl = rawBaseUrl.replace(/\/$/, ""); 
 
     const cleanName = item.name
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos (Zé -> Ze)
-        .replace(/[^a-zA-Z0-9]/g, "") // Remove tudo que NÃO for letra ou número (Tira espaços, traços, etc)
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
+        .replace(/[^a-zA-Z0-9]/g, "") 
         .toUpperCase();
 
-    // 2. Monta a frase (Prefixo + Nome)
-    // Sugestão: Use "MAPA*" (5 chars) para sobrar 17 chars para o nome do local
-    // Se usar "MAPADODAYUSE*" (13 chars), sobrarão apenas 9 chars para o nome.
     let descriptor = `DAYUSE*${cleanName}`; 
-
-    // 3. Corta obrigatoriamente em 22 caracteres (Regra do Banco)
-    if (descriptor.length > 22) {
-        descriptor = descriptor.substring(0, 22);
-    }
+    if (descriptor.length > 22) descriptor = descriptor.substring(0, 22);
 
     const paymentBody = {
       transaction_amount: transactionAmount,
-      description: `Reserva: ${item.name}`,
+      description: `Reserva: ${item.name}`, // Descrição geral
       payment_method_id,
       application_fee: commission,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       statement_descriptor: descriptor,
       
-      // Campos de Qualidade (Já adicionados anteriormente)
       external_reference: reservationId,
       binary_mode: true,
       
@@ -201,20 +238,9 @@ export default async function handler(req, res) {
         identification: payer.identification
       },
 
-      // 🔥 [NOVO] BLOCO DE QUALIDADE DOS ITENS (Adicione isto aqui)
+      // 🔥 AQUI ENTRA A LISTA DETALHADA DE PRODUTOS
       additional_info: {
-          items: [
-              {
-                  id: item.id, // items.id (Código do item no seu banco)
-                  title: item.name, // items.title (Nome do produto)
-                  description: `Reserva para ${bookingDetails.date.split('-').reverse().join('/')} - ${bookingDetails.adults} Adultos`, // items.description
-                  picture_url: item.images && item.images.length > 0 ? item.images[0] : null, // Ajuda na visualização
-                  category_id: "tickets", // items.category_id (Categoria sugerida)
-                  quantity: 1, // items.quantity (Enviamos como 1 pacote fechado)
-                  unit_price: transactionAmount // items.unit_price (Preço total final)
-              }
-          ],
-          // IP do cliente também ajuda muito no anti-fraude
+          items: mpItemsList, // Usamos a lista que geramos no loop acima
           ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress
       }
     };
@@ -222,24 +248,27 @@ export default async function handler(req, res) {
     if (!isPix) {
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
-      
-      // 🌟 [QUALIDADE MP] Envia o ID do Banco Emissor se disponível
-      if (issuer_id) {
-          paymentBody.issuer_id = Number(issuer_id);
-      }
+      if (issuer_id) paymentBody.issuer_id = Number(issuer_id);
     }
 
-    console.log("🚀 Enviando para MP:", transactionAmount);
+    console.log(`🚀 Enviando para MP: R$ ${transactionAmount} (${mpItemsList.length} itens)`);
 
     const result = await payment.create({ body: paymentBody });
 
+    // Atualização do status da reserva
     if (reservationId) {
         await db.collection('reservations').doc(reservationId).update({
             paymentId: result.id.toString(),
             paymentMethod: payment_method_id,
             status: result.status === 'approved' ? 'confirmed' : 'pending',
             mpStatus: result.status,
-            updatedAt: new Date()
+            updatedAt: new Date(),
+            // Salva o snapshot dos preços usados na hora da compra para histórico
+            financialSnapshot: {
+                totalPaid: transactionAmount,
+                commission: commission,
+                items: mpItemsList
+            }
         });
     }
 
