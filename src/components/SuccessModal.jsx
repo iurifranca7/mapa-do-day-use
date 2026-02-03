@@ -27,6 +27,7 @@ const SuccessModal = ({ isOpen, onClose, title, message, actionLabel, onAction }
             </button>
         )}
         
+        
         <button onClick={onClose} className="mt-4 text-slate-400 text-sm hover:text-slate-600 font-medium">
             Fechar
         </button>
