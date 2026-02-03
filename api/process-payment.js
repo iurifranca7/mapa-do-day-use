@@ -2,18 +2,15 @@ import { MercadoPagoConfig, Payment } from 'mercadopago';
 import admin from 'firebase-admin';
 
 // ==================================================================
-// 1. INICIALIZAÇÃO FIREBASE (Sua versão que funciona)
+// 1. INICIALIZAÇÃO FIREBASE (Segura para Serverless)
 // ==================================================================
-import { MercadoPagoConfig, Payment } from 'mercadopago';
-import admin from 'firebase-admin';
-
-// ... (Mantenha a função initFirebase igualzinha estava) ...
 const initFirebase = () => {
-    if (!admin || !admin.apps) throw new Error("Erro init Firebase");
+    // Se já estiver inicializado, reaproveita a instância
     if (admin.apps.length > 0) return admin.firestore();
 
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    // Corrige formatação da chave privada que vem com \n do ambiente
     const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
 
     try {
@@ -22,14 +19,18 @@ const initFirebase = () => {
             const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
             admin.initializeApp({ credential });
         } else {
-            throw new Error("Credenciais do Firebase incompletas.");
+            console.error("❌ Credenciais de ambiente ausentes.");
+            throw new Error("Credenciais do Firebase incompletas nas Variáveis de Ambiente.");
         }
-    } catch (e) { throw new Error(`Credentials Error: ${e.message}`); }
+    } catch (e) { 
+        throw new Error(`Credentials Error: ${e.message}`); 
+    }
 
     return admin.firestore();
 };
 
 export default async function handler(req, res) {
+  // Configuração de CORS (Permite que seu site acesse a API)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -39,81 +40,90 @@ export default async function handler(req, res) {
 
   try {
     const db = initFirebase();
+    
+    // Extrai dados enviados pelo Frontend
     const { token, payment_method_id, issuer_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    // 🕵️ LOG DE DEBUG: Vamos ver o que chegou do Frontend
-    console.log("📦 RECEBIDO NO BACKEND:");
-    console.log("📅 Data:", bookingDetails?.date);
-    console.log("🛒 Carrinho (Qtd itens):", bookingDetails?.cartItems?.length || 0);
-    // console.log("🛒 Itens Detalhados:", JSON.stringify(bookingDetails?.cartItems, null, 2));
-
+    // 🕵️ LOGS DE DEBUG (Para você ver na Vercel)
+    console.log("📦 [API] Processando Pagamento...");
+    console.log(`📅 Data: ${bookingDetails?.date}`);
+    console.log(`🛒 Itens no Carrinho: ${bookingDetails?.cartItems?.length || 0}`);
+    
+    // Validação básica do ID do Day Use
     const targetId = bookingDetails?.dayuseId || bookingDetails?.item?.id;
-
     if (!targetId) throw new Error("ID do Day Use não fornecido.");
 
-    // 1. Busca Day Use
+    // ==================================================================
+    // 2. BUSCAS NO BANCO DE DADOS
+    // ==================================================================
+
+    // A) Busca dados do Day Use (Local)
     const dayUseRef = db.collection('dayuses').doc(targetId);
     const dayUseSnap = await dayUseRef.get();
     
-    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado.");
+    if (!dayUseSnap.exists) throw new Error("Day Use não encontrado no banco.");
     const item = dayUseSnap.data();
 
-    // 2. Busca Token do Parceiro
+    // B) Busca Token do Parceiro (Dono do Day Use)
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
     
+    // Lógica: Usa token de teste do ambiente OU o token do parceiro no banco
     const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
-    if (!partnerAccessToken) throw new Error("Token MP ausente.");
+    if (!partnerAccessToken) {
+        console.error(`❌ Parceiro ${item.ownerId} sem token configurado.`);
+        throw new Error("Estabelecimento não configurou o recebimento de pagamentos.");
+    }
 
     // ==================================================================
-    // CÁLCULOS FINANCEIROS (Dinâmico com Carrinho)
+    // 3. CÁLCULOS FINANCEIROS (DINÂMICO COM CARRINHO)
     // ==================================================================
     
-    // Validação Inicial
+    // Validação: Carrinho não pode estar vazio
     if (!bookingDetails.cartItems || bookingDetails.cartItems.length === 0) {
-        console.error("❌ ERRO: Carrinho vazio no backend.");
         throw new Error("Carrinho vazio ou formato inválido.");
     }
 
-    // Busca produtos no banco para validar preços
+    // C) Busca TODOS os produtos deste Day Use no banco para validar preços
     const productsRef = db.collection('products').where('dayuseId', '==', targetId);
     const productsSnap = await productsRef.get();
     
-    console.log(`🔎 Encontrados ${productsSnap.size} produtos cadastrados no banco para este DayUse.`);
-
+    // Cria um Mapa (Dicionário) para busca rápida: ID -> Dados Reais
     const dbProductsMap = {};
     productsSnap.forEach(doc => {
         dbProductsMap[doc.id] = { ...doc.data(), id: doc.id };
     });
 
     let calculatedGrossTotal = 0;
-    const mpItemsList = []; 
+    const mpItemsList = []; // Lista para enviar ao Mercado Pago (Qualidade)
 
+    // Loop item a item do carrinho
     for (const cartItem of bookingDetails.cartItems) {
+        // Ignora itens zerados
         if (Number(cartItem.quantity) <= 0) continue;
 
+        // Verifica se o produto existe no banco (Segurança)
         const realProduct = dbProductsMap[cartItem.id];
         
-        // 🕵️ LOG ESPECÍFICO DE ITEM
         if (!realProduct) {
-             console.error(`❌ PRODUTO NÃO ENCONTRADO NO BANCO! ID Buscado: ${cartItem.id}`);
-             console.log("📋 IDs disponíveis no banco:", Object.keys(dbProductsMap));
-             // Comentei o erro para você ver no log se é isso, mas em produção deve ter o throw
-             throw new Error(`Produto indisponível ou ID inválido: ${cartItem.title} (${cartItem.id})`);
+             console.error(`❌ Tentativa de compra de item inexistente: ${cartItem.id}`);
+             // Em produção, isso deve bloquear a compra.
+             throw new Error(`Produto indisponível ou alterado: ${cartItem.title}`);
         }
 
+        // 💰 PEGA O PREÇO REAL DO BANCO (Ignora o do frontend)
         const unitPrice = Number(realProduct.price || 0); 
         const quantity = Number(cartItem.quantity);
 
-        console.log(`✅ Item Validado: ${realProduct.name || cartItem.title} | Qtd: ${quantity} | Preço Unit: ${unitPrice}`);
-
+        // Soma ao total
         calculatedGrossTotal += (unitPrice * quantity);
 
+        // Adiciona à lista do Mercado Pago
         mpItemsList.push({
             id: cartItem.id,
-            title: realProduct.name || realProduct.title || cartItem.title,
-            description: realProduct.description || `Tipo: ${cartItem.type}`,
+            title: realProduct.name || realProduct.title || cartItem.title, 
+            description: `Tipo: ${realProduct.type || 'Ingresso'}`,
             picture_url: realProduct.images?.[0] || item.images?.[0] || null,
             category_id: "tickets",
             quantity: quantity,
@@ -121,107 +131,29 @@ export default async function handler(req, res) {
         });
     }
 
-    // ... (O RESTO DO CÓDIGO PERMANECE IGUAL: Cupons, Comissão, Envio MP, etc) ...
-    // Vou resumir aqui para não ficar gigante, mas você deve manter o código
-    // de cálculo de comissão e envio para o Mercado Pago que já estava lá.
-    
-    // --- INSIRA AQUI O RESTANTE DO CÓDIGO (Cupons, Comissão, MP Payment.create) ---
-    // Se precisar que eu reenvie o final, me avise, mas é idêntico ao anterior.
-    
-    // Apenas para fechar o exemplo, vou colocar o bloco final simplificado:
-    
-    let transactionAmount = Number(calculatedGrossTotal.toFixed(2));
-    if (bookingDetails.couponCode && item.coupons) {
-        // Lógica de cupom...
-        const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
-        if (coupon) transactionAmount -= (calculatedGrossTotal * coupon.percentage / 100);
-    }
-    transactionAmount = Number(transactionAmount.toFixed(2));
-    
-    // ... Cálculo de Comissão ...
-    const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
-    const payment = new Payment(client);
-    
-    // Configuração do Payload MP (usando mpItemsList)
-    const paymentBody = {
-        transaction_amount: transactionAmount,
-        description: `Reserva: ${item.name}`,
-        payment_method_id,
-        // ... application_fee, etc ...
-        payer: {
-            email: payer.email,
-            first_name: payer.first_name,
-            last_name: payer.last_name,
-            identification: payer.identification
-        },
-        additional_info: {
-            items: mpItemsList,
-            ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress
-        }
-    };
+    console.log(`💰 Total Calculado (Bruto): R$ ${calculatedGrossTotal}`);
 
-    if (!payment_method_id.includes('pix')) {
-        paymentBody.token = token;
-        paymentBody.installments = Number(installments);
-        if (issuer_id) paymentBody.issuer_id = Number(issuer_id);
-    }
-
-    console.log(`🚀 Enviando para MP: R$ ${transactionAmount}`);
-    const result = await payment.create({ body: paymentBody });
-
-    // Atualiza Reserva
-    if (reservationId) {
-        await db.collection('reservations').doc(reservationId).update({
-            paymentId: result.id.toString(),
-            paymentMethod: payment_method_id,
-            status: result.status === 'approved' ? 'confirmed' : 'pending',
-            mpStatus: result.status,
-            updatedAt: new Date()
-        });
-    }
-    
-    return res.status(200).json({
-      id: result.id.toString(),
-      status: result.status,
-      point_of_interaction: result.point_of_interaction,
-      charged_amount: transactionAmount
-    });
-
-  } catch (error) {
-    console.error("❌ Erro Backend:", error);
-    return res.status(500).json({ 
-        error: 'Erro interno', 
-        message: error.message,
-        details: error.cause 
-    });
-  }
-}
-
-    // 3. Aplica Cupons (Se houver lógica de cupom no 'item' principal ou global)
+    // D) Aplica Cupons (Lógica original mantida)
     let transactionAmount = calculatedGrossTotal;
     if (bookingDetails.couponCode && item.coupons) {
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
         if (coupon) {
             const discountAmount = (calculatedGrossTotal * coupon.percentage / 100);
             transactionAmount -= discountAmount;
-            
-            // Adiciona item negativo para representar desconto no MP (Opcional, mas elegante)
-            // mpItemsList.push({ id: 'coupon', title: 'Desconto', quantity: 1, unit_price: -discountAmount });
+            console.log(`🎟️ Cupom aplicado: -R$ ${discountAmount}`);
         }
     }
     
-    // Arredondamento final de segurança
+    // Arredondamento final
     transactionAmount = Number(transactionAmount.toFixed(2));
 
-    // Validação final de valor (Evita cobrar R$ 0,00 se não for intencional)
-    if (transactionAmount <= 0) {
-        throw new Error("Valor total da transação inválido (Zero ou negativo).");
-    }
+    if (transactionAmount <= 0) throw new Error("Valor total inválido (Zero ou negativo).");
 
     // ==================================================================
-    // CÁLCULO DE COMISSÃO (Mantido a lógica original)
+    // 4. CÁLCULO DE COMISSÃO E SPLIT
     // ==================================================================
     let refDate = new Date();
+    // Tenta pegar data de ativação ou criação para definir taxa
     if (item.firstActivationDate) {
          const d = item.firstActivationDate.toDate ? item.firstActivationDate.toDate() : new Date(item.firstActivationDate);
          if (!isNaN(d)) refDate = d;
@@ -231,20 +163,20 @@ export default async function handler(req, res) {
     }
     
     const diffDays = Math.ceil(Math.abs(new Date() - refDate) / (1000 * 60 * 60 * 24)); 
+    // Regra: < 30 dias = 10%, > 30 dias = 12%
     const PLATFORM_RATE = diffDays <= 30 ? 0.10 : 0.12;
 
     const isPix = payment_method_id === 'pix';
+    // Custo estimado do MP (para descontar da sua comissão, não do parceiro)
     const mpFeeCost = transactionAmount * (isPix ? 0.0099 : 0.0398);
-    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE; // Comissão sobre o Bruto sem desconto? Ou com? (Geralmente é com desconto)
-    // Se quiser comissão sobre o valor REAL cobrado (com desconto):
-    // const platformGrossRevenue = transactionAmount * PLATFORM_RATE; 
+    const platformGrossRevenue = calculatedGrossTotal * PLATFORM_RATE; 
 
     let commission = platformGrossRevenue - mpFeeCost;
     if (commission < 0) commission = 0;
     commission = Math.round(commission * 100) / 100;
 
     // ==================================================================
-    // PROCESSAMENTO MP (Atualizado para incluir os itens)
+    // 5. PROCESSAMENTO MERCADO PAGO
     // ==================================================================
     const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
     const payment = new Payment(client);
@@ -252,6 +184,7 @@ export default async function handler(req, res) {
     const rawBaseUrl = process.env.VITE_BASE_URL || 'https://mapadodayuse.com';
     const baseUrl = rawBaseUrl.replace(/\/$/, ""); 
 
+    // Limpeza do nome para a fatura do cartão
     const cleanName = item.name
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
         .replace(/[^a-zA-Z0-9]/g, "") 
@@ -260,16 +193,17 @@ export default async function handler(req, res) {
     let descriptor = `DAYUSE*${cleanName}`; 
     if (descriptor.length > 22) descriptor = descriptor.substring(0, 22);
 
+    // Montagem do Payload Final
     const paymentBody = {
       transaction_amount: transactionAmount,
-      description: `Reserva: ${item.name}`, // Descrição geral
+      description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: commission,
+      application_fee: commission, // Sua comissão
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       statement_descriptor: descriptor,
       
       external_reference: reservationId,
-      binary_mode: true,
+      binary_mode: true, // Aprovação instantânea ou recusa (sem 'em análise')
       
       payer: {
         email: payer.email,
@@ -278,24 +212,30 @@ export default async function handler(req, res) {
         identification: payer.identification
       },
 
-      // 🔥 AQUI ENTRA A LISTA DETALHADA DE PRODUTOS
+      // 🔥 LISTA DE ITENS PARA ANTIFRAUDE
       additional_info: {
-          items: mpItemsList, // Usamos a lista que geramos no loop acima
+          items: mpItemsList,
           ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress
       }
     };
 
+    // Adiciona dados específicos se não for Pix
     if (!isPix) {
       paymentBody.token = token;
       paymentBody.installments = Number(installments);
       if (issuer_id) paymentBody.issuer_id = Number(issuer_id);
     }
 
-    console.log(`🚀 Enviando para MP: R$ ${transactionAmount} (${mpItemsList.length} itens)`);
+    console.log(`🚀 Enviando para MP...`);
 
+    // CHAMA O MERCADO PAGO
     const result = await payment.create({ body: paymentBody });
 
-    // Atualização do status da reserva
+    // ==================================================================
+    // 6. ATUALIZAÇÃO E RESPOSTA
+    // ==================================================================
+    
+    // Atualiza a reserva no banco com o resultado
     if (reservationId) {
         await db.collection('reservations').doc(reservationId).update({
             paymentId: result.id.toString(),
@@ -303,10 +243,10 @@ export default async function handler(req, res) {
             status: result.status === 'approved' ? 'confirmed' : 'pending',
             mpStatus: result.status,
             updatedAt: new Date(),
-            // Salva o snapshot dos preços usados na hora da compra para histórico
             financialSnapshot: {
                 totalPaid: transactionAmount,
                 commission: commission,
+                platformRate: PLATFORM_RATE,
                 items: mpItemsList
             }
         });
@@ -314,24 +254,31 @@ export default async function handler(req, res) {
 
     const statusValidos = ['approved', 'in_process', 'pending'];
     if (!statusValidos.includes(result.status)) {
+        console.warn(`⚠️ Pagamento recusado: ${result.status_detail}`);
         return res.status(402).json({ 
             error: 'Pagamento recusado', 
-            message: result.status_detail || 'Recusado pelo banco.' 
+            message: result.status_detail || 'Transação não autorizada pelo banco.' 
         });
     }
+
+    console.log(`✅ Sucesso! ID: ${result.id}`);
 
     return res.status(200).json({
       id: result.id.toString(),
       status: result.status,
-      point_of_interaction: result.point_of_interaction,
+      point_of_interaction: result.point_of_interaction, // QR Code do Pix vem aqui
       charged_amount: transactionAmount
     });
 
   } catch (error) {
-    console.error("❌ Erro Backend:", error);
+    console.error("❌ Erro Crítico Backend:", error);
+    
+    // Tenta extrair mensagem útil do erro do Mercado Pago
+    const mpErrorMsg = error.cause?.[0]?.description || error.message;
+
     return res.status(500).json({ 
-        error: 'Erro interno', 
-        message: error.message,
+        error: 'Erro interno de processamento', 
+        message: mpErrorMsg,
         details: error.cause 
     });
   }
