@@ -18,7 +18,22 @@ const PaymentSection = ({
   addressProps
 }) => {
 
-  // GARANTIA DE PRIORIDADE: Força o método inicial como PIX ao montar
+  useEffect(() => {
+    console.log("🛠️ DEBUG CHECKOUT:");
+    console.log("- Método atual:", paymentMethod);
+    console.log("- MP Instance carregada:", !!mpInstance);
+    
+    const cardContainer = document.getElementById('cardNumber-container');
+    if (cardContainer) {
+        console.log("- Container do cartão existe no DOM");
+        const hasIframe = cardContainer.querySelector('iframe');
+        console.log("- Iframe do MP injetado:", !!hasIframe);
+    } else {
+        console.warn("- Container 'cardNumber-container' NÃO encontrado no DOM");
+    }
+}, [paymentMethod, mpInstance]);
+  
+    // GARANTIA DE PRIORIDADE: Força o método inicial como PIX ao montar
   useEffect(() => {
     // Se o método vier vazio ou diferente de pix no carregamento inicial, força 'pix'
     if (paymentMethod !== 'pix') {
@@ -75,6 +90,21 @@ const PaymentSection = ({
                     </div>
                 </div>
             </div>
+
+            {/* --- CONTAINER DE SEGURANÇA PARA CAMPOS DO CARTÃO --- */}
+                <div 
+                    style={{
+                        position: paymentMethod === 'card' ? 'relative' : 'absolute',
+                        left: paymentMethod === 'card' ? '0' : '-9999px',
+                        opacity: paymentMethod === 'card' ? '1' : '0',
+                        pointerEvents: paymentMethod === 'card' ? 'auto' : 'none',
+                        visibility: paymentMethod === 'card' ? 'visible' : 'hidden',
+                        height: paymentMethod === 'card' ? 'auto' : '0',
+                        overflow: 'hidden',
+                        transition: 'opacity 0.3s ease'
+                    }}
+                    className="space-y-5"
+                ></div>
 
             {/* --- CONTEÚDO CARTÃO DE CRÉDITO --- */}
             <div className={paymentMethod === 'card' ? 'block animate-fade-in space-y-5' : 'hidden'}>
