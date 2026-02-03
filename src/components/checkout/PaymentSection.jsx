@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react'; // Importação corrigida para evitar tela branca
 import { Lock, CreditCard, QrCode, ChevronDown, Info } from 'lucide-react';
 import Button from './../Button';
 import { formatBRL } from '../../utils/format';
@@ -18,12 +18,20 @@ const PaymentSection = ({
   addressProps
 }) => {
 
-  // ESTADO DE CONTROLE DE MONTAGEM DO CARTÃO
+  // Controle de estado do formulário
   const [isCardFormReady, setIsCardFormReady] = useState(false);
 
-  // GARANTIA DE PRIORIDADE: Força o método inicial como PIX ao montar
+  // Fallback de segurança: Se o MP carregar mas o callback falhar, libera o botão em 3s
   useEffect(() => {
-    if (paymentMethod !== 'pix') {
+    if (paymentMethod === 'card' && mpInstance && !isCardFormReady) {
+       const safetyTimer = setTimeout(() => setIsCardFormReady(true), 3000);
+       return () => clearTimeout(safetyTimer);
+    }
+  }, [paymentMethod, mpInstance, isCardFormReady]);
+
+  // Garante Pix como padrão se nada estiver selecionado
+  useEffect(() => {
+    if (!paymentMethod) {
       changeMethod('pix');
     }
   }, []); 
@@ -53,13 +61,15 @@ const PaymentSection = ({
             </button>
         </div>
 
-        {/* ÁREA DE PAGAMENTO */}
-        <div className="relative min-h-[400px]">
+        {/* ÁREA DE CONTEÚDO */}
+        {/* Removi o min-h-[400px] que causava o espaço branco */}
+        <div className="relative">
             
             {/* --- CONTEÚDO PIX --- */}
+            {/* Só renderiza se for Pix para não ocupar espaço oculto */}
             {paymentMethod === 'pix' && (
-                <div className="animate-fade-in block">
-                    <div className="text-center py-4">
+                <div className="animate-fade-in block pb-4">
+                    <div className="text-center">
                         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-6 text-left flex items-start gap-3">
                             <Info size={20} className="text-blue-600 mt-0.5 shrink-0"/>
                             <div>
@@ -82,18 +92,15 @@ const PaymentSection = ({
             )}
 
             {/* --- CONTEÚDO CARTÃO DE CRÉDITO --- */}
-            {/* Usamos visibility e opacity para manter o form no DOM */}
+            {/* Truque do CSS: Mantém no DOM (absolute/opacity 0) para não perder a referência do MP, mas não ocupa espaço visual */}
             <div 
-                className={`transition-all duration-500 w-full ${paymentMethod === 'card' ? 'opacity-100 visible relative' : 'opacity-0 invisible absolute top-0 left-0 pointer-events-none'}`}
+                className={`transition-all duration-300 w-full ${paymentMethod === 'card' ? 'opacity-100 visible relative' : 'opacity-0 invisible absolute top-0 left-0 pointer-events-none h-0 overflow-hidden'}`}
             >
                 {mpInstance ? (
                     <div className="space-y-5">
                         <CreditCardForm 
                             mp={mpInstance} 
-                            onReady={() => {
-                                console.log("Formulário de Cartão Montado!");
-                                setIsCardFormReady(true);
-                            }}
+                            onReady={() => setIsCardFormReady(true)}
                             onCardDataChange={(data) => {
                                 if (data.bin && mpInstance) {
                                     mpInstance.getPaymentMethods({ bin: data.bin }).then(({ results }) => {
@@ -148,7 +155,7 @@ const PaymentSection = ({
                 ) : (
                     <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl min-h-[200px]">
                         <div className="w-8 h-8 border-4 border-[#0097A8] border-t-transparent rounded-full animate-spin mb-4"/>
-                        <p className="text-sm text-slate-500 font-medium">Carregando módulos de pagamento...</p>
+                        <p className="text-sm text-slate-500 font-medium">Carregando segurança...</p>
                     </div>
                 )}
             </div>
@@ -175,7 +182,12 @@ const PaymentSection = ({
             <Button 
                 className="w-full py-4 text-lg shadow-lg shadow-[#0097A8]/20 hover:shadow-[#0097A8]/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
                 onClick={processPayment} 
-                disabled={processing || !user || (paymentMethod === 'card' && !isCardFormReady)}
+                disabled={
+                    processing || 
+                    !user || 
+                    (paymentMethod === 'card' && !mpInstance) || // Se não tem MP, bloqueia
+                    (paymentMethod === 'card' && mpInstance && !isCardFormReady) // Se tem MP, espera o form
+                }
             >
                 {processing ? (
                     <span className="flex items-center gap-2 justify-center">
