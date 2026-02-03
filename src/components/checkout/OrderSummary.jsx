@@ -27,12 +27,6 @@ const OrderSummary = ({
             {hasCart ? (
                 <div className="space-y-4">
                     {bookingData.cartItems.map((prod, idx) => {
-                        
-                        // --- DEBUG ---
-                        // Abra o console (F12) para ver esses valores
-                        console.log(`🛒 [OrderSummary] Renderizando: ${prod.title}`);
-                        console.log(`   stockSnapshot recebido:`, prod.stockSnapshot);
-                        // -------------
 
                         const remaining = prod.stockSnapshot;
                         const label = prod.isPhysical ? 'unidades' : 'vagas';

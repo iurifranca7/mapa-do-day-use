@@ -217,88 +217,180 @@ const CheckoutPage = () => {
 
   // Processar Pagamento
   const processPayment = async () => {
-       if (!user) { 
-           window.scrollTo({ top: 0, behavior: 'smooth' });
-           setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se." });
-           return; 
-       }
-       const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-       if ((paymentMethod === 'card' || paymentMethod === 'pix') && cleanDoc.length < 11) { alert("CPF inválido."); return; }
+    // 1. Verificação de Identificação
+    if (!user) { 
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se." });
+        return; 
+    }
 
-       setProcessing(true);
-       const email = user.email || "cliente@mapadodayuse.com";
-       const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
-       const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
-       let reservationIdRef = null;
+    const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
+    if ((paymentMethod === 'card' || paymentMethod === 'pix') && cleanDoc.length < 11) { 
+        alert("CPF inválido."); 
+        return; 
+    }
 
-       try {
-           const addressObj = { zipCode: cep, street: addressStreet, number: addressNumber, neighborhood: addressNeighborhood, city: addressCity, state: addressState };
-           const rawRes = {
-               ...bookingData, 
-               total: Number(finalTotal.toFixed(2)), discount, couponCode: couponCode || null, paymentMethod,
-               status: 'waiting_payment', userId: user.uid, ownerId: itemData.ownerId, createdAt: new Date(), 
-               guestName: firstName, guestEmail: email, mpStatus: 'pending', parentTicketId: bookingData.parentTicketId || null,
-               billingAddress: paymentMethod === 'card' ? addressObj : null, payerDoc: cleanDoc
-           };
+    // 2. Verificação de Segurança para Cartão (Prevenção de erro de Instância)
+    if (paymentMethod === 'card') {
+        if (!window.mpInstance) {
+            setErrorData({ 
+                title: "Sistema Carregando", 
+                msg: "Os módulos de segurança do cartão ainda estão sendo inicializados. Aguarde 2 segundos e tente novamente." 
+            });
+            return;
+        }
+    }
 
-           if (paymentMethod === 'card' && saveUserData && user) {
-               const userRef = doc(db, "users", user.uid);
-               await setDoc(userRef, { personalData: { cpf: cleanDoc, address: addressObj } }, { merge: true });
-           }
+    setProcessing(true);
+    const email = user.email || "cliente@mapadodayuse.com";
+    const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
+    const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+    let reservationIdRef = null;
 
-           const docRef = await addDoc(collection(db, "reservations"), rawRes);
-           reservationIdRef = docRef.id; setCurrentReservationId(reservationIdRef); 
-           const safeId = itemData.id || itemData.dayuseId;
-           
-           const paymentPayload = {
-               token: null, transaction_amount: Number(finalTotal.toFixed(2)),
-               payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
-               issuer_id: issuerId ? Number(issuerId) : null, installments: Number(installments),
-               payer: { 
-                   email, first_name: firstName, last_name: lastName, identification: { type: 'CPF', number: cleanDoc },
-                   ...(paymentMethod === 'card' && { address: { zip_code: cep.replace(/\D/g, ''), street_name: addressStreet, street_number: Number(addressNumber) || 0, neighborhood: addressNeighborhood || 'Centro', city: addressCity, federal_unit: addressState } })
-               },
-               bookingDetails: { 
-                   dayuseId: safeId, item: { id: safeId, name: itemData.name }, date: bookingData.date, 
-                   total: finalTotal, adults: bookingData.adults, children: bookingData.children, pets: bookingData.pets, 
-                   selectedSpecial: bookingData.selectedSpecial, couponCode 
-               },
-               reservationId: reservationIdRef 
-           };
+    try {
+        const addressObj = { 
+            zipCode: cep, 
+            street: addressStreet, 
+            number: addressNumber, 
+            neighborhood: addressNeighborhood, 
+            city: addressCity, 
+            state: addressState 
+        };
 
-           if (paymentMethod === 'card') {
-               if (!window.mpInstance) throw new Error("Sistema carregando...");
-               const tokenObj = await window.mpInstance.fields.createCardToken({ cardholderName: cardName, identificationType: 'CPF', identificationNumber: cleanDoc });
-               paymentPayload.token = tokenObj.id; 
-           }
+        const rawRes = {
+            ...bookingData, 
+            total: Number(finalTotal.toFixed(2)), 
+            discount, 
+            couponCode: couponCode || null, 
+            paymentMethod,
+            status: 'waiting_payment', 
+            userId: user.uid, 
+            ownerId: itemData.ownerId, 
+            createdAt: new Date(), 
+            guestName: firstName, 
+            guestEmail: email, 
+            mpStatus: 'pending', 
+            parentTicketId: bookingData.parentTicketId || null,
+            billingAddress: paymentMethod === 'card' ? addressObj : null, 
+            payerDoc: cleanDoc
+        };
 
-           const response = await fetch("/api/process-payment", { method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(paymentPayload) });
-           const result = await response.json();
+        // Salvar dados do usuário se solicitado
+        if (paymentMethod === 'card' && saveUserData && user) {
+            const userRef = doc(db, "users", user.uid);
+            await setDoc(userRef, { personalData: { cpf: cleanDoc, address: addressObj } }, { merge: true });
+        }
 
-           if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
-               const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
-               await updateDoc(doc(db, "reservations", reservationIdRef), { status });
-               if (status === 'cancelled_sold_out') setIsSoldOut(true);
-               else setErrorData({ title: "Pagamento recusado", msg: result.message || "Verifique os dados." });
-               setProcessing(false); return; 
-           }
+        // Criar reserva no Firestore
+        const docRef = await addDoc(collection(db, "reservations"), rawRes);
+        reservationIdRef = docRef.id; 
+        setCurrentReservationId(reservationIdRef); 
+        const safeId = itemData.id || itemData.dayuseId;
+        
+        // Preparar Payload do Pagamento
+        const paymentPayload = {
+            token: null, 
+            transaction_amount: Number(finalTotal.toFixed(2)),
+            payment_method_id: paymentMethod === 'pix' ? 'pix' : (mpPaymentMethodId || 'credit_card'),
+            issuer_id: issuerId ? Number(issuerId) : null, 
+            installments: Number(installments),
+            payer: { 
+                email, 
+                first_name: firstName, 
+                last_name: lastName, 
+                identification: { type: 'CPF', number: cleanDoc },
+                ...(paymentMethod === 'card' && { 
+                    address: { 
+                        zip_code: cep.replace(/\D/g, ''), 
+                        street_name: addressStreet, 
+                        street_number: Number(addressNumber) || 0, 
+                        neighborhood: addressNeighborhood || 'Centro', 
+                        city: addressCity, 
+                        federal_unit: addressState 
+                    } 
+                })
+            },
+            bookingDetails: { 
+                dayuseId: safeId, 
+                item: { id: safeId, name: itemData.name }, 
+                date: bookingData.date, 
+                total: finalTotal, 
+                adults: bookingData.adults, 
+                children: bookingData.children, 
+                pets: bookingData.pets, 
+                selectedSpecial: bookingData.selectedSpecial, 
+                couponCode 
+            },
+            reservationId: reservationIdRef 
+        };
 
-           if (paymentMethod === 'pix' && result.point_of_interaction) {
-               setPixData(result.point_of_interaction.transaction_data); setShowPixModal(true); setProcessing(false);
-           } else if (result.status === 'approved' || result.status === 'confirmed') {
-               setProcessing(false); setShowSuccess(true); 
-               const finalData = { ...rawRes, paymentId: result.id, status: result.status };
-               notifyCustomer(finalData, reservationIdRef).catch(console.error);
-               notifyPartner(finalData, result.id).catch(console.error);
-           } else {
-               setProcessing(false); alert("Pagamento em análise."); navigate('/minhas-viagens');
-          }
-       } catch (err) {
-           console.error("Erro Checkout:", err);
-           setErrorData({ title: "Erro de Comunicação", msg: "Tente novamente." });
-           setProcessing(false);
-       }
-   };
+        // Geração do Token do Cartão (Ajustado para evitar erro "No primary field found")
+        if (paymentMethod === 'card') {
+            try {
+                const tokenObj = await window.mpInstance.fields.createCardToken({ 
+                    cardholderName: cardName, 
+                    identificationType: 'CPF', 
+                    identificationNumber: cleanDoc 
+                });
+                
+                if (!tokenObj || !tokenObj.id) {
+                    throw new Error("Não foi possível validar os dados do cartão.");
+                }
+                paymentPayload.token = tokenObj.id; 
+            } catch (tokenErr) {
+                console.error("Erro ao gerar token:", tokenErr);
+                await deleteDoc(doc(db, "reservations", reservationIdRef)); // Limpa reserva órfã
+                setErrorData({ title: "Dados do Cartão", msg: "Verifique os números do cartão e tente novamente." });
+                setProcessing(false);
+                return;
+            }
+        }
+
+        // Enviar para o Backend
+        const response = await fetch("/api/process-payment", { 
+            method: "POST", 
+            headers: { "Content-Type":"application/json" }, 
+            body: JSON.stringify(paymentPayload) 
+        });
+        
+        const result = await response.json();
+
+        // Lógica de Resposta do Pagamento
+        if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
+            const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
+            await updateDoc(doc(db, "reservations", reservationIdRef), { status });
+            
+            if (status === 'cancelled_sold_out') {
+                setIsSoldOut(true);
+            } else {
+                setErrorData({ title: "Pagamento recusado", msg: result.message || "Verifique os dados do cartão ou saldo disponível." });
+            }
+            setProcessing(false); 
+            return; 
+        }
+
+        if (paymentMethod === 'pix' && result.point_of_interaction) {
+            setPixData(result.point_of_interaction.transaction_data); 
+            setShowPixModal(true); 
+            setProcessing(false);
+        } else if (result.status === 'approved' || result.status === 'confirmed') {
+            setProcessing(false); 
+            setShowSuccess(true); 
+            const finalData = { ...rawRes, paymentId: result.id, status: result.status };
+            notifyCustomer(finalData, reservationIdRef).catch(console.error);
+            notifyPartner(finalData, result.id).catch(console.error);
+        } else {
+            setProcessing(false); 
+            alert("Pagamento em análise pelo Mercado Pago."); 
+            navigate('/minhas-viagens');
+        }
+
+    } catch (err) {
+        console.error("Erro Geral Checkout:", err);
+        setErrorData({ title: "Erro de Comunicação", msg: "Ocorreu uma falha ao processar. Por favor, tente novamente." });
+        setProcessing(false);
+    }
+};
 
   const handleSoldOutReturn = () => { navigate(-1); };
   const handlePixSuccess = async () => {
