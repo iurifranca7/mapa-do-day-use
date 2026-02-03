@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { loadMercadoPago } from "@mercadopago/sdk-js";
-import { collection, addDoc, updateDoc, deleteDoc, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, updateDoc, onSnapshot, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../../firebase';
 import { useSEO } from '../../hooks/useSEO';
