@@ -230,14 +230,36 @@ const CheckoutPage = () => {
 
     // 2. Verificação de Segurança para Cartão (Prevenção de erro de Instância)
     if (paymentMethod === 'card') {
-        if (!window.mpInstance) {
-            setErrorData({ 
-                title: "Sistema Carregando", 
-                msg: "Os módulos de segurança do cartão ainda estão sendo inicializados. Aguarde 2 segundos e tente novamente." 
-            });
-            return;
+            try {
+                // CORREÇÃO: Usar mpInstance (state) em vez de window.mpInstance
+                if (!mpInstance) throw new Error("Sistema de pagamento não inicializado.");
+                
+                // createCardToken deve ser chamado na MESMA instância que criou os campos
+                const tokenObj = await mpInstance.fields.createCardToken({ 
+                    cardholderName: cardName, 
+                    identificationType: 'CPF', 
+                    identificationNumber: cleanDoc 
+                });
+                
+                if (!tokenObj || !tokenObj.id) {
+                    throw new Error("Não foi possível validar os dados do cartão.");
+                }
+                paymentPayload.token = tokenObj.id; 
+            } catch (tokenErr) {
+                console.error("Erro ao gerar token:", tokenErr);
+                // Se o erro for de conexão, não apaga a reserva, só avisa
+                await deleteDoc(doc(db, "reservations", reservationIdRef)); 
+                
+                // Mensagem amigável dependendo do erro
+                const msgErro = tokenErr.message?.includes("No primary field") 
+                    ? "Erro de conexão segura. Atualize a página e tente novamente."
+                    : "Verifique os dados do cartão (Número, Validade e CVV).";
+
+                setErrorData({ title: "Dados do Cartão", msg: msgErro });
+                setProcessing(false);
+                return;
+            }
         }
-    }
 
     setProcessing(true);
     const email = user.email || "cliente@mapadodayuse.com";
