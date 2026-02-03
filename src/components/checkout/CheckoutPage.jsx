@@ -284,6 +284,13 @@ const CheckoutPage = () => {
         reservationIdRef = docRef.id; 
         setCurrentReservationId(reservationIdRef); 
         const safeId = itemData.id || itemData.dayuseId;
+
+        console.log("🔍 DEBUG CHECKOUT DATA:", {
+            bookingData: bookingData,
+            cartItems: bookingData?.cartItems,
+            adults: bookingData?.adults,
+            children: bookingData?.children
+        });
         
         // --- AQUI ESTAVA O ERRO: DEFINIÇÃO DO PAYLOAD DEVE VIR ANTES DO TOKEN ---
         const paymentPayload = {
@@ -317,7 +324,8 @@ const CheckoutPage = () => {
                 children: bookingData.children, 
                 pets: bookingData.pets, 
                 selectedSpecial: bookingData.selectedSpecial, 
-                couponCode 
+                couponCode,
+                cartItems: bookingData.cartItems || [] 
             },
             reservationId: reservationIdRef 
         };
