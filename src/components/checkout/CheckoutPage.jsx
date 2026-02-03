@@ -214,8 +214,8 @@ const CheckoutPage = () => {
   };
 
   // Processar Pagamento
-  const processPayment = async () => {
-    // 1. Verificação de Identificação
+ const processPayment = async () => {
+    // 1. Verificações Iniciais
     if (!user) { 
         window.scrollTo({ top: 0, behavior: 'smooth' });
         setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se." });
@@ -228,38 +228,16 @@ const CheckoutPage = () => {
         return; 
     }
 
-    // 2. Verificação de Segurança para Cartão (Prevenção de erro de Instância)
+    // 2. Verificação de Segurança do Cartão
     if (paymentMethod === 'card') {
-            try {
-                // CORREÇÃO: Usar mpInstance (state) em vez de window.mpInstance
-                if (!mpInstance) throw new Error("Sistema de pagamento não inicializado.");
-                
-                // createCardToken deve ser chamado na MESMA instância que criou os campos
-                const tokenObj = await mpInstance.fields.createCardToken({ 
-                    cardholderName: cardName, 
-                    identificationType: 'CPF', 
-                    identificationNumber: cleanDoc 
-                });
-                
-                if (!tokenObj || !tokenObj.id) {
-                    throw new Error("Não foi possível validar os dados do cartão.");
-                }
-                paymentPayload.token = tokenObj.id; 
-            } catch (tokenErr) {
-                console.error("Erro ao gerar token:", tokenErr);
-                // Se o erro for de conexão, não apaga a reserva, só avisa
-                await deleteDoc(doc(db, "reservations", reservationIdRef)); 
-                
-                // Mensagem amigável dependendo do erro
-                const msgErro = tokenErr.message?.includes("No primary field") 
-                    ? "Erro de conexão segura. Atualize a página e tente novamente."
-                    : "Verifique os dados do cartão (Número, Validade e CVV).";
-
-                setErrorData({ title: "Dados do Cartão", msg: msgErro });
-                setProcessing(false);
-                return;
-            }
+        if (!mpInstance) {
+            setErrorData({ 
+                title: "Sistema Carregando", 
+                msg: "Aguarde o carregamento completo do sistema de segurança (aprox. 3 segundos)." 
+            });
+            return;
         }
+    }
 
     setProcessing(true);
     const email = user.email || "cliente@mapadodayuse.com";
@@ -295,7 +273,7 @@ const CheckoutPage = () => {
             payerDoc: cleanDoc
         };
 
-        // Salvar dados do usuário se solicitado
+        // Salvar dados do usuário
         if (paymentMethod === 'card' && saveUserData && user) {
             const userRef = doc(db, "users", user.uid);
             await setDoc(userRef, { personalData: { cpf: cleanDoc, address: addressObj } }, { merge: true });
@@ -307,7 +285,7 @@ const CheckoutPage = () => {
         setCurrentReservationId(reservationIdRef); 
         const safeId = itemData.id || itemData.dayuseId;
         
-        // Preparar Payload do Pagamento
+        // --- AQUI ESTAVA O ERRO: DEFINIÇÃO DO PAYLOAD DEVE VIR ANTES DO TOKEN ---
         const paymentPayload = {
             token: null, 
             transaction_amount: Number(finalTotal.toFixed(2)),
@@ -344,29 +322,40 @@ const CheckoutPage = () => {
             reservationId: reservationIdRef 
         };
 
-        // Geração do Token do Cartão (Ajustado para evitar erro "No primary field found")
+        // 3. Geração do Token (Só acontece AGORA, que o paymentPayload já existe)
         if (paymentMethod === 'card') {
             try {
-                const tokenObj = await window.mpInstance.fields.createCardToken({ 
+                if (!mpInstance) throw new Error("Sistema de pagamento não inicializado.");
+                
+                const tokenObj = await mpInstance.fields.createCardToken({ 
                     cardholderName: cardName, 
                     identificationType: 'CPF', 
                     identificationNumber: cleanDoc 
                 });
                 
                 if (!tokenObj || !tokenObj.id) {
-                    throw new Error("Não foi possível validar os dados do cartão.");
+                    throw new Error("Dados do cartão inválidos.");
                 }
+                
+                // Agora sim podemos salvar o token no payload
                 paymentPayload.token = tokenObj.id; 
+            
             } catch (tokenErr) {
-                console.error("Erro ao gerar token:", tokenErr);
-                await deleteDoc(doc(db, "reservations", reservationIdRef)); // Limpa reserva órfã
-                setErrorData({ title: "Dados do Cartão", msg: "Verifique os números do cartão e tente novamente." });
+                console.error("Erro token:", tokenErr);
+                // Apaga a reserva pois falhou antes de enviar ao backend
+                await deleteDoc(doc(db, "reservations", reservationIdRef));
+                
+                const msg = tokenErr.message?.includes("primary field") 
+                    ? "Erro de conexão. Recarregue a página." 
+                    : "Verifique o número, validade e CVV do cartão.";
+                
+                setErrorData({ title: "Erro no Cartão", msg });
                 setProcessing(false);
                 return;
             }
         }
 
-        // Enviar para o Backend
+        // 4. Enviar para o Backend
         const response = await fetch("/api/process-payment", { 
             method: "POST", 
             headers: { "Content-Type":"application/json" }, 
@@ -375,7 +364,7 @@ const CheckoutPage = () => {
         
         const result = await response.json();
 
-        // Lógica de Resposta do Pagamento
+        // 5. Tratamento da Resposta
         if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
             const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
             await updateDoc(doc(db, "reservations", reservationIdRef), { status });
@@ -383,7 +372,7 @@ const CheckoutPage = () => {
             if (status === 'cancelled_sold_out') {
                 setIsSoldOut(true);
             } else {
-                setErrorData({ title: "Pagamento recusado", msg: result.message || "Verifique os dados do cartão ou saldo disponível." });
+                setErrorData({ title: "Pagamento recusado", msg: result.message || "Cartão recusado pelo banco." });
             }
             setProcessing(false); 
             return; 
@@ -401,13 +390,13 @@ const CheckoutPage = () => {
             notifyPartner(finalData, result.id).catch(console.error);
         } else {
             setProcessing(false); 
-            alert("Pagamento em análise pelo Mercado Pago."); 
+            alert("Pagamento em análise."); 
             navigate('/minhas-viagens');
         }
 
     } catch (err) {
-        console.error("Erro Geral Checkout:", err);
-        setErrorData({ title: "Erro de Comunicação", msg: "Ocorreu uma falha ao processar. Por favor, tente novamente." });
+        console.error("Erro Geral:", err);
+        setErrorData({ title: "Erro", msg: "Falha na comunicação. Tente novamente." });
         setProcessing(false);
     }
 };
