@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 // --- COLE SUA CONFIGURAÇÃO AQUI ABAIXO ---
 // (Substitua tudo entre as chaves pelo que copiou do site do Firebase)
@@ -13,11 +14,15 @@ const firebaseConfig = {
   appId: "1:506362926044:web:72ae25104b288a7fe0f519"
 };
 
-// Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
-// Exporta o Banco de Dados para usarmos no site
-const db = getFirestore(app);
 const auth = getAuth(app);
-const googleProvider = new GoogleAuthProvider();
+const db = getFirestore(app);
+const storage = getStorage(app);
 
-export { db, auth, googleProvider };
+// Provedores de Login
+const googleProvider = new GoogleAuthProvider();
+const facebookProvider = new FacebookAuthProvider();
+
+// 3. Adicione no export
+export { auth, db, storage, googleProvider, facebookProvider }; 
+export default app;

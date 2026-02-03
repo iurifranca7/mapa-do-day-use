@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
+import ModalOverlay from './ModalOverlay';
+import Button from './Button';
 import { AlertTriangle, X } from 'lucide-react';
-import Button from './Button'; 
+import { formatBRL } from '../utils/format';
 
 const RefundModal = ({ isOpen, onClose, onConfirm, reservation, loading }) => {
   if (!isOpen || !reservation) return null;

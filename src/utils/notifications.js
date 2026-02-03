@@ -1,22 +1,38 @@
-// src/utils/notifications.js
+import { formatBRL } from './format'; 
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase'; // Ajuste o caminho conforme sua estrutura
+import { db } from '../firebase'; 
 
-// Helper simples
-const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+// =============================================================================
+// ESTILOS GERAIS (REUTILIZÁVEIS)
+// =============================================================================
+const STYLES = {
+    container: 'font-family: "Segoe UI", Helvetica, Arial, sans-serif; background-color: #f1f5f9; padding: 40px 0;',
+    wrapper: 'max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);',
+    header: 'background-color: #0097A8; padding: 30px; text-align: center;',
+    headerTitle: 'color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;',
+    headerSub: 'color: #ccfbf1; margin: 5px 0 0; font-size: 13px; font-weight: 500;',
+    body: 'padding: 40px 30px;',
+    footer: 'text-align: center; font-size: 11px; color: #94a3b8; margin-top: 30px; padding-top: 20px; border-top: 1px solid #f1f5f9;',
+    label: 'font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; display: block; margin-bottom: 2px;',
+    value: 'font-size: 14px; color: #1e293b; font-weight: 600; display: block;',
+    box: 'background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px;',
+    alertBox: 'padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 13px; line-height: 1.5;',
+    btn: 'display: inline-block; background-color: #0097A8; color: white; padding: 14px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; box-shadow: 0 4px 6px -1px rgba(0, 151, 168, 0.2);'
+};
 
-// --- 1. NOTIFICAÇÃO CLIENTE (VOUCHER) ---
+// =============================================================================
+// 1. NOTIFICAÇÃO CLIENTE (VOUCHER COMPLETO)
+// =============================================================================
 export const notifyCustomer = async (reservationData, reservationId) => {
     try {
         const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
-        const mapLink = `https://www.google.com/maps/search/?api=1&query=$?q=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
-        
+        const mapLink = `http://googleusercontent.com/maps.google.com/?q=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
         const transactionId = reservationData.paymentId?.replace(/^(FRONT_|PIX-|CARD_)/, '') || reservationId;
         const purchaseDate = new Date().toLocaleString('pt-BR');
-        const paymentLabel = reservationData.paymentMethod === 'pix' ? 'Pix (À vista)' : 'Cartão de Crédito';
+        const paymentLabel = reservationData.paymentMethod === 'pix' ? 'Pix' : 'Cartão';
         
-        // Lógica de Horário
-        let openingHours = "08:00 às 18:00"; 
+        let openingHours = "08:00 - 18:00"; 
+        // Tenta pegar horário específico do dia
         if (reservationData.date && reservationData.item.weeklyPrices) {
             try {
                 const [ano, mes, dia] = reservationData.date.split('-');
@@ -26,109 +42,76 @@ export const notifyCustomer = async (reservationData, reservationId) => {
             } catch (e) {}
         }
 
-        // Regras (Comida/Bebida)
+        // Regras de Comida
         let rulesHtml = '';
-        const allowFood = reservationData.item.allowFood;
-        
-        if (allowFood !== undefined) {
-            if (allowFood === false) {
-                rulesHtml = `
-                  <div style="background-color: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: left;">
-                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                          <tr>
-                              <td width="30" valign="top" style="font-size: 20px;">🚫</td>
-                              <td>
-                                  <strong style="font-size: 14px;">Proibida a entrada de alimentos e bebidas</strong><br/>
-                                  <span style="font-size: 12px; opacity: 0.9;">Sujeito a revista de bolsas. Restaurante no local.</span>
-                              </td>
-                          </tr>
-                      </table>
-                  </div>`;
-            } else {
-                rulesHtml = `
-                  <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: left;">
-                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                          <tr>
-                              <td width="30" valign="top" style="font-size: 20px;">✅</td>
-                              <td style="font-size: 14px; font-weight: bold;">Entrada de alimentos e bebidas permitida</td>
-                          </tr>
-                      </table>
-                  </div>`;
-            }
+        if (reservationData.item.allowFood !== undefined) {
+            const isAllowed = reservationData.item.allowFood;
+            rulesHtml = `
+                <div style="${STYLES.alertBox} background-color: ${isAllowed ? '#f0fdf4' : '#fef2f2'}; border: 1px solid ${isAllowed ? '#bbf7d0' : '#fecaca'}; color: ${isAllowed ? '#166534' : '#991b1b'};">
+                    <table width="100%"><tr>
+                        <td width="24" style="font-size: 18px;">${isAllowed ? '✅' : '🚫'}</td>
+                        <td><strong>${isAllowed ? 'Pode levar comida/bebida' : 'Proibido alimentos externos'}</strong><br/><span style="font-size: 11px; opacity: 0.9;">${isAllowed ? 'Vidros proibidos.' : 'Restaurante no local.'}</span></td>
+                    </tr></table>
+                </div>`;
         }
 
         const emailHtml = `
-           <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #f3f4f6; padding: 40px 0;">
-                <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+           <div style="${STYLES.container}">
+                <div style="${STYLES.wrapper}">
                     
-                    <!-- CABEÇALHO -->
-                    <div style="background-color: #0097A8; padding: 30px; text-align: center;">
-                        <h1 style="color: white; margin: 0; font-size: 22px; letter-spacing: 1px; text-transform: uppercase;">Voucher de Acesso</h1>
-                        <p style="color: #e0f2fe; margin: 5px 0 0; font-size: 13px;">Apresente este e-mail na portaria</p>
+                    <div style="${STYLES.header}">
+                        <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 50%; margin: 0 auto 10px; line-height: 40px; font-size: 20px;">🎟️</div>
+                        <h1 style="${STYLES.headerTitle}">Seu Ingresso</h1>
+                        <p style="${STYLES.headerSub}">Apresente este e-mail na portaria</p>
                     </div>
 
-                    <div style="padding: 40px 30px;">
+                    <div style="${STYLES.body}">
                         
-                        <!-- LOCAL -->
-                        <div style="text-align: center; margin-bottom: 25px;">
-                            <h2 style="color: #0f172a; margin: 0 0 5px; font-size: 24px;">${reservationData.item.name}</h2>
+                        <div style="text-align: center; margin-bottom: 30px;">
+                            <h2 style="color: #0f172a; margin: 0 0 5px; font-size: 26px; font-weight: 800;">${reservationData.item.name}</h2>
                             <p style="color: #64748b; margin: 0; font-size: 14px;">${reservationData.item.city}, ${reservationData.item.state}</p>
-                            <a href="${mapLink}" style="color: #0097A8; font-size: 12px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 8px; background: #ecfeff; padding: 5px 12px; border-radius: 20px;">
-                                📍 Abrir no Google Maps
-                            </a>
+                            <a href="${mapLink}" style="color: #0097A8; font-size: 12px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 10px; background: #ecfeff; padding: 6px 12px; border-radius: 20px;">📍 Como Chegar</a>
                         </div>
                         
-                        <!-- QR CODE -->
-                        <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 30px;">
-                            <img src="${qrCodeUrl}" alt="QR Code" style="width: 150px; height: 150px; margin-bottom: 10px; mix-blend-mode: multiply;" />
-                            <p style="margin: 5px 0 0; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Código de Validação</p>
-                            <p style="margin: 5px 0 0 0; font-size: 28px; font-weight: 800; color: #0f172a; letter-spacing: 3px; font-family: monospace;">${reservationId.slice(0,6).toUpperCase()}</p>
+                        <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 25px; text-align: center; margin-bottom: 30px; position: relative;">
+                            <img src="${qrCodeUrl}" alt="QR Code" style="width: 160px; height: 160px; margin-bottom: 15px; mix-blend-mode: multiply;" />
+                            <p style="${STYLES.label} letter-spacing: 2px;">CÓDIGO DE VALIDAÇÃO</p>
+                            <p style="margin: 5px 0 0; font-size: 32px; font-weight: 800; color: #0f172a; letter-spacing: 4px; font-family: monospace;">${reservationId.slice(0,6).toUpperCase()}</p>
                         </div>
 
-                        <!-- GRID DE DETALHES -->
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; border-top: 1px solid #f1f5f9;">
+                        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 30px;">
                             <tr>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; width: 50%; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">Data do Passeio</span>
-                                    <span style="font-size: 15px; color: #1e293b; font-weight: 600;">${reservationData.date.split('-').reverse().join('/')}</span>
+                                <td width="50%" style="padding-bottom: 20px; vertical-align: top;">
+                                    <span style="${STYLES.label}">DATA DO PASSEIO</span>
+                                    <span style="${STYLES.value}">${reservationData.date.split('-').reverse().join('/')}</span>
                                 </td>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; width: 50%; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">Horário</span>
-                                    <span style="font-size: 15px; color: #1e293b; font-weight: 600;">${openingHours}</span>
+                                <td width="50%" style="padding-bottom: 20px; vertical-align: top;">
+                                    <span style="${STYLES.label}">HORÁRIO</span>
+                                    <span style="${STYLES.value}">${openingHours}</span>
                                 </td>
                             </tr>
                             <tr>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">Titular</span>
-                                    <span style="font-size: 14px; color: #1e293b; font-weight: 600;">${reservationData.guestName}</span>
+                                <td width="50%" style="padding-bottom: 20px; vertical-align: top;">
+                                    <span style="${STYLES.label}">TITULAR</span>
+                                    <span style="${STYLES.value}">${reservationData.guestName}</span>
                                 </td>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">Pagamento</span>
-                                    <span style="font-size: 14px; color: #1e293b; font-weight: 600;">${paymentLabel}</span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">ID Transação</span>
-                                    <span style="font-size: 11px; color: #475569; font-family: monospace;">${transactionId}</span>
-                                </td>
-                                <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top;">
-                                    <span style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold; display: block; margin-bottom: 2px;">Data Compra</span>
-                                    <span style="font-size: 11px; color: #475569;">${purchaseDate}</span>
+                                <td width="50%" style="padding-bottom: 20px; vertical-align: top;">
+                                    <span style="${STYLES.label}">PAGAMENTO</span>
+                                    <span style="${STYLES.value}">${paymentLabel}</span>
                                 </td>
                             </tr>
                         </table>
 
-                        <!-- ITENS E TOTAL -->
-                        <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                            <p style="color: #0369a1; font-weight: bold; font-size: 12px; text-transform: uppercase; margin: 0 0 10px 0;">Resumo do Pedido</p>
-                            <ul style="margin: 0; padding-left: 0; list-style: none; font-size: 14px; color: #334155;">
-                                <li style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>Adultos</span> <strong>${reservationData.adults}</strong></li>
-                                ${reservationData.children > 0 ? `<li style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>Crianças</span> <strong>${reservationData.children}</strong></li>` : ''}
-                                ${reservationData.pets > 0 ? `<li style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>Pets</span> <strong>${reservationData.pets}</strong></li>` : ''}
-                                ${reservationData.freeChildren > 0 ? `<li style="display: flex; justify-content: space-between; margin-bottom: 5px; color: #15803d;"><span>Crianças Grátis</span> <strong>${reservationData.freeChildren}</strong></li>` : ''}
+                        <div style="${STYLES.box} background-color: #f0f9ff; border-color: #bae6fd;">
+                            <p style="color: #0369a1; font-weight: 800; font-size: 11px; text-transform: uppercase; margin: 0 0 15px 0; letter-spacing: 1px;">🛒 Resumo do Pedido</p>
+                            <ul style="margin: 0; padding: 0; list-style: none; font-size: 14px; color: #334155;">
+                                ${reservationData.cartItems ? reservationData.cartItems.map(item => 
+                                    `<li style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px dashed #bae6fd; padding-bottom: 8px;">
+                                        <span>${item.quantity || 1}x ${item.title}</span> 
+                                    </li>`
+                                ).join('') : `<li style="margin-bottom: 5px;">Adultos: ${reservationData.adults}</li>`}
                             </ul>
-                            <div style="display: flex; justify-content: space-between; border-top: 1px solid #bae6fd; margin-top: 15px; padding-top: 10px; color: #075985; font-weight: bold; font-size: 16px;">
+                            <div style="display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 2px solid #bae6fd; color: #0369a1; font-weight: 800; font-size: 16px;">
                                 <span>TOTAL PAGO</span>
                                 <span>${formatBRL(reservationData.total)}</span>
                             </div>
@@ -136,25 +119,22 @@ export const notifyCustomer = async (reservationData, reservationId) => {
 
                         ${rulesHtml}
 
-                        <!-- CONTATO E POLÍTICA -->
-                        <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; font-size: 12px; color: #4b5563; border: 1px solid #e5e7eb; margin-top: 20px;">
-                            <strong style="text-transform: uppercase; color: #94a3b8; font-size: 10px; display: block; margin-bottom: 8px;">Fale com o local</strong>
-                            ${reservationData.item.localWhatsapp ? `WhatsApp: <strong>${reservationData.item.localWhatsapp}</strong><br/>` : ''} 
-                            ${reservationData.item.localPhone ? `Tel: <strong>${reservationData.item.localPhone}</strong>` : ''}
-                            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e5e7eb; font-style: italic; color: #6b7280;">
-                                * Política: Remarcações, cancelamentos e reembolsos devem ser tratados diretamente com o estabelecimento pelos contatos acima.
+                        <div style="${STYLES.box}">
+                            <strong style="${STYLES.label} margin-bottom: 10px;">FALE COM O LOCAL</strong>
+                            <div style="font-size: 14px; color: #334155;">
+                                ${reservationData.item.localWhatsapp ? `<p style="margin: 5px 0;">📱 WhatsApp: <strong>${reservationData.item.localWhatsapp}</strong></p>` : ''} 
+                                ${reservationData.item.localPhone ? `<p style="margin: 5px 0;">📞 Tel: <strong>${reservationData.item.localPhone}</strong></p>` : ''}
                             </div>
+                            <p style="font-size: 11px; color: #94a3b8; margin: 15px 0 0; font-style: italic;">* Para remarcações ou cancelamentos, contate diretamente o estabelecimento.</p>
                         </div>
 
-                        <div style="text-align: center; margin-top: 30px;">
-                            <a href="https://mapadodayuse.com/minhas-viagens" style="display: inline-block; background-color: #0097A8; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px;">
-                                🖨️ Acessar para Imprimir
-                            </a>
+                        <div style="text-align: center; margin-top: 35px;">
+                            <a href="https://mapadodayuse.com/minhas-viagens" style="${STYLES.btn}">Imprimir / Salvar PDF</a>
                         </div>
                         
-                        <p style="text-align: center; font-size: 10px; color: #9ca3af; margin-top: 30px;">
-                            Emitido por <strong>Mapa do Day Use</strong> em ${new Date().toLocaleString()}
-                        </p>
+                        <div style="${STYLES.footer}">
+                            Emitido por <strong>Mapa do Day Use</strong> • ${purchaseDate}
+                        </div>
                     </div>
                 </div>
             </div>`;
@@ -164,86 +144,260 @@ export const notifyCustomer = async (reservationData, reservationId) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 to: reservationData.guestEmail, 
-                subject: `Seu Voucher: ${reservationData.item.name}`, 
+                subject: `🎟️ Seu Ingresso: ${reservationData.item.name}`, 
                 html: emailHtml 
             })
         });
     } catch (e) {
-        console.error("Erro ao notificar cliente:", e);
+        console.error("Erro ao enviar voucher:", e);
     }
 };
 
-// --- 2. NOTIFICAÇÃO PARCEIRO (NOVA VENDA) ---
+// =============================================================================
+// 2. NOTIFICAÇÃO DE REAGENDAMENTO (PELO PARCEIRO)
+// =============================================================================
+export const notifyReschedule = async (reservation, oldDate, newDate) => {
+    if (!reservation.guestEmail) return;
+
+    const emailHtml = `
+        <div style="${STYLES.container}">
+            <div style="${STYLES.wrapper}">
+                <div style="${STYLES.header} background-color: #f59e0b;">
+                    <div style="font-size: 24px;">📅</div>
+                    <h1 style="${STYLES.headerTitle}">Reserva Reagendada</h1>
+                </div>
+                
+                <div style="${STYLES.body}">
+                    <p style="font-size: 16px; color: #333; margin-bottom: 25px;">
+                        Olá <strong>${reservation.guestName}</strong>,<br/><br/>
+                        Informamos que a data da sua visita ao <strong>${reservation.placeName || 'Day Use'}</strong> foi alterada pelo estabelecimento.
+                    </p>
+
+                    <div style="${STYLES.box} border-left: 4px solid #f59e0b;">
+                        <table width="100%">
+                            <tr>
+                                <td width="40%" style="color: #94a3b8; text-decoration: line-through;">${oldDate.split('-').reverse().join('/')}</td>
+                                <td width="20%" style="text-align: center; font-weight: bold; color: #f59e0b;">➔</td>
+                                <td width="40%" style="font-weight: 800; color: #1e293b; font-size: 18px; text-align: right;">
+                                    ${newDate.split('-').reverse().join('/')}
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div style="${STYLES.alertBox} background-color: #fffbeb; border: 1px solid #fcd34d; color: #92400e;">
+                        <strong>⚠️ Ação realizada pelo parceiro</strong><br/>
+                        Caso você não concorde com esta nova data ou não possa comparecer, por favor, entre em contato com o local <strong>o quanto antes</strong> para verificar outras opções ou solicitar reembolso.
+                    </div>
+
+                    <div style="${STYLES.box}">
+                        <strong style="${STYLES.label} margin-bottom: 10px;">CONTATOS DO LOCAL</strong>
+                        ${reservation.item?.localWhatsapp ? `<p style="margin: 5px 0;">📱 WhatsApp: <strong>${reservation.item.localWhatsapp}</strong></p>` : ''}
+                        ${reservation.item?.localPhone ? `<p style="margin: 5px 0;">📞 Telefone: <strong>${reservation.item.localPhone}</strong></p>` : ''}
+                        <p style="margin: 5px 0;">📍 Local: ${reservation.placeName}</p>
+                    </div>
+
+                    <div style="${STYLES.footer}">
+                        Mapa do Day Use - Notificação Automática
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    try {
+        await fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                to: reservation.guestEmail,
+                subject: `⚠️ Atenção: Mudança de Data - ${reservation.placeName}`,
+                html: emailHtml
+            }),
+        });
+        console.log(`📧 E-mail de reagendamento enviado para ${reservation.guestEmail}`);
+    } catch (error) {
+        console.error('Erro ao enviar e-mail de reagendamento:', error);
+    }
+};
+
+// =============================================================================
+// 3. NOTIFICAÇÃO DE STATUS (VALIDADO / CANCELADO PELO PARCEIRO)
+// =============================================================================
+export const notifyTicketStatusChange = async (reservation, type) => {
+    if (!reservation.guestEmail) return;
+
+    let config = { subject: "", title: "", message: "", color: "", icon: "" };
+
+    if (type === 'validated') {
+        config = {
+            subject: `🎫 Bem-vindo ao ${reservation.placeName || 'Day Use'}!`,
+            title: "Entrada Confirmada",
+            message: `Sua entrada foi validada com sucesso! Esperamos que você tenha um dia incrível.<br/>Aproveite cada momento!`,
+            color: "#10B981", // Verde
+            icon: "✅"
+        };
+    } else if (type === 'cancelled') {
+        config = {
+            subject: `🚫 Reserva Cancelada: ${reservation.placeName}`,
+            title: "Reserva Cancelada",
+            message: `Informamos que sua reserva foi cancelada pelo sistema ou pelo estabelecimento.`,
+            color: "#EF4444", // Vermelho
+            icon: "🛑"
+        };
+    }
+
+    // HTML Condicional para Cancelamento (Adiciona aviso de contato)
+    const cancelInfoHtml = type === 'cancelled' ? `
+        <div style="${STYLES.alertBox} background-color: #fef2f2; border: 1px solid #fecaca; color: #991b1b;">
+            <strong>Ação realizada pelo parceiro/sistema</strong><br/>
+            Se você acredita que isso foi um erro ou precisa discutir sobre reembolso, entre em contato diretamente com o estabelecimento pelos canais abaixo.
+        </div>
+        <div style="${STYLES.box}">
+            <strong style="${STYLES.label}">CONTATOS DO LOCAL</strong>
+            <p style="margin: 5px 0;">${reservation.placeName}</p>
+            ${reservation.item?.localWhatsapp ? `<p style="margin: 5px 0;">WhatsApp: <strong>${reservation.item.localWhatsapp}</strong></p>` : ''}
+        </div>
+    ` : '';
+
+    const emailHtml = `
+        <div style="${STYLES.container}">
+            <div style="${STYLES.wrapper}">
+                <div style="${STYLES.header} background-color: ${config.color};">
+                    <div style="font-size: 30px;">${config.icon}</div>
+                    <h2 style="${STYLES.headerTitle}">${config.title}</h2>
+                </div>
+                
+                <div style="${STYLES.body}">
+                    <p style="font-size: 16px; color: #333; margin-bottom: 20px;">Olá, <strong>${reservation.guestName}</strong>.</p>
+                    <p style="font-size: 15px; color: #4b5563; line-height: 1.6;">${config.message}</p>
+                    
+                    <div style="${STYLES.box} text-align: center;">
+                        <p style="${STYLES.label}">RESUMO</p>
+                        <p style="margin: 5px 0; font-weight: bold; color: #1e293b;">${reservation.placeName || 'Day Use'}</p>
+                        <p style="margin: 5px 0; font-size: 14px;">Data: ${reservation.date.split('-').reverse().join('/')}</p>
+                        <p style="margin: 5px 0; font-size: 14px; font-family: monospace;">Ticket: #${reservation.ticketCode || reservation.id}</p>
+                    </div>
+
+                    ${cancelInfoHtml}
+
+                    <div style="${STYLES.footer}">
+                        Mapa do Day Use - Notificação Automática
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    try {
+        await fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                to: reservation.guestEmail,
+                subject: config.subject,
+                html: emailHtml
+            }),
+        });
+        console.log(`📧 E-mail de ${type} enviado.`);
+    } catch (error) {
+        console.error('Erro ao enviar notificação:', error);
+    }
+};
+
+// =============================================================================
+// 4. NOTIFICAÇÃO PARCEIRO (NOVA VENDA)
+// =============================================================================
 export const notifyPartner = async (reservationData, paymentId) => {
-      try {
-          // BLINDAGEM: Se não tiver ID do dono, aborta sem quebrar
-          if (!reservationData || !reservationData.ownerId) {
-              console.warn("⚠️ notifyPartner chamado sem ownerId:", reservationData);
-              return;
-          }
-
-          const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
-
-          // 🛡️ BLINDAGEM 2: Se o dono não existir no banco
-          if (!ownerSnap.exists()) {
-             console.warn("⚠️ Dono não encontrado no banco de dados.");
-             return;
-          }
-
-          const ownerEmail = ownerSnap.data().email; 
-
-          if (!ownerEmail) {
-             console.warn("⚠️ O dono do Day Use não tem e-mail cadastrado.");
-             return;
-          }
+    try {
+        if (!reservationData?.ownerId) return;
+        const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
+        if (!ownerSnap.exists()) return;
+        const ownerEmail = ownerSnap.data().email; 
+        if (!ownerEmail) return;
 
         const emailHtml = `
-          <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 40px 0;">
-                <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                    <div style="background-color: #0097A8; padding: 25px; text-align: center;">
-                        <h2 style="color: white; margin: 0; font-size: 24px;">Nova Venda Confirmada! 🚀</h2>
+            <div style="${STYLES.container}">
+                <div style="${STYLES.wrapper}">
+                    <div style="${STYLES.header}">
+                        <h2 style="${STYLES.headerTitle}">🚀 Nova Venda!</h2>
+                        <p style="${STYLES.headerSub}">Você recebeu uma nova reserva</p>
                     </div>
-                    <div style="padding: 35px;">
-                        <p style="font-size: 16px; color: #333; margin-bottom: 20px;">
-                            Olá! Uma nova reserva foi realizada para o <strong>${bookingData.item.name}</strong>.
+                    <div style="${STYLES.body}">
+                        <p style="font-size: 16px; color: #333; margin-bottom: 25px;">
+                            Parabéns! O cliente <strong>${reservationData.guestName}</strong> acabou de reservar no <strong>${reservationData.item.name}</strong>.
                         </p>
                         
-                        <div style="background-color: #e0f7fa; padding: 20px; border-radius: 8px; margin-bottom: 25px; border-left: 5px solid #0097A8;">
-                            <p style="margin: 0; font-size: 13px; color: #006064; font-weight: bold; text-transform: uppercase;">Valor Total da Venda</p>
-                            <p style="margin: 5px 0 10px 0; font-size: 36px; font-weight: bold; color: #0097A8;">${formatBRL(reservationData.total)}</p>
-                            <p style="margin: 0; font-size: 11px; color: #666; line-height: 1.4;">
-                                *<strong>Atenção:</strong> Este é o valor bruto transacionado. As taxas da plataforma e do Mercado Pago serão descontadas automaticamente no repasse.
-                            </p>
+                        <div style="${STYLES.box} background-color: #ecfeff; border-color: #0097A8; border-left-width: 5px;">
+                            <p style="${STYLES.label} color: #0e7490;">VALOR TOTAL DA VENDA</p>
+                            <p style="margin: 5px 0 0; font-size: 32px; font-weight: 800; color: #0097A8;">${formatBRL(reservationData.total)}</p>
+                            <p style="margin: 5px 0 0; font-size: 11px; color: #64748b;">* Valor bruto (taxas serão descontadas no repasse).</p>
                         </div>
 
-                        <h3 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-top: 0;">Detalhes do Cliente</h3>
-                        <ul style="list-style: none; padding: 0; color: #555; font-size: 14px; line-height: 2;">
-                            <li><strong>Nome:</strong> ${reservationData.guestName}</li>
-                            <li><strong>E-mail:</strong> ${reservationData.guestEmail}</li>
-                            <li><strong>Data do Passeio:</strong> ${reservationData.date.split('-').reverse().join('/')}</li>
-                            <li><strong>Pagamento:</strong> ${reservationData.paymentMethod === 'pix' ? 'Pix' : 'Cartão de Crédito'}</li>
-                            <li><strong>ID Transação:</strong> ${paymentId}</li>
-                            <li><strong>Data da Compra:</strong> ${new Date().toLocaleString('pt-BR')}</li>
-                        </ul>
+                        <div style="${STYLES.box}">
+                            <strong style="${STYLES.label} border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; margin-bottom: 10px; display: block;">DETALHES DO CLIENTE</strong>
+                            <table width="100%" style="font-size: 14px; color: #334155;">
+                                <tr><td style="padding: 3px 0;"><strong>Nome:</strong></td><td>${reservationData.guestName}</td></tr>
+                                <tr><td style="padding: 3px 0;"><strong>Data Visita:</strong></td><td>${reservationData.date.split('-').reverse().join('/')}</td></tr>
+                                <tr><td style="padding: 3px 0;"><strong>Adultos/Crianças:</strong></td><td>${reservationData.adults} Adt / ${reservationData.children} Cri</td></tr>
+                                <tr><td style="padding: 3px 0;"><strong>Telefone:</strong></td><td>${reservationData.guestPhone || '-'}</td></tr>
+                            </table>
+                        </div>
 
-                        <div style="text-align: center; margin-top: 35px;">
-                            <a href="https://mapadodayuse.com/partner" style="background-color: #0097A8; color: white; padding: 14px 28px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; display: inline-block;">
-                                Acessar Painel do Parceiro
-                            </a>
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="https://mapadodayuse.com/partner" style="${STYLES.btn}">Acessar Painel do Parceiro</a>
                         </div>
                     </div>
                 </div>
             </div>`;
 
         await fetch('/api/send-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                  to: ownerEmail,
-                  subject: `Nova Venda: ${formatBRL(reservationData.total)}`, 
-                  html: emailHtml 
-              })
-          });
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                to: ownerEmail,
+                subject: `💰 Nova Venda: ${formatBRL(reservationData.total)}`, 
+                html: emailHtml 
+            })
+        });
+    } catch (e) { console.error("Erro email parceiro:", e); }
+};
 
-      } catch (e) { console.error("Erro email parceiro:", e); }
-  };
+// =============================================================================
+// 5. NOTIFICAÇÃO ADMIN (NOVA SOLICITAÇÃO DE PROPRIEDADE)
+// =============================================================================
+export const notifyAdminNewClaim = async (claimData) => {
+    const emailHtml = `
+      <div style="${STYLES.container}">
+        <div style="${STYLES.wrapper}">
+          <div style="${STYLES.header}">
+            <h2 style="${STYLES.headerTitle}">🔔 Nova Solicitação</h2>
+          </div>
+          <div style="${STYLES.body}">
+            <p>Olá Admin, uma nova solicitação de propriedade chegou.</p>
+            <div style="${STYLES.box}">
+                <p><strong>Solicitante:</strong> ${claimData.claimantName} (${claimData.claimantRole})</p>
+                <p><strong>Local:</strong> ${claimData.dayUseName}</p>
+                <p><strong>Tel:</strong> ${claimData.claimantPhone}</p>
+                <p><strong>Email:</strong> ${claimData.claimantEmail}</p>
+            </div>
+            <div style="text-align: center;">
+                <a href="https://mapadodayuse.com/painel" style="${STYLES.btn}">Ver no Painel</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  
+    try {
+      await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: 'admin@mapadodayuse.com',
+          subject: `🔔 Adm: ${claimData.dayUseName}`,
+          html: emailHtml
+        }),
+      });
+    } catch (error) { console.error(error); }
+};
