@@ -5,6 +5,8 @@ import { formatBRL } from '../../utils/format';
 import CreditCardForm from './../../CreditCardForm'; 
 import AddressForm from './AddressForm';
 
+const [isCardFormReady, setIsCardFormReady] = React.useState(false);
+
 const PaymentSection = ({
   paymentMethod, changeMethod,
   mpInstance, setMpPaymentMethodId, setIssuerId,
@@ -182,19 +184,13 @@ const PaymentSection = ({
         {/* Botão de Ação Único */}
         <div className="mt-8">
             <Button 
-                className="w-full py-4 text-lg shadow-lg shadow-[#0097A8]/20 hover:shadow-[#0097A8]/40 transition-all" 
-                onClick={processPayment} 
-                disabled={processing || !user}
-            >
-                {processing ? (
-                    <span className="flex items-center gap-2 justify-center">
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/> 
-                        Processando...
-                    </span>
-                ) : (
-                    `Pagar ${formatBRL(finalTotal)}`
-                )}
-            </Button>
+                    className="w-full py-4 text-lg" 
+                    onClick={processPayment} 
+                    // Se for cartão, só habilita se o form do MP estiver montado (Ready)
+                    disabled={processing || !user || (paymentMethod === 'card' && !isCardFormReady)}
+                >
+                    {processing ? 'Processando...' : `Pagar ${formatBRL(finalTotal)}`}
+                </Button>
         </div>
 
         <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col items-center gap-2 text-center">
