@@ -2,16 +2,15 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import.meta.env.VITE_FIREBASE_API_KEY
 
-// --- COLE SUA CONFIGURAÇÃO AQUI ABAIXO ---
-// (Substitua tudo entre as chaves pelo que copiou do site do Firebase)
 const firebaseConfig = {
-  apiKey: "AIzaSyAqZhR7Wy0GrifwYnuqEM0nimGHCCcDlks",
-  authDomain: "mapa-do-day-use.firebaseapp.com",
-  projectId: "mapa-do-day-use",
-  storageBucket: "mapa-do-day-use.firebasestorage.app",
-  messagingSenderId: "506362926044",
-  appId: "1:506362926044:web:72ae25104b288a7fe0f519"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
