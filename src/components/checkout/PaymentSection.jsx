@@ -41,32 +41,38 @@ const PaymentSection = ({
   }, []);
 
   // 🔥 BUSCA AS PARCELAS COM JUROS COMPRADOR (AGGREGATOR)
-  useEffect(() => {
-    if (mpInstance && finalTotal > 0 && bin.length >= 6) {
-      console.log("🔄 Buscando parcelas para BIN:", bin);
+useEffect(() => {
+    // Garante que temos tudo necessário antes de chamar a API
+    if (mpInstance && finalTotal > 0 && bin && bin.length >= 6) {
+      console.log("🔄 [DEBUG] Buscando parcelas para BIN:", bin, "Valor:", finalTotal);
 
       mpInstance.getInstallments({
         amount: String(finalTotal),
         bin: bin,
-        paymentTypeId: 'credit_card',
-        processingMode: 'aggregator' // Força o cálculo de juros para o comprador
+        paymentTypeId: 'credit_card'
+        // ❌ REMOVIDO: processingMode: 'aggregator' (Isso estava travando em 1x no Sandbox)
       })
       .then((response) => {
         console.log("📦 [DEBUG] Resposta MP Parcelas:", response);
+
         if (response.length > 0) {
           const payerCosts = response[0].payer_costs;
           
-          // Filtra para no máximo 5 parcelas
+          // 🔥 FILTRO: Limita visualmente a no máximo 5 parcelas
+          // O MP manda todas (até 12x), nós mostramos apenas as 5 primeiras
           const filteredOptions = payerCosts.filter(opt => opt.installments <= 5);
-
+          
           console.log("✅ [DEBUG] Opções Filtradas (Max 5x):", filteredOptions);
           
           setInstallmentOptions(filteredOptions);
           
-          // Se o número de parcelas selecionado não existir nas novas opções, reseta para 1
+          // Reseta para 1x se a opção atual não existir mais na lista
           if (!installments || !filteredOptions.find(opt => opt.installments === Number(installments))) {
               setInstallments(1);
           }
+        } else {
+            console.warn("⚠️ [DEBUG] MP retornou lista vazia de parcelas.");
+            setInstallmentOptions([]);
         }
       })
       .catch((error) => {
