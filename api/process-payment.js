@@ -292,7 +292,7 @@ export default async function handler(req, res) {
       transaction_amount: transactionAmount,
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: process.env.MP_ACCESS_TOKEN_TEST ? null : commission,
+      application_fee: null,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       statement_descriptor: descriptor,
       
