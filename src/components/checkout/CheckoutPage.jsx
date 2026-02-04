@@ -30,7 +30,8 @@ const CheckoutPage = () => {
   const { bookingData } = location.state || {};
   
   // Normalização dos dados
-  const itemData = bookingData?.item || bookingData; 
+  const itemData = bookingData?.item || bookingData;
+  const [freshItemData, setFreshItemData] = useState(itemData); 
 
   // States
   const [user, setUser] = useState(auth.currentUser);
@@ -139,6 +140,28 @@ const CheckoutPage = () => {
     }
   }, [user?.uid]);
 
+  useEffect(() => {
+      const fetchFreshData = async () => {
+          const itemId = itemData?.id || itemData?.dayuseId;
+          if (!itemId) return;
+
+          try {
+              const docRef = doc(db, "dayuses", itemId);
+              const docSnap = await getDoc(docRef);
+              
+              if (docSnap.exists()) {
+                  console.log("🔄 Dados recarregados do banco! Cupons atualizados.");
+                  // Atualiza o estado com o que está REALMENTE no banco agora
+                  setFreshItemData({ id: docSnap.id, ...docSnap.data() });
+              }
+          } catch (e) {
+              console.error("Erro ao atualizar dados:", e);
+          }
+      };
+
+      fetchFreshData();
+  }, []);
+
   const checkProfileStatus = () => {
     if (!user) return false;
     const hasFullName = user.displayName && user.displayName.trim().indexOf(' ') > 0;
@@ -199,30 +222,28 @@ const CheckoutPage = () => {
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
       
-      // 1. Log de Diagnóstico (Para você ver no Console do navegador em Produção)
+      // 🔥 USA O DADO FRESCO DO BANCO
+      const currentItem = freshItemData || itemData;
+
       console.log("🔍 DEBUG CUPOM:", {
           digitado: couponCode,
           digitadoLimpo: couponCode?.trim().toUpperCase(),
-          itemData: itemData,
-          cuponsDisponiveis: itemData?.coupons
+          cuponsDisponiveis: currentItem?.coupons
       });
 
-      // 2. Validações Iniciais
-      if (!itemData || !itemData.coupons?.length) { 
-          setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." }); 
+      if (!currentItem || !currentItem.coupons?.length) { 
+          setCouponMsg({ type: 'error', text: "Sem cupons disponíveis." }); 
           return; 
       }
 
-      // 3. Normalização (Limpa espaços e põe em maiúsculo)
       const inputClean = couponCode.trim().toUpperCase();
-
-      // 4. Busca Robusta
-      const found = itemData.coupons.find(c => {
-          // Garante que o código do banco também seja limpo antes de comparar
+      
+      // Busca no array atualizado
+      const found = currentItem.coupons.find(c => {
           const dbCode = c.code ? c.code.trim().toUpperCase() : '';
           return dbCode === inputClean;
       });
-
+      
       // 5. Resultado
       if(found) {
           // Verifica se está ativo (caso tenha essa flag no banco)
