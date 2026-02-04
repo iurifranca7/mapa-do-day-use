@@ -20,6 +20,10 @@ const PaymentSection = ({
 
   // Controle de estado do formulário
   const [isCardFormReady, setIsCardFormReady] = useState(false);
+  
+  // 🔥 NOVOS STATES PARA PARCELAMENTO
+  const [installmentOptions, setInstallmentOptions] = useState([]);
+  const [bin, setBin] = useState('');
 
   // Fallback de segurança: Se o MP carregar mas o callback falhar, libera o botão em 3s
   useEffect(() => {
@@ -34,7 +38,42 @@ const PaymentSection = ({
     if (!paymentMethod) {
       changeMethod('pix');
     }
-  }, []); 
+  }, []);
+
+  // 🔥 BUSCA AS PARCELAS COM JUROS COMPRADOR (AGGREGATOR)
+  useEffect(() => {
+    if (mpInstance && finalTotal > 0 && bin.length >= 6) {
+      console.log("🔄 Buscando parcelas para BIN:", bin);
+
+      mpInstance.getInstallments({
+        amount: String(finalTotal),
+        bin: bin,
+        paymentTypeId: 'credit_card',
+        processingMode: 'aggregator' // Força o cálculo de juros para o comprador
+      })
+      .then((response) => {
+        console.log("📦 [DEBUG] Resposta MP Parcelas:", response);
+        if (response.length > 0) {
+          const payerCosts = response[0].payer_costs;
+          
+          // Filtra para no máximo 5 parcelas
+          const filteredOptions = payerCosts.filter(opt => opt.installments <= 5);
+
+          console.log("✅ [DEBUG] Opções Filtradas (Max 5x):", filteredOptions);
+          
+          setInstallmentOptions(filteredOptions);
+          
+          // Se o número de parcelas selecionado não existir nas novas opções, reseta para 1
+          if (!installments || !filteredOptions.find(opt => opt.installments === Number(installments))) {
+              setInstallments(1);
+          }
+        }
+      })
+      .catch((error) => {
+        console.error("❌ [DEBUG] Erro ao buscar parcelas:", error);
+      });
+    }
+  }, [mpInstance, finalTotal, bin]);
 
   return (
     <div className={`bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 transition-all duration-300 ${!user ? 'opacity-60 grayscale-[0.8]' : ''}`}>
@@ -62,11 +101,9 @@ const PaymentSection = ({
         </div>
 
         {/* ÁREA DE CONTEÚDO */}
-        {/* Removi o min-h-[400px] que causava o espaço branco */}
         <div className="relative">
             
             {/* --- CONTEÚDO PIX --- */}
-            {/* Só renderiza se for Pix para não ocupar espaço oculto */}
             {paymentMethod === 'pix' && (
                 <div className="animate-fade-in block pb-4">
                     <div className="text-center">
@@ -92,9 +129,16 @@ const PaymentSection = ({
             )}
 
             {/* --- CONTEÚDO CARTÃO DE CRÉDITO --- */}
-            {/* Truque do CSS: Mantém no DOM (absolute/opacity 0) para não perder a referência do MP, mas não ocupa espaço visual */}
             <div 
-                className={`transition-all duration-300 w-full ${paymentMethod === 'card' ? 'opacity-100 visible relative' : 'opacity-0 invisible absolute top-0 left-0 pointer-events-none h-0 overflow-hidden'}`}
+                className="transition-opacity duration-300 w-full"
+                style={{
+                    opacity: paymentMethod === 'card' ? 1 : 0,
+                    position: paymentMethod === 'card' ? 'relative' : 'absolute',
+                    top: paymentMethod === 'card' ? 'auto' : 0,
+                    left: paymentMethod === 'card' ? 'auto' : -9999, 
+                    pointerEvents: paymentMethod === 'card' ? 'auto' : 'none',
+                    visibility: 'visible' 
+                }}
             >
                 {mpInstance ? (
                     <div className="space-y-5">
@@ -102,13 +146,20 @@ const PaymentSection = ({
                             mp={mpInstance} 
                             onReady={() => setIsCardFormReady(true)}
                             onCardDataChange={(data) => {
-                                if (data.bin && mpInstance) {
-                                    mpInstance.getPaymentMethods({ bin: data.bin }).then(({ results }) => {
-                                        if(results?.[0]) {
-                                            setMpPaymentMethodId(results[0].id);
-                                            setIssuerId(results[0].issuer.id);
-                                        }
-                                    }).catch(console.error);
+                                // Lógica de BIN para pegar a bandeira E AS PARCELAS
+                                if (data.bin) {
+                                    setBin(data.bin); // 🔥 Salva o BIN para o useEffect calcular parcelas
+                                    
+                                    if (mpInstance) {
+                                        mpInstance.getPaymentMethods({ bin: data.bin })
+                                            .then(({ results }) => {
+                                                if(results?.[0]) {
+                                                    setMpPaymentMethodId(results[0].id);
+                                                    setIssuerId(results[0].issuer.id);
+                                                }
+                                            })
+                                            .catch(err => console.log("Info MP:", err));
+                                    }
                                 }
                             }}
                         />
@@ -134,6 +185,7 @@ const PaymentSection = ({
                             </div>
                         </div>
                         
+                        {/* SELECT DE PARCELAMENTO DINÂMICO */}
                         <div>
                             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider pl-1">Parcelamento</label>
                             <div className="relative">
@@ -141,10 +193,17 @@ const PaymentSection = ({
                                     className="w-full border border-slate-300 p-3 rounded-lg mt-1 bg-white appearance-none focus:ring-2 focus:ring-[#0097A8] outline-none" 
                                     value={installments} 
                                     onChange={e=>setInstallments(e.target.value)}
+                                    disabled={installmentOptions.length === 0}
                                 >
-                                    <option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option>
-                                    <option value={2}>2x de {formatBRL(finalTotal/2)}</option>
-                                    <option value={3}>3x de {formatBRL(finalTotal/3)}</option>
+                                    {installmentOptions.length === 0 ? (
+                                        <option value={1}>1x de {formatBRL(finalTotal)} (Sem juros)</option>
+                                    ) : (
+                                        installmentOptions.map((opt) => (
+                                            <option key={opt.installments} value={opt.installments}>
+                                                {opt.recommended_message}
+                                            </option>
+                                        ))
+                                    )}
                                 </select>
                                 <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
                             </div>
@@ -185,8 +244,8 @@ const PaymentSection = ({
                 disabled={
                     processing || 
                     !user || 
-                    (paymentMethod === 'card' && !mpInstance) || // Se não tem MP, bloqueia
-                    (paymentMethod === 'card' && mpInstance && !isCardFormReady) // Se tem MP, espera o form
+                    (paymentMethod === 'card' && !mpInstance) || 
+                    (paymentMethod === 'card' && mpInstance && !isCardFormReady)
                 }
             >
                 {processing ? (
