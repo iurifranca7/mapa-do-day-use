@@ -82,8 +82,8 @@ const ESTABLISHMENT_TYPES = [
 
 // --- CONFIGURAÇÃO ---
 try {
-  if (import.meta.env.VITE_MP_PUBLIC_KEY) {
-    initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY, { locale: 'pt-BR' });
+  if (import.meta.env.VITE_MP_PUBLIC_KEY_TEST) {
+    initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY_TEST, { locale: 'pt-BR' });
   }
 } catch (e) { console.log("MP não configurado"); }
 
