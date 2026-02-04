@@ -50,7 +50,6 @@ const CheckoutPage = () => {
   const [couponMsg, setCouponMsg] = useState(null);
   const [couponError, setCouponError] = useState(null);
   const [couponSuccess, setCouponSuccess] = useState(null);
-  
 
   // Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
@@ -198,62 +197,18 @@ const CheckoutPage = () => {
 
   // Cupom
   const handleApplyCoupon = () => {
-        if (!couponCode) return;
-        
-        // 1. Normalização
-        const codeInput = couponCode.trim().toUpperCase();
-        
-        // 2. Busca no array de cupons do Day Use (itemData.coupons)
-        const couponsList = itemData.coupons || [];
-        const found = couponsList.find(c => c.code && c.code.trim().toUpperCase() === codeInput);
-
-        if (!found) {
-            setCouponError("Cupom inválido.");
-            setDiscount(0);
-            return;
-        }
-
-        // 3. Verificações de Segurança
-        if (found.active === false) {
-            setCouponError("Este cupom está inativo.");
-            return;
-        }
-
-        if (found.expiryDate) {
-            const today = new Date().toISOString().split('T')[0];
-            if (today > found.expiryDate) {
-                setCouponError("Este cupom expirou.");
-                return;
-            }
-        }
-
-        if (found.limit && found.currentUsage >= found.limit) {
-            setCouponError("Este cupom esgotou.");
-            return;
-        }
-
-        // 4. Cálculo do Desconto (Híbrido: % ou R$)
-        let discountVal = 0;
-        
-        // Garante que o total existe, senão usa 0
-        const grossTotal = bookingData.total || 0; 
-        
-        if (found.discountType === 'fixed' && found.discountValue) {
-            discountVal = Number(found.discountValue);
-        } else {
-            // Padrão porcentagem
-            const percent = Number(found.discountValue || found.percentage || 0);
-            
-            // 🔥 CORREÇÃO AQUI: Troquei totalPrice por grossTotal
-            discountVal = (grossTotal * percent / 100);
-        }
-
-        // 5. Sucesso
-        setDiscount(discountVal);
-        setCouponError(null);
-        // Opcional: Feedback visual
-        // alert(`Cupom aplicado! Desconto de R$ ${discountVal.toFixed(2)}`);
-    };
+      setCouponMsg(null); 
+      if (!itemData || !itemData.coupons?.length) { setCouponMsg({ type: 'error', text: "Sem cupons disponíveis." }); return; }
+      const found = itemData.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+      if(found) {
+        const val = (bookingData.total * found.percentage) / 100;
+        setDiscount(val); setFinalTotal(bookingData.total - val);
+        setCouponMsg({ type: 'success', text: `Cupom ${found.code}: ${found.percentage}% OFF` });
+      } else {
+        setDiscount(0); setFinalTotal(bookingData.total);
+        setCouponMsg({ type: 'error', text: "Cupom inválido." });
+      }
+  };
 
   const changeMethod = (method) => {
       setPaymentMethod(method);
