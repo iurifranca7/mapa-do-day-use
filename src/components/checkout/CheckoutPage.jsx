@@ -50,6 +50,7 @@ const CheckoutPage = () => {
   const [couponMsg, setCouponMsg] = useState(null);
   const [couponError, setCouponError] = useState(null);
   const [couponSuccess, setCouponSuccess] = useState(null);
+  
 
   // Pagamento
   const [paymentMethod, setPaymentMethod] = useState('card'); 
