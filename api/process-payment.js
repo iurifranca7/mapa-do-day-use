@@ -85,7 +85,7 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // 🛑 GUARDIÃO DO ESTOQUE (Mantido Intacto)
+    // 🛑 GUARDIÃO DO ESTOQUE
     // ==================================================================
     const bookingDate = bookingDetails.date;
     let limit = 50;
@@ -117,7 +117,7 @@ export default async function handler(req, res) {
     }
 
     // ==================================================================
-    // 💰 CÁLCULOS FINANCEIROS (NOVA LÓGICA DE SPLIT E CUPONS)
+    // 💰 CÁLCULOS FINANCEIROS (LÓGICA COMPLEXA DE SPLIT E CUPONS)
     // ==================================================================
     console.log("💰 [5] Iniciando Cálculo Financeiro...");
     
@@ -156,35 +156,57 @@ export default async function handler(req, res) {
     } else {
         // Fallback Legado
         console.log("⚠️ [5.1] Usando Lógica Legada");
-        // ... (Lógica de dias da semana simplificada para brevidade, mantendo compatibilidade)
         let priceAdult = Number(item.priceAdult || 0);
         let priceChild = Number(item.priceChild || 0);
-        calculatedGrossTotal = (Number(bookingDetails.adults || 0) * priceAdult) + (Number(bookingDetails.children || 0) * priceChild);
         
+        // Verificação simples de preço de fim de semana (Opcional, mantido para compatibilidade)
+        const dateParts = bookingDetails.date.split('-');
+        const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12);
+        const dayOfWeek = dateObj.getDay();
+        if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
+             const dayConfig = item.weeklyPrices[dayOfWeek];
+             if (dayConfig.adult) priceAdult = Number(dayConfig.adult);
+             if (dayConfig.child) priceChild = Number(dayConfig.child);
+        }
+
+        calculatedGrossTotal = (Number(bookingDetails.adults || 0) * priceAdult) + (Number(bookingDetails.children || 0) * priceChild);
         mpItemsList.push({ id: 'legacy', title: 'Day Use Legacy', quantity: 1, unit_price: calculatedGrossTotal });
     }
 
     // B) Definição da Taxa Base da Plataforma
-    // Se promoRate for true (ativado no admin), usa 10%. Padrão 12%.
+    // Se 'promoRate' for true no documento do DayUse, cobra 10%. Se false/null, cobra 12%.
     const PLATFORM_PERCENTAGE = item.promoRate === true ? 0.10 : 0.12;
-    console.log(`📊 Taxa Base Aplicada: ${(PLATFORM_PERCENTAGE * 100)}%`);
+    console.log(`📊 Taxa Base Aplicada: ${(PLATFORM_PERCENTAGE * 100)}% (Promo: ${item.promoRate})`);
 
     // C) Cupons e Subsídios
     let transactionAmount = calculatedGrossTotal;
-    let platformSubsidy = 0; // Quanto a plataforma paga do desconto
+    let platformSubsidy = 0; // Quanto a plataforma "paga" do desconto (se for cupom admin)
 
     if (bookingDetails.couponCode && item.coupons) {
+        // Busca o cupom no array 'coupons' do documento dayuses
         const coupon = item.coupons.find(c => c.code === bookingDetails.couponCode);
+        
         if (coupon) {
-            const discountValue = (calculatedGrossTotal * coupon.percentage / 100);
+            // Suporta tanto o formato antigo 'percentage' quanto o novo 'discountValue'
+            let discountValue = 0;
+            
+            if (coupon.discountValue && coupon.discountType === 'fixed') {
+                discountValue = Number(coupon.discountValue);
+            } else {
+                // Porcentagem (Padrão antigo ou novo)
+                const percent = Number(coupon.discountValue || coupon.percentage || 0);
+                discountValue = (calculatedGrossTotal * percent / 100);
+            }
+
             transactionAmount -= discountValue;
             
-            // Se cupom for de ADMIN, plataforma subsidia (abate da comissão)
+            // REGRA: Se cupom for de ADMIN, plataforma subsidia (abate da comissão)
+            // Se for do PARCEIRO, o desconto sai do total dele (padrão)
             if (coupon.createdBy === 'admin') {
                 platformSubsidy = discountValue;
-                console.log(`🎁 Cupom ADMIN: -R$ ${discountValue.toFixed(2)} (Subsidiado)`);
+                console.log(`🎁 Cupom ADMIN aplicado: -R$ ${discountValue.toFixed(2)} (Plataforma Subsidia)`);
             } else {
-                console.log(`🎟️ Cupom PARCEIRO: -R$ ${discountValue.toFixed(2)}`);
+                console.log(`🎟️ Cupom PARCEIRO aplicado: -R$ ${discountValue.toFixed(2)} (Parceiro Absorve)`);
             }
         }
     }
@@ -198,17 +220,18 @@ export default async function handler(req, res) {
     // D) Cálculo do Split (Engenharia Reversa)
     
     // 1. Taxa MP (Estimada) sobre o valor PAGO (Transacionado)
+    // Cartão ~3.98%, Pix ~0.99%
     const mpRate = payment_method_id === 'pix' ? 0.0099 : 0.0398;
     const mpFeeCost = transactionAmount * mpRate;
 
-    // 2. Comissão Bruta da Plataforma (Sobre o valor BRUTO dos produtos)
+    // 2. Comissão Bruta da Plataforma (Sobre o valor BRUTO dos produtos, regra de negócio)
     const rawPlatformCommission = calculatedGrossTotal * PLATFORM_PERCENTAGE;
 
     // 3. Comissão Líquida (Application Fee)
-    // (Comissão Bruta) - (Subsídio Cupom) - (Custo MP Absorvido)
+    // Fórmula: (Comissão Bruta) - (Subsídio Cupom Admin) - (Custo MP Absorvido pela plataforma)
     let finalApplicationFee = rawPlatformCommission - platformSubsidy - mpFeeCost;
 
-    // Proteção contra valores negativos
+    // Proteção contra valores negativos (MP não aceita fee negativo)
     if (finalApplicationFee < 0) finalApplicationFee = 0;
     
     finalApplicationFee = Math.round(finalApplicationFee * 100) / 100;
@@ -216,10 +239,11 @@ export default async function handler(req, res) {
     console.log("🧮 SPLIT FINAL:", {
         Bruto: calculatedGrossTotal,
         Pago: transactionAmount,
-        TaxaPlataforma: rawPlatformCommission.toFixed(2),
-        CustoMP: mpFeeCost.toFixed(2),
-        Subsidio: platformSubsidy.toFixed(2),
-        FeeFinal: finalApplicationFee
+        TaxaAplicada: `${(PLATFORM_PERCENTAGE * 100)}%`,
+        ComissaoBase: rawPlatformCommission.toFixed(2),
+        CustoMP_Absorvido: mpFeeCost.toFixed(2),
+        SubsidioAdmin: platformSubsidy.toFixed(2),
+        FeeFinal_Plataforma: finalApplicationFee
     });
 
     // ==================================================================
@@ -238,8 +262,9 @@ export default async function handler(req, res) {
       description: `Reserva: ${item.name}`,
       payment_method_id,
       
-      // 🔥 AQUI ESTÁ A LÓGICA CONDICIONAL
-      // Se for teste de ambiente, manda null. Se for produção, manda o split calculado.
+      // 🔥 AQUI APLICAMOS O CÁLCULO
+      // Se for teste de ambiente, manda null para evitar erro de 'self-payment'.
+      // Se for produção, manda o split calculado.
       application_fee: process.env.MP_ACCESS_TOKEN_TEST ? null : finalApplicationFee,
       
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
@@ -252,7 +277,7 @@ export default async function handler(req, res) {
         last_name: payer.last_name,
         identification: payer.identification
       },
-      // Envio como PACOTE ÚNICO para evitar erros de validação do MP
+      // Envio como PACOTE ÚNICO para evitar erros de validação de soma do MP
       additional_info: {
           items: [
               {
@@ -293,6 +318,7 @@ export default async function handler(req, res) {
                 platformFee: finalApplicationFee,
                 mpFeeEstimated: mpFeeCost,
                 platformSubsidy: platformSubsidy,
+                platformBaseRate: PLATFORM_PERCENTAGE,
                 items: mpItemsList // Salva a lista detalhada no banco para seu histórico
             }
         });

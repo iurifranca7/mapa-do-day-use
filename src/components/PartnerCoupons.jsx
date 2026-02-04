@@ -29,16 +29,34 @@ const PartnerCoupons = ({ user }) => {
     if (!user) return;
     setLoading(true);
     try {
-      // Carregar Produtos (para o seletor)
+      // A) Carregar Produtos (Mantido, mas ajustado para garantir busca correta)
       const qProd = query(collection(db, "products"), where("ownerId", "==", user.uid));
       const snapProd = await getDocs(qProd);
       const prodList = snapProd.docs.map(d => ({ id: d.id, title: d.data().title }));
       setProducts(prodList);
 
-      // Carregar Cupons
-      const qCoupons = query(collection(db, "coupons"), where("ownerId", "==", user.uid));
-      const snapCoupons = await getDocs(qCoupons);
-      setCoupons(snapCoupons.docs.map(d => ({ id: d.id, ...d.data() })));
+      // B) Carregar Cupons (CORRIGIDO: Busca dentro do Day Use)
+      // Primeiro, achamos o Day Use desse parceiro
+      const qDayUse = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
+      const snapDayUse = await getDocs(qDayUse);
+
+      if (!snapDayUse.empty) {
+        const dayUseDoc = snapDayUse.docs[0]; // Assume 1 Day Use por parceiro por enquanto
+        const dayUseData = dayUseDoc.data();
+        
+        // Pega o array de cupons OU inicia vazio
+        const allCoupons = dayUseData.coupons || [];
+
+        // FILTRO IMPORTANTE: Esconde cupons criados pelo Admin
+        // (Conforme sua regra: "cupons criados pelo admin não precisa aparecer para o parceiro")
+        const partnerCoupons = allCoupons
+            .map((c, index) => ({ ...c, id: index, dayUseId: dayUseDoc.id })) // Adiciona ID temporário (índice) para a lista
+            .filter(c => c.createdBy !== 'admin'); 
+
+        setCoupons(partnerCoupons);
+      } else {
+        setCoupons([]);
+      }
 
     } catch (err) {
       console.error(err);
@@ -294,7 +312,10 @@ const PartnerCoupons = ({ user }) => {
                         
                         <div className="mb-4">
                              <p className="text-3xl font-bold text-[#0097A8]">
-                                {item.discountType === 'percentage' ? `${item.discountValue}%` : `R$ ${item.discountValue}`}
+                                {item.discountValue 
+                                    ? (item.discountType === 'percentage' ? `${item.discountValue}%` : `R$ ${item.discountValue}`)
+                                    : `${item.percentage || 0}%` 
+                                }
                                 <span className="text-xs font-normal text-slate-400 ml-1">OFF</span>
                              </p>
                         </div>
