@@ -198,15 +198,75 @@ const CheckoutPage = () => {
   // Cupom
   const handleApplyCoupon = () => {
       setCouponMsg(null); 
-      if (!itemData || !itemData.coupons?.length) { setCouponMsg({ type: 'error', text: "Sem cupons disponíveis." }); return; }
-      const found = itemData.coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+      
+      // 1. Log de Diagnóstico (Para você ver no Console do navegador em Produção)
+      console.log("🔍 DEBUG CUPOM:", {
+          digitado: couponCode,
+          digitadoLimpo: couponCode?.trim().toUpperCase(),
+          itemData: itemData,
+          cuponsDisponiveis: itemData?.coupons
+      });
+
+      // 2. Validações Iniciais
+      if (!itemData || !itemData.coupons?.length) { 
+          setCouponMsg({ type: 'error', text: "Este local não possui cupons ativos." }); 
+          return; 
+      }
+
+      // 3. Normalização (Limpa espaços e põe em maiúsculo)
+      const inputClean = couponCode.trim().toUpperCase();
+
+      // 4. Busca Robusta
+      const found = itemData.coupons.find(c => {
+          // Garante que o código do banco também seja limpo antes de comparar
+          const dbCode = c.code ? c.code.trim().toUpperCase() : '';
+          return dbCode === inputClean;
+      });
+
+      // 5. Resultado
       if(found) {
-        const val = (bookingData.total * found.percentage) / 100;
-        setDiscount(val); setFinalTotal(bookingData.total - val);
-        setCouponMsg({ type: 'success', text: `Cupom ${found.code}: ${found.percentage}% OFF` });
+          // Verifica se está ativo (caso tenha essa flag no banco)
+          if (found.active === false) {
+              setCouponMsg({ type: 'error', text: "Cupom inativo." });
+              return;
+          }
+
+          // Verifica Validade (Data)
+          if (found.validUntil || found.expiryDate) {
+             const validDate = found.validUntil || found.expiryDate;
+             const today = new Date().toISOString().split('T')[0];
+             if (today > validDate) {
+                 setCouponMsg({ type: 'error', text: "Cupom expirado." });
+                 return;
+             }
+          }
+
+          // Verifica Quantidade (Limite)
+          if (found.limit && found.currentUsage >= found.limit) {
+              setCouponMsg({ type: 'error', text: "Cupom esgotado." });
+              return;
+          }
+
+          // Lógica de Cálculo Híbrida (% ou R$)
+          let val = 0;
+          if (found.discountType === 'fixed' && found.discountValue) {
+               val = Number(found.discountValue);
+          } else {
+               // Padrão porcentagem (pega percentage ou discountValue)
+               const percent = Number(found.discountValue || found.percentage || 0);
+               val = (bookingData.total * percent) / 100;
+          }
+
+          setDiscount(val); 
+          setFinalTotal(Math.max(0, bookingData.total - val)); // Garante que não fique negativo
+          setCouponMsg({ type: 'success', text: `Cupom ${found.code} aplicado!` });
+      
       } else {
-        setDiscount(0); setFinalTotal(bookingData.total);
-        setCouponMsg({ type: 'error', text: "Cupom inválido." });
+          setDiscount(0); 
+          setFinalTotal(bookingData.total);
+          
+          console.warn(`❌ Falha: O cupom "${inputClean}" não foi encontrado na lista:`, itemData.coupons.map(c => c.code));
+          setCouponMsg({ type: 'error', text: "Cupom inválido." });
       }
   };
 
