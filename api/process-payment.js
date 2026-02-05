@@ -5,9 +5,7 @@ import admin from 'firebase-admin';
 // 1. INICIALIZAÇÃO FIREBASE 
 // ==================================================================
 const initFirebase = () => {
-    console.log("🔥 [1] Init Firebase...");
     if (admin.apps.length > 0) {
-        console.log("✅ [1] Firebase já estava inicializado.");
         return admin.firestore();
     }
 
@@ -20,9 +18,7 @@ const initFirebase = () => {
             const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
             const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
             admin.initializeApp({ credential });
-            console.log("✅ [1] Firebase Iniciado Agora.");
         } else {
-            console.error("❌ Credenciais de ambiente ausentes.");
             throw new Error("Credenciais do Firebase incompletas.");
         }
     } catch (e) { 
@@ -34,8 +30,6 @@ const initFirebase = () => {
 };
 
 export default async function handler(req, res) {
-  console.log("🚀 [2] API PROCESS-PAYMENT CHAMADA");
-
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -47,17 +41,15 @@ export default async function handler(req, res) {
     const db = initFirebase();
     const { token, payment_method_id, issuer_id, installments, payer, bookingDetails, reservationId } = req.body;
 
-    console.log("📦 [3] Payload Recebido:", {
-        dayuseId: bookingDetails?.dayuseId,
-        cupomRecebido: bookingDetails?.couponCode || "Nenhum", // LOG IMPORTANTE
-        temCartItems: !!bookingDetails?.cartItems,
-        qtdItens: bookingDetails?.cartItems?.length || 0
-    });
+    const normalizedCouponCode = bookingDetails?.couponCode ? bookingDetails.couponCode.toString().trim().toUpperCase() : null;
+
+    if (Number(installments) > 5) {
+        throw new Error("O parcelamento máximo permitido é de 5x.");
+    }
 
     const targetId = bookingDetails?.dayuseId || bookingDetails?.item?.id;
 
     if (!targetId) {
-        console.error("❌ Payload sem ID do Day Use");
         throw new Error("ID do Day Use não fornecido.");
     }
 
@@ -68,16 +60,13 @@ export default async function handler(req, res) {
     const dayUseSnap = await dayUseRef.get();
    
     if (!dayUseSnap.exists) {
-        console.error("❌ Day Use não encontrado:", targetId);
         throw new Error("Day Use não encontrado.");
     }
     const item = dayUseSnap.data();
-    console.log("✅ [4] DayUse encontrado:", item.name);
-
+    
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
    
-    // Prioriza token de teste do ambiente (dev), senão usa do banco (prod)
     const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
     if (!partnerAccessToken) {
@@ -113,24 +102,18 @@ export default async function handler(req, res) {
     const newGuests = Number(bookingDetails.adults || 0) + Number(bookingDetails.children || 0);
 
     if ((currentOccupancy + newGuests) > limit) {
-        console.warn(`⛔ Overbooking: Tentou ${newGuests}, Restam ${limit - currentOccupancy}`);
         return res.status(409).json({ error: 'Sold Out', message: 'Vagas esgotadas.' });
     }
 
     // ==================================================================
-    // 💰 CÁLCULOS FINANCEIROS (COM CORREÇÃO DE CUPOM)
+    // 💰 CÁLCULOS FINANCEIROS
     // ==================================================================
-    console.log("💰 [5] Iniciando Cálculo Financeiro...");
-    
     let calculatedGrossTotal = 0; 
     const mpItemsList = []; 
 
-    // A) Validação de Preço (Carrinho vs Banco)
     if (bookingDetails.cartItems && bookingDetails.cartItems.length > 0) {
-        console.log("🛒 [5.1] Usando Validação de Carrinho");
         const productsRef = db.collection('products').where('dayUseId', '==', targetId);
         const productsSnap = await productsRef.get();
-        
         const dbProductsMap = {};
         productsSnap.forEach(doc => { dbProductsMap[doc.id] = { ...doc.data(), id: doc.id }; });
 
@@ -139,107 +122,52 @@ export default async function handler(req, res) {
             if (qty <= 0) continue;
             const realProduct = dbProductsMap[cartItem.id];
             
-            if (!realProduct) {
-                 console.error(`❌ Produto não encontrado: ${cartItem.id}`);
-                 continue; 
-            }
+            if (!realProduct) { continue; }
+            
             const unitPrice = Number(realProduct.price || 0);
             calculatedGrossTotal += (unitPrice * qty);
-            
-            mpItemsList.push({
-                id: cartItem.id,
-                title: realProduct.title,
-                quantity: qty,
-                unit_price: unitPrice
-            });
+            mpItemsList.push({ id: cartItem.id, title: realProduct.title, quantity: qty, unit_price: unitPrice });
         }
     } else {
-        // Fallback Legado
-        console.log("⚠️ [5.1] Usando Lógica Legada");
         let priceAdult = Number(item.priceAdult || 0);
         let priceChild = Number(item.priceChild || 0);
-        
-        const dateParts = bookingDetails.date.split('-');
-        const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 12);
-        const dayOfWeek = dateObj.getDay();
-        if (item.weeklyPrices && item.weeklyPrices[dayOfWeek]) {
-             const dayConfig = item.weeklyPrices[dayOfWeek];
-             if (dayConfig.adult) priceAdult = Number(dayConfig.adult);
-             if (dayConfig.child) priceChild = Number(dayConfig.child);
-        }
-
         calculatedGrossTotal = (Number(bookingDetails.adults || 0) * priceAdult) + (Number(bookingDetails.children || 0) * priceChild);
         mpItemsList.push({ id: 'legacy', title: 'Day Use Legacy', quantity: 1, unit_price: calculatedGrossTotal });
     }
 
-    // B) Definição da Taxa Base da Plataforma
     const PLATFORM_PERCENTAGE = item.promoRate === true ? 0.10 : 0.12;
-    console.log(`📊 Taxa Base Aplicada: ${(PLATFORM_PERCENTAGE * 100)}% (Promo: ${item.promoRate})`);
 
-    // C) Cupons e Subsídios (CORRIGIDO E ROBUSTO)
     let transactionAmount = calculatedGrossTotal;
     let platformSubsidy = 0; 
 
-    if (bookingDetails.couponCode && item.coupons && Array.isArray(item.coupons)) {
-        
-        const inputCode = bookingDetails.couponCode.toString().trim().toUpperCase();
-        console.log(`🎟️ Buscando cupom: "${inputCode}"`);
-
-        // Busca insensível a maiúsculas/minúsculas e espaços
-        const coupon = item.coupons.find(c => c.code && c.code.toString().trim().toUpperCase() === inputCode);
+    if (normalizedCouponCode && item.coupons && Array.isArray(item.coupons)) {
+        const coupon = item.coupons.find(c => c.code && c.code.trim().toUpperCase() === normalizedCouponCode);
         
         if (coupon) {
             let discountValue = 0;
-            
-            // Lógica híbrida (Valor fixo ou Porcentagem)
-            if (coupon.discountValue && coupon.discountType === 'fixed') {
+            if (coupon.discountType === 'fixed' && coupon.discountValue) {
                 discountValue = Number(coupon.discountValue);
             } else {
-                // Tenta pegar de discountValue (novo) ou percentage (velho)
                 const percent = Number(coupon.discountValue || coupon.percentage || 0);
                 discountValue = (calculatedGrossTotal * percent / 100);
             }
-
             transactionAmount -= discountValue;
             
-            if (coupon.createdBy === 'admin') {
-                platformSubsidy = discountValue;
-                console.log(`🎁 Cupom ADMIN aplicado (${coupon.code}): -R$ ${discountValue.toFixed(2)}`);
-            } else {
-                console.log(`🎟️ Cupom PARCEIRO aplicado (${coupon.code}): -R$ ${discountValue.toFixed(2)}`);
-            }
-        } else {
-            console.warn("⚠️ Cupom não encontrado no array do parceiro.");
-            console.log("   Disponíveis:", item.coupons.map(c => c.code));
+            if (coupon.createdBy === 'admin') platformSubsidy = discountValue;
         }
     }
     
-    // Arredondamento e Validação Final
     transactionAmount = Number(transactionAmount.toFixed(2));
-    console.log(`💵 [6] Valor Final a Pagar: R$ ${transactionAmount}`);
+    if (transactionAmount <= 0) throw new Error("Valor total inválido.");
 
-    if (transactionAmount <= 0) throw new Error("Valor total inválido (Zero ou negativo).");
-
-    // D) Cálculo do Split
     const mpRate = payment_method_id === 'pix' ? 0.0099 : 0.0398;
     const mpFeeCost = transactionAmount * mpRate;
     const rawPlatformCommission = calculatedGrossTotal * PLATFORM_PERCENTAGE;
 
     let finalApplicationFee = rawPlatformCommission - platformSubsidy - mpFeeCost;
-
     if (finalApplicationFee < 0) finalApplicationFee = 0;
     
     finalApplicationFee = Math.round(finalApplicationFee * 100) / 100;
-
-    console.log("🧮 SPLIT FINAL:", {
-        Bruto: calculatedGrossTotal,
-        Pago: transactionAmount,
-        TaxaAplicada: `${(PLATFORM_PERCENTAGE * 100)}%`,
-        ComissaoBase: rawPlatformCommission.toFixed(2),
-        CustoMP_Absorvido: mpFeeCost.toFixed(2),
-        SubsidioAdmin: platformSubsidy.toFixed(2),
-        FeeFinal_Plataforma: finalApplicationFee
-    });
 
     // ==================================================================
     // PROCESSAMENTO MERCADO PAGO
@@ -252,14 +180,14 @@ export default async function handler(req, res) {
     const cleanName = (item.name || "DayUse").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().substring(0, 15);
     const descriptor = `DU*${cleanName}`;
 
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    const clientIp = Array.isArray(rawIp) ? rawIp[0] : rawIp.toString().split(',')[0].trim();
+
     const paymentBody = {
-      transaction_amount: transactionAmount,
+      transaction_amount: transactionAmount, 
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      
-      // Lógica Condicional de Ambiente
       application_fee: process.env.MP_ACCESS_TOKEN_TEST ? null : finalApplicationFee,
-      
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       statement_descriptor: descriptor,
       external_reference: reservationId,
@@ -270,30 +198,34 @@ export default async function handler(req, res) {
         last_name: payer.last_name,
         identification: payer.identification
       },
+      installments: Number(installments),
+      issuer_id: issuer_id ? Number(issuer_id) : null,
+      
       additional_info: {
           items: [
               {
                   id: item.id,
                   title: `Reserva Day Use: ${item.name}`,
-                  description: "Pacote de reserva (Validado pelo servidor)",
+                  description: "Pacote de reserva",
                   quantity: 1,
                   unit_price: transactionAmount 
               }
           ],
-          ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress
+          ip_address: clientIp
       }
     };
 
     if (payment_method_id !== 'pix') {
       paymentBody.token = token;
-      paymentBody.installments = Number(installments);
-      if (issuer_id) paymentBody.issuer_id = Number(issuer_id);
     }
 
-    console.log("🚀 [7] Enviando para o Mercado Pago...");
-    const result = await payment.create({ body: paymentBody });
-    console.log("✅ [8] Resposta MP:", result.status, "| ID:", result.id);
-
+    const result = await payment.create({ 
+        body: paymentBody,
+        requestOptions: { idempotencyKey: reservationId } 
+    });
+    
+    const totalCobradoCliente = result.transaction_details?.total_paid_amount || transactionAmount;
+    
     // ==================================================================
     // 6. ATUALIZAÇÃO E RESPOSTA
     // ==================================================================
@@ -307,10 +239,10 @@ export default async function handler(req, res) {
             financialSnapshot: {
                 grossTotal: calculatedGrossTotal,
                 paidTotal: transactionAmount,
+                totalPaidWithInterest: totalCobradoCliente,
                 platformFee: finalApplicationFee,
                 mpFeeEstimated: mpFeeCost,
                 platformSubsidy: platformSubsidy,
-                platformBaseRate: PLATFORM_PERCENTAGE,
                 items: mpItemsList
             }
         });
@@ -325,8 +257,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("❌ [ERRO FATAL API]:", error);
-    if (error.cause) console.error("Detalhes MP:", JSON.stringify(error.cause, null, 2));
-
     return res.status(500).json({ 
         error: 'Erro interno', 
         message: error.message,
