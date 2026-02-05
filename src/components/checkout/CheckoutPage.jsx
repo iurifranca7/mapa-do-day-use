@@ -53,7 +53,7 @@ const CheckoutPage = () => {
   const [couponSuccess, setCouponSuccess] = useState(null);
 
   // Pagamento
-  const [paymentMethod, setPaymentMethod] = useState('card'); 
+  const [paymentMethod, setPaymentMethod] = useState('pix'); 
   const [cardName, setCardName] = useState('');
   const [docNumber, setDocNumber] = useState('');
   const [installments, setInstallments] = useState(1);
@@ -243,7 +243,7 @@ const CheckoutPage = () => {
           const dbCode = c.code ? c.code.trim().toUpperCase() : '';
           return dbCode === inputClean;
       });
-      
+
       // 5. Resultado
       if(found) {
           // Verifica se está ativo (caso tenha essa flag no banco)
@@ -346,14 +346,37 @@ const CheckoutPage = () => {
             paymentMethod,
             status: 'waiting_payment', 
             userId: user.uid, 
-            ownerId: itemData.ownerId, 
+            ownerId: finalItemData.ownerId, 
             createdAt: new Date(), 
             guestName: firstName, 
             guestEmail: email, 
             mpStatus: 'pending', 
             parentTicketId: bookingData.parentTicketId || null,
             billingAddress: paymentMethod === 'card' ? addressObj : null, 
-            payerDoc: cleanDoc
+            payerDoc: cleanDoc,
+            
+            // 🔥 CORREÇÃO 1: Salvando detalhes completos para o Card do Ingresso não quebrar
+            bookingDetails: { 
+                dayuseId: safeId, 
+                item: { 
+                    id: safeId, 
+                    name: finalItemData.name,
+                    // Salva a primeira imagem ou imagem de capa
+                    image: finalItemData.images?.[0] || finalItemData.image || '', 
+                    // Salva endereço básico para o card
+                    city: finalItemData.city || '',
+                    state: finalItemData.state || ''
+                }, 
+                date: bookingData.date, 
+                total: finalTotal, 
+                adults: bookingData.adults, 
+                children: bookingData.children, 
+                pets: bookingData.pets, 
+                selectedSpecial: bookingData.selectedSpecial, 
+                couponCode,
+                cartItems: bookingData.cartItems || [] 
+            },
+            reservationId: reservationIdRef 
         };
 
         // Salvar dados do usuário

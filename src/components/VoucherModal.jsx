@@ -13,23 +13,44 @@ import Button from './Button';
 
 const VoucherModal = ({ isOpen, trip, onClose }) => {
   const printRef = useRef();
-  const [fullItem, setFullItem] = useState(trip?.item || {});
+  
+  // 🔥 INICIALIZAÇÃO HÍBRIDA (Corrige "Endereço Carregando" eterno)
+  // Mescla dados da raiz (legado), do item e do bookingDetails para tentar preencher de imediato
+  const [fullItem, setFullItem] = useState({
+      ...trip, // Pega dados da raiz (city, cep, etc do legado)
+      ...(trip?.item || {}),
+      ...(trip?.bookingDetails?.item || {})
+  });
 
-  // Busca dados frescos e completos do local
+  // 🔥 USER EFFECT PARA ATUALIZAR INGRESSOS ANTIGOS
+  // Busca os dados mais recentes do estabelecimento (endereço, telefone) no banco
   useEffect(() => {
-    if (isOpen && trip?.item?.id) {
-        const fetchDayUseDetails = async () => {
-            try {
-                const docRef = doc(db, "dayuses", trip.item.id);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    setFullItem(prev => ({ ...prev, ...docSnap.data() }));
+    if (isOpen && trip) {
+        // Tenta achar o ID do local em qualquer estrutura possível
+        const dayUseId = trip.bookingDetails?.dayuseId || trip.bookingDetails?.item?.id || trip.item?.id || trip.dayuseId;
+
+        if (dayUseId) {
+            const fetchDayUseDetails = async () => {
+                try {
+                    const docRef = doc(db, "dayuses", dayUseId);
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        const freshData = docSnap.data();
+                        // Atualiza o estado priorizando os dados frescos do banco
+                        setFullItem(prev => ({ 
+                            ...prev, 
+                            ...freshData,
+                            // Mantém o nome original da reserva caso o local tenha mudado de nome (opcional)
+                            name: freshData.name || prev.name 
+                        }));
+                    }
+                } catch (error) {
+                    console.error("Erro ao atualizar detalhes do local:", error);
                 }
-            } catch (error) {
-                console.error("Erro ao buscar detalhes:", error);
-            }
-        };
-        fetchDayUseDetails();
+            };
+            fetchDayUseDetails();
+        }
     }
   }, [isOpen, trip]);
 
@@ -37,20 +58,22 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
 
   // --- LÓGICA DE DADOS ---
   const isLinkedVoucher = !!trip.linkedToReservationId;
-  const transactionId = trip.paymentId || trip.id;
-  const itemsList = trip.cartItems || [];
-  const allowFood = fullItem.allowFood !== undefined ? fullItem.allowFood : trip.item?.allowFood; 
+  // 🔥 Garante que use o ID da Reserva se não tiver paymentId
+  const transactionId = trip.paymentId || trip.id; 
+  const itemsList = trip.cartItems || trip.bookingDetails?.cartItems || [];
+  
+  // Dados com fallback seguro
+  const allowFood = fullItem.allowFood !== undefined ? fullItem.allowFood : false; 
   const openTime = fullItem.openingTime || '08:00';
   const closeTime = fullItem.closingTime || '18:00';
 
-  // Formatação da Data de Compra (Timestamp para String Legível)
   const purchaseDate = trip.createdAt 
     ? new Date(trip.createdAt.seconds * 1000).toLocaleString('pt-BR', { 
         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
       }) 
     : '-';
 
-  // Constrói string de endereço para os mapas
+  // Endereço (Prioriza o que veio do banco, senão usa o da reserva)
   const addressQuery = [
       fullItem.street, 
       fullItem.number, 
@@ -97,7 +120,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
 
       <div className="relative w-full max-w-md bg-[#F8FAFC] rounded-[2rem] overflow-hidden shadow-2xl animate-scale-up flex flex-col max-h-[92vh]">
         
-        {/* Header Fixo com Fechar */}
         <div className="absolute top-0 left-0 w-full p-4 flex justify-end z-20 pointer-events-none">
             <button 
                 onClick={onClose}
@@ -107,12 +129,10 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
             </button>
         </div>
 
-        {/* --- ÁREA DO INGRESSO (SCROLLABLE) --- */}
         <div ref={printRef} className="overflow-y-auto custom-scrollbar flex-1 bg-[#F8FAFC]">
           
-          {/* 1. HERO DO TICKET */}
+          {/* HERO DO TICKET */}
           <div className="bg-white m-4 mb-0 rounded-t-[1.5rem] rounded-b-[1.5rem] shadow-sm border border-slate-200 overflow-hidden relative">
-              {/* Faixa de Marca */}
               <div className="bg-[#0097A8] h-3 w-full"></div>
               
               <div className="p-6 text-center">
@@ -123,7 +143,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   </div>
                   
                   <h2 className="text-xl font-bold text-slate-900 leading-tight mb-1">
-                      {fullItem.name || trip.itemName}
+                      {fullItem.name || trip.itemName || "Day Use"}
                   </h2>
                   <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">
                       Ingresso de Acesso
@@ -132,17 +152,18 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   {/* QR Code Highlight */}
                   <div className="my-6 flex flex-col items-center">
                       <div className="p-3 bg-white border-2 border-dashed border-slate-200 rounded-2xl">
+                          {/* QR Code aponta para o ID da Reserva */}
                           <QRCode value={trip.id} size={160} fgColor="#1e293b" />
                       </div>
                       <div className="mt-3 bg-slate-100 px-4 py-1.5 rounded-full border border-slate-200">
                           <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-0.5">Código</p>
                           <p className="text-lg font-mono font-bold text-slate-800 tracking-wider">
+                              {/* 🔥 MOSTRA O ID DA RESERVA (ÚNICO) */}
                               {trip.id.slice(0, 8).toUpperCase()}
                           </p>
                       </div>
                   </div>
 
-                  {/* Aviso de Vínculo */}
                   {isLinkedVoucher && (
                       <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl text-left flex items-start gap-3 mb-2">
                           <LinkIcon className="text-blue-500 shrink-0 mt-0.5" size={16}/>
@@ -155,13 +176,12 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                       </div>
                   )}
 
-                  {/* Divisória Pontilhada */}
                   <div className="w-full border-b-2 border-dashed border-slate-100 my-4 relative">
                       <div className="absolute -left-8 -top-3 w-6 h-6 bg-[#F8FAFC] rounded-full"></div>
                       <div className="absolute -right-8 -top-3 w-6 h-6 bg-[#F8FAFC] rounded-full"></div>
                   </div>
 
-                  {/* DADOS PRINCIPAIS DO INGRESSO */}
+                  {/* DADOS PRINCIPAIS */}
                   <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-left">
                       <div>
                           <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Data</p>
@@ -178,7 +198,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                       <div>
                           <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Titular</p>
                           <p className="font-bold text-slate-800 flex items-center gap-1.5 text-sm truncate">
-                              <User size={14} className="text-[#0097A8]"/> {trip.holderName || "Visitante"}
+                              <User size={14} className="text-[#0097A8]"/> {trip.holderName || trip.guestName || "Visitante"}
                           </p>
                       </div>
                       <div>
@@ -188,7 +208,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                           </p>
                       </div>
                       
-                      {/* DADOS RESTAURADOS: DATA COMPRA & MÉTODO */}
                       <div>
                           <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Compra</p>
                           <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
@@ -217,7 +236,10 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   {fullItem.street ? (
                       <span>{fullItem.street}, {fullItem.number || 'S/N'} - {fullItem.district}, {fullItem.city} - {fullItem.state}</span>
                   ) : (
-                      <span className="italic">Endereço carregando...</span>
+                      <span className="italic text-slate-400">
+                          {/* Se não achou na reserva e nem no banco ainda */}
+                          Carregando endereço...
+                      </span>
                   )}
               </p>
 
@@ -237,7 +259,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
           {/* 3. RESUMO, REGRAS E CARDÁPIO */}
           <div className="mx-4 mt-4 mb-4 bg-white p-5 rounded-[1.5rem] shadow-sm border border-slate-200 space-y-6">
               
-              {/* Itens Comprados */}
+              {/* Itens */}
               <div>
                   <h3 className="text-xs font-bold text-slate-900 uppercase mb-3 flex items-center gap-2">
                       <FileText size={14} className="text-[#0097A8]"/> Itens do Ingresso
@@ -264,7 +286,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   </div>
               </div>
 
-              {/* Regras de Comida e Cardápio */}
+              {/* Regras e Cardápio */}
               <div>
                   {allowFood !== undefined && (
                       <div className={`p-3 rounded-xl border flex items-start gap-3 ${allowFood ? 'bg-green-50/50 border-green-100' : 'bg-red-50/50 border-red-100'}`}>
@@ -280,7 +302,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                       </div>
                   )}
 
-                  {/* BOTÃO DE CARDÁPIO (NOVO) */}
                   {fullItem.menuUrl && (
                       <a 
                           href={fullItem.menuUrl} 
@@ -293,7 +314,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   )}
               </div>
 
-              {/* Contato do Local (COM WHATSAPP CLICÁVEL) */}
+              {/* Contato */}
               <div>
                   <h3 className="text-xs font-bold text-slate-900 uppercase mb-3 flex items-center gap-2">
                       <MessageCircle size={14} className="text-[#0097A8]"/> Contato do Local
@@ -325,7 +346,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
           </div>
         </div>
 
-        {/* Rodapé de Ação */}
         <div className="bg-white border-t border-slate-200 p-4 z-10">
             <Button 
                 onClick={handlePrint}
@@ -341,7 +361,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
   );
 };
 
-// Ícone Ticket SVG (Helper)
 const TicketIcon = ({ size, className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
 );
