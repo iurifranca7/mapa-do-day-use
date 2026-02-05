@@ -1,28 +1,68 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-// Importação para chamar a Cloud Function
+import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore'; 
 import { getFunctions, httpsCallable } from 'firebase/functions'; 
 import { db } from '../firebase';
 import { 
   TrendingUp, Download, Search, Filter, ChevronDown, X, 
   DollarSign, CreditCard, User, FileText, Tag, 
-  CheckCircle, RefreshCw, Calendar, BadgeCheck
+  BadgeCheck, Clock, RefreshCw, Phone, Ban
 } from 'lucide-react';
 import { formatBRL } from '../utils/format';
 import Button from './Button';
 import ModalOverlay from './ModalOverlay';
+import RefundModal from './RefundModal'; // Seu modal ajustado
 
 // --- DRAWER DE DETALHES (RAIO-X) ---
-const SaleDetailDrawer = ({ sale, onClose }) => {
+const SaleDetailDrawer = ({ sale, onClose, onRequestRefund }) => {
+    const [fetchedPhone, setFetchedPhone] = useState(null);
+    const [loadingPhone, setLoadingPhone] = useState(true);
+
+    // 🔥 CORREÇÃO 1: BUSCA DE TELEFONE ASSÍNCRONA NO USUÁRIO
+    useEffect(() => {
+        const fetchUserPhone = async () => {
+            if (!sale) return;
+            setLoadingPhone(true);
+            
+            // Se já tem no objeto principal da reserva, usa ele
+            if (sale.guestPhone && sale.guestPhone.length > 5) {
+                setFetchedPhone(sale.guestPhone);
+                setLoadingPhone(false);
+                return;
+            }
+
+            // Se não, busca no documento do usuário
+            if (sale.userId) {
+                try {
+                    const userDoc = await getDoc(doc(db, "users", sale.userId));
+                    if (userDoc.exists()) {
+                        const userData = userDoc.data();
+                        // Tenta achar em varios lugares
+                        const found = userData.personalData?.phone || userData.phone || userData.mobile || null;
+                        setFetchedPhone(found);
+                    } else {
+                        setFetchedPhone(null);
+                    }
+                } catch (err) {
+                    console.error("Erro ao buscar telefone:", err);
+                }
+            }
+            setLoadingPhone(false);
+        };
+        fetchUserPhone();
+    }, [sale]);
+
     if (!sale) return null;
 
     const getStatusColor = (s) => {
         const status = (s || '').toLowerCase();
-        if (['approved','confirmed'].includes(status)) return 'text-green-600 bg-green-50 border-green-200';
+        if (['approved','confirmed', 'paid'].includes(status)) return 'text-green-600 bg-green-50 border-green-200';
         if (['pending','in_process'].includes(status)) return 'text-amber-600 bg-amber-50 border-amber-200';
         return 'text-red-600 bg-red-50 border-red-200';
     };
+
+    // Verifica se pode estornar (apenas se estiver pago)
+    const isRefundable = ['approved', 'confirmed', 'paid'].includes((sale.paymentStatus || '').toLowerCase());
 
     return createPortal(
         <>
@@ -70,13 +110,11 @@ const SaleDetailDrawer = ({ sale, onClose }) => {
                         </div>
                     </div>
 
-                    {/* DADOS DE PREVISÃO DE SAQUE */}
-                    {sale.releaseDate && (
-                        <div className="flex justify-between items-center bg-blue-50 p-3 rounded-xl border border-blue-100">
-                            <span className="text-xs font-bold text-blue-700 uppercase">Disponível em:</span>
-                            <span className="text-sm font-bold text-blue-900">{sale.releaseDate}</span>
-                        </div>
-                    )}
+                    {/* PREVISÃO DE SAQUE */}
+                    <div className="flex justify-between items-center bg-blue-50 p-3 rounded-xl border border-blue-100">
+                        <span className="text-xs font-bold text-blue-700 uppercase">Disponível em:</span>
+                        <span className="text-sm font-bold text-blue-900">{sale.releaseDate}</span>
+                    </div>
 
                     <section>
                         <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2"><CreditCard size={16}/> Transação</h3>
@@ -93,7 +131,7 @@ const SaleDetailDrawer = ({ sale, onClose }) => {
                             </div>
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-slate-500">Método</span>
-                                <span className="text-sm font-bold text-slate-700">{sale.paymentMethod}</span>
+                                <span className="text-sm font-bold text-slate-700 uppercase">{sale.paymentMethod}</span>
                             </div>
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-slate-500">Data Venda</span>
@@ -109,8 +147,11 @@ const SaleDetailDrawer = ({ sale, onClose }) => {
                                 <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center"><User size={20} className="text-slate-400"/></div>
                                 <div><p className="font-bold text-slate-800">{sale.guestName}</p><p className="text-xs text-slate-400">{sale.guestEmail}</p></div>
                             </div>
-                            <div className="pt-2 border-t border-slate-50">
-                                <p className="text-slate-500">Telefone: <span className="text-slate-800">{sale.guestPhone}</span></p>
+                            <div className="pt-2 border-t border-slate-50 flex items-center gap-2">
+                                <Phone size={14} className="text-slate-400"/> 
+                                <span className="text-slate-800 font-bold">
+                                    {loadingPhone ? 'Buscando...' : fetchedPhone || 'Não informado'}
+                                </span>
                             </div>
                         </div>
                     </section>
@@ -118,15 +159,31 @@ const SaleDetailDrawer = ({ sale, onClose }) => {
                     <section>
                         <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2"><FileText size={16}/> Itens</h3>
                         <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl">
-                            <ul className="text-sm space-y-2">
-                                {sale.items?.map((item, i) => (
-                                    <li key={i} className="flex justify-between items-center">
-                                        <span className="text-slate-600">{item.amount}x {item.title}</span>
-                                    </li>
-                                ))}
-                            </ul>
+                            {sale.items && sale.items.length > 0 ? (
+                                <ul className="text-sm space-y-2">
+                                    {sale.items.map((item, i) => (
+                                        <li key={i} className="flex justify-between items-center border-b border-slate-200/50 pb-1 last:border-0 last:pb-0">
+                                            <span className="text-slate-600 font-medium">{(item.amount || item.quantity)}x {item.title}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xs text-slate-400 italic">Itens não detalhados.</p>
+                            )}
                         </div>
                     </section>
+
+                    {/* BOTÃO DE ESTORNO */}
+                    {isRefundable && (
+                        <div className="pt-4 border-t border-slate-100">
+                            <button 
+                                onClick={() => onRequestRefund(sale)}
+                                className="w-full py-3 rounded-xl border border-red-200 text-red-600 font-bold text-sm hover:bg-red-50 flex items-center justify-center gap-2 transition-colors"
+                            >
+                                <Ban size={16}/> Estornar Venda
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </>,
@@ -137,8 +194,6 @@ const SaleDetailDrawer = ({ sale, onClose }) => {
 const PartnerSales = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  
-  // DADOS
   const [salesData, setSalesData] = useState([]);
   const [filteredData, setFilteredData] = useState([]);
   
@@ -152,45 +207,64 @@ const PartnerSales = ({ user }) => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
-  // Drawer
+  // Modais
   const [selectedSale, setSelectedSale] = useState(null);
+  const [saleToRefund, setSaleToRefund] = useState(null); 
+  const [refundLoading, setRefundLoading] = useState(false);
 
   // KPIs
   const [stats, setStats] = useState({ approvedCount: 0, totalRevenue: 0 });
 
-  // --- SINCRONIZAÇÃO COM BACKEND ---
+  // --- SINCRONIZAÇÃO ---
   const handleSynchronize = async () => {
-      if (!window.confirm("Isso irá buscar dados reais no Mercado Pago e atualizar seu painel. Deseja continuar?")) return;
-      
+      if (!window.confirm("Isso irá buscar dados reais no Mercado Pago. Deseja continuar?")) return;
       setSyncing(true);
       try {
           const functions = getFunctions();
           const synchronizeFn = httpsCallable(functions, 'synchronizeMercadoPagoTransactions');
-          
           const dates = getDateRangeDates(dateRange);
-          if (!dates) {
-              alert("Selecione um período válido.");
-              setSyncing(false);
-              return;
-          }
+          if (!dates) { alert("Selecione um período."); setSyncing(false); return; }
 
-          const result = await synchronizeFn({ 
-              begin_date: dates.start.toISOString(),
-              end_date: dates.end.toISOString()
-          });
-
-          alert(result.data.message || "Sincronização concluída com sucesso!");
-          loadSales(); // Recarrega a tabela para mostrar os dados novos
-
+          const result = await synchronizeFn({ begin_date: dates.start.toISOString(), end_date: dates.end.toISOString() });
+          alert(result.data.message || "Sincronização concluída!");
+          loadSales(); 
       } catch (error) {
           console.error("Erro Sync:", error);
-          alert("Erro ao sincronizar. Verifique se você está logado.");
+          alert("Erro ao sincronizar.");
+      } finally { setSyncing(false); }
+  };
+
+  // --- LÓGICA DE ESTORNO ---
+  const handleConfirmRefund = async (sale) => {
+      setRefundLoading(true);
+      try {
+          // Futuro: Chamada de API Real
+          // await fetch('/api/refund', ...);
+          
+          // Simulação no Firebase para feedback
+          await updateDoc(doc(db, "reservations", sale.id), {
+              status: 'cancelled',
+              paymentStatus: 'refunded',
+              updatedAt: new Date(),
+              history: ["Estorno solicitado via Painel em " + new Date().toLocaleString()]
+          });
+
+          // Atualiza listas locais
+          setSalesData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
+          setFilteredData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
+          
+          // Fecha tudo
+          setSaleToRefund(null); 
+          setSelectedSale(null);
+          alert("Estorno processado com sucesso!");
+      } catch (error) {
+          console.error("Erro no estorno:", error);
+          alert("Erro ao processar estorno. Tente novamente.");
       } finally {
-          setSyncing(false);
+          setRefundLoading(false);
       }
   };
 
-  // --- LÓGICA DE DATAS ---
   const getDateRangeDates = (range) => {
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -207,17 +281,15 @@ const PartnerSales = ({ user }) => {
       }
   };
 
-  // --- ENRIQUECIMENTO INTELIGENTE (HÍBRIDO: REAL vs ESTIMADO) ---
+  // --- ENRIQUECIMENTO INTELIGENTE ---
   const enrichData = (doc) => {
       const data = doc.data();
       
-      // 1. Valores Básicos
       const paidAmount = Number(data.total || data.totalPrice || 0);
       const couponValue = Number(data.discount || 0); 
       const couponName = data.couponCode || '-';
       const grossValue = paidAmount + couponValue; 
 
-      // 2. Verifica se já está sincronizado (Prioridade ao dado oficial do MP)
       const isReconciled = !!data.isFinanciallyReconciled;
 
       let feeValue = 0;
@@ -228,7 +300,6 @@ const PartnerSales = ({ user }) => {
       let statusDisplay = data.paymentStatus || data.status;
 
       if (isReconciled) {
-          // --- DADOS REAIS (VINDOS DA SINCRONIZAÇÃO) ---
           feeValue = data.mercadoPagoFee || 0;
           netValue = data.mercadoPagoNetReceived || 0;
           feePercent = grossValue > 0 ? ((feeValue / grossValue) * 100).toFixed(2) : 0;
@@ -236,13 +307,19 @@ const PartnerSales = ({ user }) => {
           paymentMethodDisplay = data.paymentMethodDetail || paymentMethodDisplay;
           statusDisplay = data.mercadoPagoStatus || statusDisplay;
       } else {
-          // --- DADOS ESTIMADOS (AINDA NÃO SINCRONIZADO) ---
           const sourceUrl = data.sourceUrl || 'mapadodayuse.com';
           feePercent = sourceUrl.includes('mapadodayuse.com') ? 12 : 0;
           feeValue = grossValue * (feePercent / 100);
           netValue = grossValue - feeValue - couponValue;
           releaseDate = 'Previsão D+14'; // Estimativa visual
       }
+
+      // 🔥 CORREÇÃO 2: ITENS HÍBRIDOS (Procura em items, cartItems ou financialSnapshot)
+      const rawItems = data.cartItems || data.items || data.financialSnapshot?.items || [];
+      const normalizedItems = rawItems.map(i => ({
+          title: i.title || i.name || 'Day Use',
+          amount: i.quantity || i.amount || 1
+      }));
 
       return {
           id: doc.id,
@@ -254,14 +331,14 @@ const PartnerSales = ({ user }) => {
           couponValue,
           couponName,
           
-          // Campos Dinâmicos (Híbridos)
           feePercent,
           feeValue,
           netValue,
           releaseDate,
           isReconciled,
           paymentMethod: paymentMethodDisplay,
-          paymentStatus: statusDisplay, // Atualiza visualmente o status para o real
+          paymentStatus: statusDisplay,
+          items: normalizedItems, // 🔥 ITENS CORRIGIDOS
           
           sourceDisplay: (data.sourceUrl || 'mapadodayuse.com').replace('https://', '').replace('www.', '').split('/')[0]
       };
@@ -283,7 +360,6 @@ const PartnerSales = ({ user }) => {
         allData.sort((a, b) => b.createdAtDate - a.createdAtDate);
         setSalesData(allData);
 
-        // KPI (Soma os valores PAGOS, independente se conciliado ou não)
         const approvedOnly = allData.filter(i => ['approved', 'confirmed', 'paid'].includes((i.paymentStatus || i.status).toLowerCase()));
         setStats({
             approvedCount: approvedOnly.length,
@@ -300,14 +376,11 @@ const PartnerSales = ({ user }) => {
       if (statusFilter !== 'all') {
           filtered = filtered.filter(item => {
               const s = (item.paymentStatus || item.status || '').toLowerCase();
-              const d = (item.statusDetail || '').toLowerCase();
               if (statusFilter === 'approved') return ['approved', 'confirmed', 'paid'].includes(s);
               if (statusFilter === 'pending') return ['pending', 'in_process', 'waiting_payment'].includes(s);
-              if (statusFilter === 'expired') return d === 'expired';
-              if (statusFilter === 'cancelled') return s === 'cancelled' && d !== 'expired';
+              if (statusFilter === 'cancelled') return ['cancelled', 'rejected'].includes(s);
               if (statusFilter === 'refunded') return s === 'refunded';
-              if (statusFilter === 'chargeback') return s === 'charged_back';
-              return true;
+              return s === statusFilter;
           });
       }
       if (productSearch) {
@@ -335,12 +408,12 @@ const PartnerSales = ({ user }) => {
 
   const getStatusBadge = (item) => {
       const s = (item.paymentStatus || '').toLowerCase();
-      // Badge Visual com ícone de conciliado
       const ConciliationIcon = item.isReconciled ? <BadgeCheck size={12} className="ml-1 text-inherit opacity-80" title="Verificado no MP"/> : null;
 
-      if (['approved', 'confirmed'].includes(s)) return <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">Aprovada {ConciliationIcon}</span>;
+      if (['approved', 'confirmed', 'paid'].includes(s)) return <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">Aprovada {ConciliationIcon}</span>;
       if (['pending', 'in_process'].includes(s)) return <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">Pendente {ConciliationIcon}</span>;
       if (['cancelled', 'rejected'].includes(s)) return <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">Cancelada {ConciliationIcon}</span>;
+      if (s === 'refunded') return <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">Estornada {ConciliationIcon}</span>;
       return <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-1">{s} {ConciliationIcon}</span>;
   };
 
@@ -356,8 +429,6 @@ const PartnerSales = ({ user }) => {
             <button onClick={handleLocalExport} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-600 hover:bg-slate-50 text-xs sm:text-sm">
                 <Download size={16}/> Baixar Planilha
             </button>
-
-            {/* BOTÃO DE SINCRONIZAÇÃO */}
             <button 
                 onClick={handleSynchronize} 
                 disabled={syncing}
@@ -385,13 +456,13 @@ const PartnerSales = ({ user }) => {
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
           <div className="relative min-w-[180px]">
               <select className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 font-bold text-sm rounded-xl py-3 pl-4 pr-10 outline-none focus:border-[#0097A8]" value={dateRange} onChange={(e) => { if (e.target.value === 'custom') setIsCustomDateOpen(true); setDateRange(e.target.value); }}>
-                  <option value="today">Hoje</option><option value="yesterday">Ontem</option><option value="this_month">Mês Atual</option><option value="last_month">Mês Passado</option><option value="last_90">Últimos 90 dias</option><option value="last_180">Últimos 180 dias</option><option value="last_12_months">Últimos 12 Meses</option><option value="all">Todo o Período</option><option value="custom">Personalizado...</option>
+                  <option value="today">Hoje</option><option value="yesterday">Ontem</option><option value="this_month">Mês Atual</option><option value="last_month">Mês Passado</option><option value="all">Todo o Período</option>
               </select>
               <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
           </div>
           <div className="relative min-w-[180px]">
               <select className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 font-bold text-sm rounded-xl py-3 pl-4 pr-10 outline-none focus:border-[#0097A8]" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                  <option value="all">Todos Status</option><option value="approved">Aprovada</option><option value="pending">Pendente</option><option value="expired">Expirada</option><option value="cancelled">Cancelada</option><option value="refunded">Reembolsada</option><option value="chargeback">Chargeback</option>
+                  <option value="all">Todos Status</option><option value="approved">Aprovada</option><option value="pending">Pendente</option><option value="cancelled">Cancelada</option><option value="refunded">Reembolsada</option>
               </select>
               <Filter size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
           </div>
@@ -440,7 +511,22 @@ const PartnerSales = ({ user }) => {
       </div>
 
       {isCustomDateOpen && createPortal(<ModalOverlay onClose={() => setIsCustomDateOpen(false)}><div className="bg-white p-6 rounded-2xl w-full max-w-sm"><h3 className="text-lg font-bold mb-4">Selecionar Período</h3><div className="space-y-3 mb-6"><div><label className="text-xs font-bold text-slate-500">Início</label><input type="date" className="w-full border p-2 rounded-lg" value={customStart} onChange={e => setCustomStart(e.target.value)} /></div><div><label className="text-xs font-bold text-slate-500">Fim</label><input type="date" className="w-full border p-2 rounded-lg" value={customEnd} onChange={e => setCustomEnd(e.target.value)} /></div></div><Button onClick={() => setIsCustomDateOpen(false)}>Aplicar Filtro</Button></div></ModalOverlay>, document.body)}
-      <SaleDetailDrawer sale={selectedSale} onClose={() => setSelectedSale(null)} />
+      
+      {/* DRAWER LATERAL */}
+      <SaleDetailDrawer 
+          sale={selectedSale} 
+          onClose={() => setSelectedSale(null)} 
+          onRequestRefund={(s) => setSaleToRefund(s)} // Abre o modal de estorno
+      />
+
+      {/* MODAL DE ESTORNO */}
+      <RefundModal 
+          isOpen={!!saleToRefund}
+          reservation={saleToRefund} // ATENÇÃO: Seu RefundModal usa 'reservation' em vez de 'sale'
+          onClose={() => setSaleToRefund(null)}
+          onConfirm={handleConfirmRefund}
+          loading={refundLoading}
+      />
     </div>
   );
 };
