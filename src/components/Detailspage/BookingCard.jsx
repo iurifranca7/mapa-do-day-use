@@ -68,16 +68,19 @@ const BookingCard = ({
 
   const totalItems = Object.values(cart).reduce((a, b) => a + (b.quantity || 0), 0);
 
-  // --- LÓGICA DE VINCULAÇÃO ---
+  // --- LÓGICA DE VINCULAÇÃO (VERSÃO FINAL BLINDADA) ---
   const checkExistingReservation = async (product) => {
       if (!user) {
-          showToast("Para comprar ingressos dependentes (Criança/Pet), selecione um ingresso que tenha pelo menos 1 adulto primeiro ou faça login para vincular a uma compra anterior.");
+          showToast("Para comprar ingressos dependentes (Criança/Pet) ou estacionamento, selecione um ingresso que tenha pelo menos 1 adulto primeiro ou faça login para vincular a uma compra anterior.");
           return;
       }
 
       setIsVerifyingLink(true);
+
       try {
-          const q = query(
+          // 1. Tenta buscar pela estrutura PADRÃO (item.id)
+          // Isso cobre reservas antigas ou migrações parciais
+          const q1 = query(
               collection(db, "reservations"),
               where("item.id", "==", item.id),
               where("date", "==", date),
@@ -85,15 +88,37 @@ const BookingCard = ({
               where("status", "in", ["confirmed", "approved", "paid"])
           );
 
-          const snapshot = await getDocs(q);
+          const snapshot1 = await getDocs(q1);
 
-          if (!snapshot.empty) {
-              const reservation = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+          if (!snapshot1.empty) {
+              // Achou na primeira tentativa
+              const reservation = { id: snapshot1.docs[0].id, ...snapshot1.docs[0].data() };
               setFoundReservation(reservation);
               setPendingProductToAdd(product);
-              setLinkModalOpen(true); 
+              setLinkModalOpen(true);
           } else {
-              showToast("Este ingresso requer um responsável. Selecione um ingresso que contenha pelo menos 1 Adulto no carrinho para continuar.", "warning");
+              // 2. Se não achou, tenta buscar pela NOVA ESTRUTURA (bookingDetails.dayuseId)
+              // Isso cobre as reservas novas geradas pelo CheckoutPage atualizado
+              const q2 = query(
+                  collection(db, "reservations"),
+                  where("bookingDetails.dayuseId", "==", item.id),
+                  where("date", "==", date),
+                  where("userId", "==", user.uid),
+                  where("status", "in", ["confirmed", "approved", "paid"])
+              );
+              
+              const snapshot2 = await getDocs(q2);
+
+              if (!snapshot2.empty) {
+                  // Achou na segunda tentativa (Estrutura Nova)
+                  const reservation2 = { id: snapshot2.docs[0].id, ...snapshot2.docs[0].data() };
+                  setFoundReservation(reservation2);
+                  setPendingProductToAdd(product);
+                  setLinkModalOpen(true);
+              } else {
+                  // Não achou em lugar nenhum
+                  showToast("Este ingresso requer um responsável. Selecione um ingresso que contenha pelo menos 1 Adulto no carrinho para continuar.", "warning");
+              }
           }
       } catch (error) {
           console.error("Erro ao verificar reservas:", error);
@@ -321,6 +346,7 @@ const BookingCard = ({
                 basePrice={0} 
                 onDateSelect={setDate} 
                 selectedDate={date} 
+                products={products} 
             />
         </div>
       </div>

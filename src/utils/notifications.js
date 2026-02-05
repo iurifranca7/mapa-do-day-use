@@ -38,24 +38,70 @@ const sendEmail = async (to, subject, html) => {
 // 1. NOTIFICAÇÃO CLIENTE (VOUCHER COMPLETO)
 // =============================================================================
 export const notifyCustomer = async (reservationData, reservationId) => {
+    // 1. Tenta encontrar o ID do Day Use em qualquer lugar possível (Novo ou Legado)
+    const dayUseId = reservationData.bookingDetails?.dayuseId 
+                  || reservationData.bookingDetails?.item?.id 
+                  || reservationData.item?.id 
+                  || reservationData.dayUseId;
+
+    let dbItemData = {};
+
+    // 2. Busca dados frescos do Banco de Dados (Endereço, Regras, Contato atualizados)
+    if (dayUseId) {
+        try {
+            const docRef = doc(db, "dayuses", dayUseId);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                dbItemData = docSnap.data();
+            }
+        } catch (e) {
+            console.error("Erro ao buscar dados do Day Use para email:", e);
+        }
+    }
+
+    // 3. Normaliza o objeto final (Prioridade: Banco > Nova Estrutura > Legado)
+    const itemData = {
+        ...reservationData,                 // Dados raiz (Legado: city, contactPhone)
+        ...(reservationData.item || {}),    // Objeto item (Legado)
+        ...(reservationData.bookingDetails?.item || {}), // Nova estrutura
+        ...dbItemData                       // Dados frescos do banco (Sobrescreve tudo para garantir atualização)
+    };
+
+    // 4. Prepara variáveis para o HTML (Com fallbacks de segurança)
+    const itemName = itemData.name || itemData.title || "Day Use";
+    const itemCity = itemData.city || "";
+    const itemState = itemData.state || "MG";
+    
+    // Constrói endereço completo baseado nas suas imagens do banco
+    const fullAddress = [
+        itemData.street,
+        itemData.number,
+        itemData.district,
+        itemData.city,
+        itemData.state
+    ].filter(Boolean).join(', ');
+
+    const mapLink = `http://googleusercontent.com/maps.google.com/?q=${encodeURIComponent(fullAddress || (itemName + " " + itemCity))}`;
+    
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${reservationId}`;
-    const mapLink = `http://googleusercontent.com/maps.google.com/?q=${encodeURIComponent(reservationData.item.name + " " + reservationData.item.city)}`;
     const purchaseDate = new Date().toLocaleString('pt-BR');
     const paymentLabel = reservationData.paymentMethod === 'pix' ? 'Pix' : 'Cartão';
     
-    let openingHours = "08:00 - 18:00"; 
-    if (reservationData.date && reservationData.item.weeklyPrices) {
+    // Horários (Tenta pegar do weeklyPrices ou usa fixo)
+    let openingHours = `${itemData.openingTime || '08:00'} - ${itemData.closingTime || '18:00'}`;
+    if (reservationData.date && itemData.weeklyPrices) {
         try {
             const [ano, mes, dia] = reservationData.date.split('-');
             const dateObj = new Date(ano, mes - 1, dia, 12); 
-            const dayConfig = reservationData.item.weeklyPrices[dateObj.getDay()];
+            const dayConfig = itemData.weeklyPrices[dateObj.getDay()];
             if (dayConfig?.hours) openingHours = dayConfig.hours;
         } catch (e) {}
     }
 
+    // Regras de Comida
     let rulesHtml = '';
-    if (reservationData.item.allowFood !== undefined) {
-        const isAllowed = reservationData.item.allowFood;
+    if (itemData.allowFood !== undefined) {
+        const isAllowed = itemData.allowFood;
         rulesHtml = `
             <div style="${STYLES.alertBox} background-color: ${isAllowed ? '#f0fdf4' : '#fef2f2'}; border: 1px solid ${isAllowed ? '#bbf7d0' : '#fecaca'}; color: ${isAllowed ? '#166534' : '#991b1b'};">
                 <table width="100%"><tr>
@@ -65,6 +111,11 @@ export const notifyCustomer = async (reservationData, reservationId) => {
             </div>`;
     }
 
+    // Itens do Carrinho
+    const cartItems = reservationData.cartItems || reservationData.bookingDetails?.cartItems || [];
+    const adultsCount = reservationData.adults || reservationData.bookingDetails?.adults || 0;
+    
+    // HTML DO EMAIL
     const html = `
         <div style="${STYLES.container}">
             <div style="${STYLES.wrapper}">
@@ -75,8 +126,8 @@ export const notifyCustomer = async (reservationData, reservationId) => {
                 </div>
                 <div style="${STYLES.body}">
                     <div style="text-align: center; margin-bottom: 30px;">
-                        <h2 style="color: #0f172a; margin: 0 0 5px; font-size: 26px; font-weight: 800;">${reservationData.item.name}</h2>
-                        <p style="color: #64748b; margin: 0; font-size: 14px;">${reservationData.item.city}, ${reservationData.item.state}</p>
+                        <h2 style="color: #0f172a; margin: 0 0 5px; font-size: 26px; font-weight: 800;">${itemName}</h2>
+                        <p style="color: #64748b; margin: 0; font-size: 14px;">${itemCity}, ${itemState}</p>
                         <a href="${mapLink}" style="color: #0097A8; font-size: 12px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 10px; background: #ecfeff; padding: 6px 12px; border-radius: 20px;">📍 Como Chegar</a>
                     </div>
                     
@@ -112,11 +163,11 @@ export const notifyCustomer = async (reservationData, reservationId) => {
                     <div style="${STYLES.box} background-color: #f0f9ff; border-color: #bae6fd;">
                         <p style="color: #0369a1; font-weight: 800; font-size: 11px; text-transform: uppercase; margin: 0 0 15px 0; letter-spacing: 1px;">🛒 Resumo do Pedido</p>
                         <ul style="margin: 0; padding: 0; list-style: none; font-size: 14px; color: #334155;">
-                            ${reservationData.cartItems ? reservationData.cartItems.map(item => 
+                            ${cartItems.length > 0 ? cartItems.map(item => 
                                 `<li style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px dashed #bae6fd; padding-bottom: 8px;">
                                     <span>${item.quantity || 1}x ${item.title}</span> 
                                 </li>`
-                            ).join('') : `<li style="margin-bottom: 5px;">Adultos: ${reservationData.adults}</li>`}
+                            ).join('') : `<li style="margin-bottom: 5px;">Adultos: ${adultsCount}</li>`}
                         </ul>
                         <div style="display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 2px solid #bae6fd; color: #0369a1; font-weight: 800; font-size: 16px;">
                             <span>TOTAL PAGO</span>
@@ -129,8 +180,9 @@ export const notifyCustomer = async (reservationData, reservationId) => {
                     <div style="${STYLES.box}">
                         <strong style="${STYLES.label} margin-bottom: 10px;">FALE COM O LOCAL</strong>
                         <div style="font-size: 14px; color: #334155;">
-                            ${reservationData.item.localWhatsapp ? `<p style="margin: 5px 0;">📱 WhatsApp: <strong>${reservationData.item.localWhatsapp}</strong></p>` : ''} 
-                            ${reservationData.item.localPhone ? `<p style="margin: 5px 0;">📞 Tel: <strong>${reservationData.item.localPhone}</strong></p>` : ''}
+                            ${itemData.localWhatsapp ? `<p style="margin: 5px 0;">📱 WhatsApp: <strong>${itemData.localWhatsapp}</strong></p>` : ''} 
+                            ${itemData.localPhone ? `<p style="margin: 5px 0;">📞 Tel: <strong>${itemData.localPhone}</strong></p>` : ''}
+                            ${!itemData.localWhatsapp && !itemData.localPhone ? '<p>Entre em contato via chat na plataforma.</p>' : ''}
                         </div>
                         <p style="font-size: 11px; color: #94a3b8; margin: 15px 0 0; font-style: italic;">* Para remarcações ou cancelamentos, contate diretamente o estabelecimento.</p>
                     </div>
@@ -144,7 +196,7 @@ export const notifyCustomer = async (reservationData, reservationId) => {
             </div>
         </div>`;
 
-    await sendEmail(reservationData.guestEmail, `🎟️ Seu Ingresso: ${reservationData.item.name}`, html);
+    await sendEmail(reservationData.guestEmail, `🎟️ Seu Ingresso: ${itemName}`, html);
 };
 
 // =============================================================================
@@ -269,10 +321,23 @@ export const notifyTicketStatusChange = async (reservation, type) => {
 // =============================================================================
 export const notifyPartner = async (reservationData, paymentId) => {
     if (!reservationData?.ownerId) return;
+
+    // Normalização básica para o parceiro também
+    const itemData = {
+        ...reservationData,
+        ...(reservationData.item || {}),
+        ...(reservationData.bookingDetails?.item || {})
+    };
+    const itemName = itemData.name || "Day Use";
+
+    // Busca dados do dono
     const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
     if (!ownerSnap.exists()) return;
     const ownerEmail = ownerSnap.data().email; 
     if (!ownerEmail) return;
+
+    const adultsCount = reservationData.adults || reservationData.bookingDetails?.adults || 0;
+    const childrenCount = reservationData.children || reservationData.bookingDetails?.children || 0;
 
     const html = `
         <div style="${STYLES.container}">
@@ -283,7 +348,7 @@ export const notifyPartner = async (reservationData, paymentId) => {
                 </div>
                 <div style="${STYLES.body}">
                     <p style="font-size: 16px; color: #333; margin-bottom: 25px;">
-                        Parabéns! O cliente <strong>${reservationData.guestName}</strong> acabou de reservar no <strong>${reservationData.item.name}</strong>.
+                        Parabéns! O cliente <strong>${reservationData.guestName}</strong> acabou de reservar no <strong>${itemName}</strong>.
                     </p>
                     
                     <div style="${STYLES.box} background-color: #ecfeff; border-color: #0097A8; border-left-width: 5px;">
@@ -297,8 +362,8 @@ export const notifyPartner = async (reservationData, paymentId) => {
                         <table width="100%" style="font-size: 14px; color: #334155;">
                             <tr><td style="padding: 3px 0;"><strong>Nome:</strong></td><td>${reservationData.guestName}</td></tr>
                             <tr><td style="padding: 3px 0;"><strong>Data Visita:</strong></td><td>${reservationData.date.split('-').reverse().join('/')}</td></tr>
-                            <tr><td style="padding: 3px 0;"><strong>Qtd:</strong></td><td>${reservationData.adults} Adt / ${reservationData.children} Cri</td></tr>
-                            <tr><td style="padding: 3px 0;"><strong>Telefone:</strong></td><td>${reservationData.guestPhone || '-'}</td></tr>
+                            <tr><td style="padding: 3px 0;"><strong>Qtd:</strong></td><td>${adultsCount} Adt / ${childrenCount} Cri</td></tr>
+                            <tr><td style="padding: 3px 0;"><strong>Telefone:</strong></td><td>${reservationData.guestPhone || reservationData.payerDoc || '-'}</td></tr>
                         </table>
                     </div>
 

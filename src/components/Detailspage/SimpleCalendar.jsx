@@ -3,10 +3,11 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const SimpleCalendar = ({ 
   availableDays = [], 
-  specialDates = [], // Recebe a lista de datas "exceção" (ex: Carnaval)
+  specialDates = [], 
   onDateSelect, 
   selectedDate, 
   prices = {}, 
+  products = [], 
   blockedDates = [], 
   basePrice = 0 
 }) => {
@@ -28,7 +29,6 @@ const SimpleCalendar = ({
     setCurr(newDate);
   };
 
-  // Função auxiliar segura para formatar YYYY-MM-DD localmente
   const formatDateLocal = (date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -37,49 +37,104 @@ const SimpleCalendar = ({
   };
 
   const isAvailable = (day) => {
-     const date = new Date(curr.getFullYear(), curr.getMonth(), day);
-     const dateStr = formatDateLocal(date); // Uso da formatação segura
-     
-     // Zera hora para comparação de passado
-     const today = new Date();
-     today.setHours(0,0,0,0);
+      const date = new Date(curr.getFullYear(), curr.getMonth(), day);
+      const dateStr = formatDateLocal(date); 
+      const today = new Date();
+      today.setHours(0,0,0,0);
 
-     // 1. Verifica se é passado
-     if (date < today) return false;
+      if (date < today) return false;
+      if (blockedDates.includes(dateStr)) return false;
 
-     // 2. Verifica Bloqueio Global (Prioridade Máxima)
-     if (blockedDates.includes(dateStr)) return false;
+      // Conversão segura para garantir a comparação
+      const safeAvailableDays = availableDays.map(d => Number(d));
+      const isStandardDay = safeAvailableDays.includes(date.getDay());
+      const isSpecialDate = specialDates.includes(dateStr);
 
-     // 3. Verifica Abertura (Dia da Semana PADRÃO OU Data ESPECIAL)
-     const isStandardDay = availableDays.includes(date.getDay());
-     const isSpecialDate = specialDates.includes(dateStr);
-
-     // O dia está liberado se for um dia padrão OU se for uma data especial cadastrada
-     return isStandardDay || isSpecialDate;
+      return isStandardDay || isSpecialDate;
   };
   
   const getDayPrice = (day) => {
       const date = new Date(curr.getFullYear(), curr.getMonth(), day);
-      const dayIndex = date.getDay();
-      const dayConfig = prices[dayIndex];
-      let price = Number(basePrice);
+      const dateStr = formatDateLocal(date); 
+      const dayIndex = date.getDay(); 
+      
+      let lowestPrice = Infinity;
 
-      if (dayConfig) {
-          if (typeof dayConfig === 'object' && dayConfig.adult) {
-              price = Number(dayConfig.adult);
-          } else if (!isNaN(dayConfig)) {
-              price = Number(dayConfig);
-          }
+      // 1. Lógica de Produtos
+      if (products && products.length > 0) {
+          products.forEach((product) => {
+              let isProductAvailable = false;
+
+              // Verifica Dia da Semana
+              let productWeekDays = product.availableDays;
+              if (!productWeekDays || productWeekDays.length === 0) {
+                  productWeekDays = [0, 1, 2, 3, 4, 5, 6]; 
+              }
+              const safeWeekDays = productWeekDays.map(d => Number(d));
+              
+              // Verifica Data Especial
+              const productSpecialDates = product.includedSpecialDates || [];
+              
+              // Regra de Ouro: Aberto se for dia da semana permitido OU data especial
+              if (safeWeekDays.includes(dayIndex) || productSpecialDates.includes(dateStr)) {
+                  isProductAvailable = true;
+              }
+
+              if (isProductAvailable) {
+                  let priceFound = Number(product.price || 0);
+                  
+                  // Override Semanal (WeeklyPrices)
+                  if (product.weeklyPrices && product.weeklyPrices[dayIndex]) {
+                      const wp = product.weeklyPrices[dayIndex];
+                      const wpPrice = (typeof wp === 'object') ? wp.price : wp;
+                      
+                      if (wpPrice !== undefined && wpPrice !== null && wpPrice !== "") {
+                          priceFound = Number(wpPrice);
+                      }
+                  }
+
+                  if (priceFound > 0) {
+                      if (priceFound < lowestPrice) {
+                          lowestPrice = priceFound;
+                      }
+                  }
+              }
+          });
       }
-      return price > 0 ? price : basePrice;
+
+      // 2. Fallback Legado (apenas se nenhum produto válido foi encontrado)
+      if (lowestPrice === Infinity) {
+          const globalDayConfig = prices[dayIndex];
+          let globalPrice = 0;
+
+          if (globalDayConfig) {
+              if (typeof globalDayConfig === 'object') {
+                  const pA = Number(globalDayConfig.adult || 0);
+                  const pC = Number(globalDayConfig.child || 0);
+                  const pU = Number(globalDayConfig.price || 0);
+                  const valids = [pA, pC, pU].filter(v => v > 0);
+                  if (valids.length > 0) globalPrice = Math.min(...valids);
+              } else if (!isNaN(globalDayConfig)) {
+                  globalPrice = Number(globalDayConfig);
+              }
+          } else {
+              globalPrice = Number(basePrice || 0);
+          }
+
+          if (globalPrice > 0) lowestPrice = globalPrice;
+      }
+
+      return lowestPrice === Infinity ? 0 : lowestPrice;
   };
 
-  // Melhor preço do mês (para destaque verde)
+  // Lógica visual para destacar o menor preço (ignora 0)
   let minPriceInView = Infinity;
   for (let d = 1; d <= daysInMonth; d++) {
       if (isAvailable(d)) {
           const p = getDayPrice(d);
-          if (p < minPriceInView) minPriceInView = p;
+          if (p > 0 && p < minPriceInView) { 
+              minPriceInView = p;
+          }
       }
   }
 
@@ -125,7 +180,20 @@ const SimpleCalendar = ({
                 }`}
             >
               <span className="z-10">{d}</span>
-              {available && <span className={`text-[9px] font-normal mt-0.5 z-10 ${isSelected ? 'text-cyan-100' : isCheapest ? 'text-green-600 font-extrabold' : 'text-slate-400'}`}>R${price}</span>}
+              
+              {/* 🔥 BLINDAGEM VISUAL: Se disponível mas preço for 0 ou erro, mostra bolinha */}
+              {available && (
+                  <div className="mt-1 z-10 flex items-center justify-center h-3">
+                      {price > 0 ? (
+                          <span className={`text-[9px] font-normal ${isSelected ? 'text-cyan-100' : isCheapest ? 'text-green-600 font-extrabold' : 'text-slate-400'}`}>
+                              R${price}
+                          </span>
+                      ) : (
+                          // Se preço for 0, mostra apenas uma bolinha verde discreta
+                          <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-green-500'}`} />
+                      )}
+                  </div>
+              )}
             </button>
           )
         })}
