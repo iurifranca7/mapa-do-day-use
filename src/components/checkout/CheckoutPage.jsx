@@ -295,23 +295,26 @@ const CheckoutPage = () => {
       setPaymentMethod(method);
       if (method === 'pix') setCardName('');
   };
-
-  // Processar Pagamento
- const processPayment = async () => {
-    // 1. Verificações Iniciais
+  
+ // Processar Pagamento
+  const processPayment = async () => {
+    // 1. Verificações Iniciais Básicas
     if (!user) { 
         window.scrollTo({ top: 0, behavior: 'smooth' });
         setErrorData({ title: "Identificação Necessária", msg: "Por favor, faça login ou cadastre-se." });
         return; 
     }
 
+    // Limpa CPF para envio (apenas números)
     const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
+    
+    // Validação simples de CPF se não for cupom 100%
     if ((paymentMethod === 'card' || paymentMethod === 'pix') && cleanDoc.length < 11) { 
         alert("CPF inválido."); 
         return; 
     }
 
-    // 2. Verificação de Segurança do Cartão
+    // 2. Verificação de Segurança do Cartão (Só se for Cartão)
     if (paymentMethod === 'card') {
         if (!mpInstance) {
             setErrorData({ 
@@ -323,12 +326,20 @@ const CheckoutPage = () => {
     }
 
     setProcessing(true);
+    
+    // Dados do Pagador
     const email = user.email || "cliente@mapadodayuse.com";
     const firstName = user.displayName ? user.displayName.split(' ')[0] : "Cliente";
     const lastName = user.displayName ? user.displayName.split(' ').slice(1).join(' ') : "Sobrenome";
+    
     let reservationIdRef = null;
 
     try {
+        // 🔥 CORREÇÃO: Define a variável AQUI, antes de qualquer uso
+        // Isso impede o erro "finalItemData is not defined" e garante dados atualizados
+        const finalItemData = freshItemData || itemData; 
+
+        // Monta objeto de endereço limpo para salvar no banco
         const addressObj = { 
             zipCode: cep, 
             street: addressStreet, 
@@ -338,6 +349,11 @@ const CheckoutPage = () => {
             state: addressState 
         };
 
+        // Garante um ID seguro para o Day Use
+        const safeId = finalItemData.id || finalItemData.dayuseId;
+
+        // --- MONTAGEM DO OBJETO DE RESERVA (FIRESTORE) ---
+        // Aqui salvamos tudo que o VoucherModal e o TripCard precisam para não dar erro
         const rawRes = {
             ...bookingData, 
             total: Number(finalTotal.toFixed(2)), 
@@ -346,7 +362,7 @@ const CheckoutPage = () => {
             paymentMethod,
             status: 'waiting_payment', 
             userId: user.uid, 
-            ownerId: finalItemData.ownerId, 
+            ownerId: finalItemData.ownerId, // Necessário para o Split
             createdAt: new Date(), 
             guestName: firstName, 
             guestEmail: email, 
@@ -355,17 +371,18 @@ const CheckoutPage = () => {
             billingAddress: paymentMethod === 'card' ? addressObj : null, 
             payerDoc: cleanDoc,
             
-            // 🔥 CORREÇÃO 1: Salvando detalhes completos para o Card do Ingresso não quebrar
+            // 🔥 ESTRUTURA BLINDADA PARA O VOUCHER
+            // Salva dados estáticos (Foto, Nome, Endereço) para o ingresso carregar rápido
             bookingDetails: { 
                 dayuseId: safeId, 
                 item: { 
                     id: safeId, 
                     name: finalItemData.name,
-                    // Salva a primeira imagem ou imagem de capa
+                    // Garante que a imagem não venha vazia
                     image: finalItemData.images?.[0] || finalItemData.image || '', 
-                    // Salva endereço básico para o card
-                    city: finalItemData.city || '',
-                    state: finalItemData.state || ''
+                    // Salva cidade/estado para o card não ficar "carregando"
+                    city: finalItemData.city || addressCity || '',
+                    state: finalItemData.state || addressState || ''
                 }, 
                 date: bookingData.date, 
                 total: finalTotal, 
@@ -376,29 +393,28 @@ const CheckoutPage = () => {
                 couponCode,
                 cartItems: bookingData.cartItems || [] 
             },
-            reservationId: reservationIdRef 
+            // O ID será preenchido após o addDoc, mas deixamos a chave preparada
+            reservationId: null 
         };
 
-        // Salvar dados do usuário
+        // Atualiza cadastro do usuário se marcado "Salvar dados"
         if (paymentMethod === 'card' && saveUserData && user) {
             const userRef = doc(db, "users", user.uid);
             await setDoc(userRef, { personalData: { cpf: cleanDoc, address: addressObj } }, { merge: true });
         }
 
-        // Criar reserva no Firestore
+        // 1. CRIA A RESERVA NO BANCO (Status: waiting_payment)
         const docRef = await addDoc(collection(db, "reservations"), rawRes);
         reservationIdRef = docRef.id; 
-        setCurrentReservationId(reservationIdRef); 
-        const safeId = itemData.id || itemData.dayuseId;
-
-        console.log("🔍 DEBUG CHECKOUT DATA:", {
-            bookingData: bookingData,
-            cartItems: bookingData?.cartItems,
-            adults: bookingData?.adults,
-            children: bookingData?.children
-        });
         
-        // --- AQUI ESTAVA O ERRO: DEFINIÇÃO DO PAYLOAD DEVE VIR ANTES DO TOKEN ---
+        // Atualiza o ID dentro do próprio documento (boa prática para buscas futuras)
+        await updateDoc(docRef, { reservationId: reservationIdRef, id: reservationIdRef });
+        
+        setCurrentReservationId(reservationIdRef); 
+
+        console.log("✅ Reserva criada:", reservationIdRef);
+        
+        // --- PREPARAÇÃO PARA PAGAMENTO (MERCADO PAGO) ---
         const paymentPayload = {
             token: null, 
             transaction_amount: Number(finalTotal.toFixed(2)),
@@ -421,22 +437,12 @@ const CheckoutPage = () => {
                     } 
                 })
             },
-            bookingDetails: { 
-                dayuseId: safeId, 
-                item: { id: safeId, name: itemData.name }, 
-                date: bookingData.date, 
-                total: finalTotal, 
-                adults: bookingData.adults, 
-                children: bookingData.children, 
-                pets: bookingData.pets, 
-                selectedSpecial: bookingData.selectedSpecial, 
-                couponCode,
-                cartItems: bookingData.cartItems || [] 
-            },
+            // Envia detalhes para o backend (útil para emails transacionais)
+            bookingDetails: rawRes.bookingDetails, 
             reservationId: reservationIdRef 
         };
 
-        // 3. Geração do Token (Só acontece AGORA, que o paymentPayload já existe)
+        // 3. Geração do Token de Cartão (Se for Crédito)
         if (paymentMethod === 'card') {
             try {
                 if (!mpInstance) throw new Error("Sistema de pagamento não inicializado.");
@@ -451,12 +457,11 @@ const CheckoutPage = () => {
                     throw new Error("Dados do cartão inválidos.");
                 }
                 
-                // Agora sim podemos salvar o token no payload
                 paymentPayload.token = tokenObj.id; 
             
             } catch (tokenErr) {
                 console.error("Erro token:", tokenErr);
-                // Apaga a reserva pois falhou antes de enviar ao backend
+                // ⚠️ ROLLBACK: Apaga a reserva se o token falhar, para não deixar lixo no banco
                 await deleteDoc(doc(db, "reservations", reservationIdRef));
                 
                 const msg = tokenErr.message?.includes("primary field") 
@@ -469,7 +474,7 @@ const CheckoutPage = () => {
             }
         }
 
-        // 4. Enviar para o Backend
+        // 4. Envia para o Backend (API)
         const response = await fetch("/api/process-payment", { 
             method: "POST", 
             headers: { "Content-Type":"application/json" }, 
@@ -478,8 +483,9 @@ const CheckoutPage = () => {
         
         const result = await response.json();
 
-        // 5. Tratamento da Resposta
+        // 5. Tratamento da Resposta do Backend
         if (!response.ok || result.status === 'rejected' || result.status === 'cancelled') {
+            // Se recusou, atualiza o status no banco para o usuário ver "Recusado"
             const status = (response.status === 409) ? 'cancelled_sold_out' : 'failed_payment';
             await updateDoc(doc(db, "reservations", reservationIdRef), { status });
             
@@ -492,6 +498,7 @@ const CheckoutPage = () => {
             return; 
         }
 
+        // 6. Sucesso!
         if (paymentMethod === 'pix' && result.point_of_interaction) {
             setPixData(result.point_of_interaction.transaction_data); 
             setShowPixModal(true); 
@@ -499,6 +506,8 @@ const CheckoutPage = () => {
         } else if (result.status === 'approved' || result.status === 'confirmed') {
             setProcessing(false); 
             setShowSuccess(true); 
+            
+            // Dispara notificações (Email/WhatsApp)
             const finalData = { ...rawRes, paymentId: result.id, status: result.status };
             notifyCustomer(finalData, reservationIdRef).catch(console.error);
             notifyPartner(finalData, result.id).catch(console.error);
@@ -513,7 +522,7 @@ const CheckoutPage = () => {
         setErrorData({ title: "Erro", msg: "Falha na comunicação. Tente novamente." });
         setProcessing(false);
     }
-};
+  };
 
   const handleSoldOutReturn = () => { navigate(-1); };
   const handlePixSuccess = async () => {
