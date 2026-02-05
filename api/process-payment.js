@@ -67,7 +67,7 @@ export default async function handler(req, res) {
     const ownerRef = db.collection('users').doc(item.ownerId);
     const ownerSnap = await ownerRef.get();
    
-    const partnerAccessToken = process.env.MP_ACCESS_TOKEN_TEST || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
+    const partnerAccessToken = process.env.MP_ACCESS_TOKEN || (ownerSnap.exists ? ownerSnap.data().mp_access_token : null);
 
     if (!partnerAccessToken) {
         console.error(`❌ Parceiro ${item.ownerId} sem token.`);
@@ -187,7 +187,7 @@ export default async function handler(req, res) {
       transaction_amount: transactionAmount, 
       description: `Reserva: ${item.name}`,
       payment_method_id,
-      application_fee: process.env.MP_ACCESS_TOKEN_TEST ? null : finalApplicationFee,
+      application_fee: process.env.MP_ACCESS_TOKEN ? null : finalApplicationFee,
       notification_url: `${baseUrl}/api/webhooks/mercadopago`,
       statement_descriptor: descriptor,
       external_reference: reservationId,
