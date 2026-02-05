@@ -399,6 +399,13 @@ const CheckoutPage = () => {
             await setDoc(userRef, { personalData: { cpf: cleanDoc, address: addressObj } }, { merge: true });
         }
 
+        // 🕵️‍♂️ LOG DE INVESTIGAÇÃO 2: O que estamos salvando no Banco?
+        console.group("🕵️‍♂️ [CHECKOUT] Salvando no Firestore");
+        console.log("Objeto rawRes completo:", rawRes);
+        console.log("Link na Raiz (parentTicketId):", rawRes.parentTicketId);
+        console.log("Link dentro dos Itens:", rawRes.bookingDetails?.cartItems?.map(i => i.linkedToReservationId));
+        console.groupEnd();
+
         // 1. CRIA A RESERVA NO BANCO (Status: waiting_payment)
         const docRef = await addDoc(collection(db, "reservations"), rawRes);
         reservationIdRef = docRef.id; 

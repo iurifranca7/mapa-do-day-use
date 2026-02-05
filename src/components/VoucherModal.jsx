@@ -22,6 +22,23 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
       ...(trip?.bookingDetails?.item || {})
   });
 
+  useEffect(() => {
+      if (isOpen && trip) {
+          console.group("🕵️‍♂️ [VOUCHER MODAL] Análise de Dados");
+          console.log("Objeto Trip Completo:", trip);
+          
+          // Tenta achar o vínculo em todos os lugares possíveis
+          const linkNaRaiz = trip.linkedToReservationId || trip.parentTicketId;
+          const linkNosItens = trip.bookingDetails?.cartItems?.find(i => i.linkedToReservationId)?.linkedToReservationId;
+          const linkNosItensRaiz = trip.cartItems?.find(i => i.linkedToReservationId)?.linkedToReservationId;
+
+          console.log("🔗 Vínculo na Raiz:", linkNaRaiz);
+          console.log("🔗 Vínculo nos Itens (BookingDetails):", linkNosItens);
+          console.log("🔗 Vínculo nos Itens (Raiz):", linkNosItensRaiz);
+          console.groupEnd();
+      }
+  }, [isOpen, trip]);
+
   // 🔥 USER EFFECT PARA ATUALIZAR INGRESSOS ANTIGOS
   // Busca os dados mais recentes do estabelecimento (endereço, telefone) no banco
   useEffect(() => {
