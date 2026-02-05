@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import { 
   User, MapPin, Info, Clock, Users, ShieldCheck, Coffee, 
   Edit, X, Image as ImageIcon, Trash2, Video, Search, Plus, Calendar, Utensils,
-  MoreVertical, Power, AlertTriangle, ArrowLeft, Loader2, ExternalLink, Check, Rocket
+  MoreVertical, Power, AlertTriangle, ArrowLeft, Loader2, ExternalLink, Check, Rocket, Ban // <--- CORREÇÃO 1: Ban adicionado
 } from 'lucide-react';
 import Button from './Button';
 import ModalOverlay from './ModalOverlay';
@@ -14,16 +14,18 @@ import { generateSlug, formatBRL } from '../utils/format';
 
 // --- CONSTANTES ---
 const AMENITIES_LIST = [
-  "Piscina", "Piscina Aquecida", "Piscina Infantil", "Sauna", "Jacuzzi", "Ofurô",
-  "Churrasqueira", "Campo de Futebol", "Quadra de Tênis", "Quadra de Areia",
-  "Playground", "Salão de Jogos", "Sinuca", "Totó/Pebolim", "Ping Pong",
-  "Trilha Ecológica", "Cachoeira", "Pesca Esportiva", "Passeio a Cavalo",
+  "Piscina", "Piscina aquecida", "Piscina infantil", "Sauna", "Jacuzzi", "Ofurô",
+  "Churrasqueira", "Campo de Futebol", "Quadra de tênis", "Quadra de areia",
+  "Playground", "Salão de jogos", "Sinuca", "Totó/Pebolim", "Ping Pong",
+  "Trilha ecológica", "Cachoeira", "Pesca esportiva", "Passeio a cavalo",
   "Fazendinha", "Redário", "Espaço Zen", "Massagem", "Wi-Fi", "Estacionamento",
-  "Pet Friendly", "Acessibilidade", "Tirolesa", "Arvorismo", "Caiaque", "Pedalinho"
+  "Pet friendly", "Acessibilidade", "Tirolesa", "Arvorismo", "Caiaque", "Pedalinho",
+  "Animais exóticos", "Espaços instagramaveis", "Área verde", "Canoagem","Stand Up paddle",
+  "Pesque e solte"
 ];
 
 const MEALS_LIST = [
-  "Café da Manhã", "Almoço", "Café da Tarde", "Jantar", "Petiscos", "Bebidas não alcoólicas", "Bebidas alcoólicas", "Buffet Livre", "À La Carte"
+  "Café da Manhã", "Almoço","Sobremesa","Café da tarde", "Jantar", "Petiscos", "Bebidas não alcoólicas", "Bebidas alcoólicas", "Buffet livre", "À La Carte"
 ];
 
 const PartnerMyDayUse = ({ user }) => {
@@ -44,6 +46,7 @@ const PartnerMyDayUse = ({ user }) => {
   const [loadingCities, setLoadingCities] = useState(false);
   const [amenitySearch, setAmenitySearch] = useState("");
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [blockedDateInput, setBlockedDateInput] = useState('');
   
   // Lista estática de estados
   const states = [
@@ -65,6 +68,7 @@ const PartnerMyDayUse = ({ user }) => {
     // Funcionamento
     availableDays: [0, 6], 
     openingTime: '09:00', closingTime: '18:00', specialDates: [],
+    blockedDates: [],
     // Capacidade
     capacityAdults: '', capacityChildren: '', capacityPets: '',
     parkingCars: '', parkingMoto: '',
@@ -139,6 +143,7 @@ const PartnerMyDayUse = ({ user }) => {
         images: loadedImages,
         // Garante compatibilidade de campos
         availableDays: item.availableDays || [0, 6],
+        blockedDates: item.blockedDates || [],
         amenities: item.amenities || [],
         meals: item.meals || [],
         capacityAdults: item.dailyStock?.adults || item.capacityAdults || '',
@@ -148,29 +153,32 @@ const PartnerMyDayUse = ({ user }) => {
     setViewMode('edit');
   };
 
-  const handleToggleStatus = async (item) => {
-    // Inverte o valor atual (se era false vira true, se era true vira false)
-    const newPausedState = !item.paused; 
+  const handleToggleStatus = async (dayUse) => {
+    const isCurrentlyActive = dayUse.status === 'active';
+    const newStatus = isCurrentlyActive ? 'paused' : 'active';
+    const newPausedValue = newStatus !== 'active';
 
     try {
-        await updateDoc(doc(db, "dayuses", item.id), { 
-            paused: newPausedState, // <--- CAMPO CORRETO (Booleano)
+        const docRef = doc(db, "dayuses", dayUse.id);
+        
+        await updateDoc(docRef, {
+            status: newStatus,          
+            paused: newPausedValue,     
             updatedAt: new Date()
         });
-        
-        fetchDayUses(); // Atualiza lista
-        
-        setFeedback({ 
-            type: 'success', 
-            title: 'Status Atualizado', 
-            // Se newPausedState é true, as vendas foram PAUSADAS. Se false, foram ATIVADAS.
-            msg: `Vendas ${newPausedState ? 'pausadas' : 'ativadas'} com sucesso.` 
-        });
+
+        // --- CORREÇÃO 2: Nome do set estava errado (era setDayUses) ---
+        setDayUsesList(currentList => currentList.map(item => 
+            item.id === dayUse.id 
+                ? { ...item, status: newStatus, paused: newPausedValue } 
+                : item
+        ));
+
     } catch (error) {
-        console.error(error);
-        setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível alterar o status.' });
+        console.error("Erro ao atualizar status:", error);
+        alert("Não foi possível alterar o status. Verifique sua conexão.");
     }
-};
+  };
 
   const handleDeleteItem = async (id) => {
     if(!window.confirm("Tem certeza que deseja excluir este Day Use? Essa ação não pode ser desfeita.")) return;
@@ -185,7 +193,7 @@ const PartnerMyDayUse = ({ user }) => {
   };
 
 
-  // --- HANDLERS DO FORMULÁRIO (Igual anterior) ---
+  // --- HANDLERS DO FORMULÁRIO ---
 
   const handlePhoneChange = (e) => {
     let val = e.target.value.replace(/\D/g, '');
@@ -304,7 +312,6 @@ const PartnerMyDayUse = ({ user }) => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      // 1. Validações
       const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (formData.contactEmail && !emailRegex.test(formData.contactEmail.trim())) {
           setFeedback({ type: 'error', title: 'E-mail Inválido', msg: 'Digite um e-mail válido.' });
@@ -321,16 +328,16 @@ const PartnerMyDayUse = ({ user }) => {
           setLoading(false); return;
       }
 
-      // 2. Preparar Dados
-      const generatedSlug = generateSlug(formData.name); // Gera o slug aqui
+      const generatedSlug = generateSlug(formData.name);
       
       const dataToSave = {
         ...formData,
         contactEmail: formData.contactEmail.trim().toLowerCase(),
         ownerId: user.uid,
-        slug: generatedSlug, // Usa o slug gerado
+        slug: generatedSlug,
         updatedAt: new Date(),
         status: 'active',
+        paused: false, 
         dailyStock: {
             adults: Number(formData.capacityAdults),
             children: Number(formData.capacityChildren),
@@ -338,7 +345,6 @@ const PartnerMyDayUse = ({ user }) => {
         }
       };
 
-      // 3. Salvar no Firebase
       let savedId = formData.id;
       if (formData.id) {
         await updateDoc(doc(db, "dayuses", formData.id), dataToSave);
@@ -347,7 +353,6 @@ const PartnerMyDayUse = ({ user }) => {
         savedId = docRef.id;
       }
 
-      // ATUALIZA O ESTADO LOCAL COM O NOVO SLUG E ID (Para o modal usar corretamente)
       setFormData(prev => ({ 
           ...prev, 
           id: savedId, 
@@ -355,7 +360,6 @@ const PartnerMyDayUse = ({ user }) => {
           status: 'active' 
       }));
 
-      // 4. SUCESSO
       setEditModal(null);
       setShowPublishModal(true);
       
@@ -369,7 +373,6 @@ const PartnerMyDayUse = ({ user }) => {
 
   // --- RENDERIZAÇÃO ---
 
-  // Componente de Card (Edição)
   const SectionCard = ({ title, icon, onEdit, children }) => (
     <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow h-full flex flex-col">
       <div className="flex justify-between items-start mb-4">
@@ -389,13 +392,11 @@ const PartnerMyDayUse = ({ user }) => {
     </div>
   );
 
-  // MODO LISTA
   if (viewMode === 'list') {
       const filteredList = dayUsesList.filter(item => item.name?.toLowerCase().includes(searchTerm.toLowerCase()));
 
       return (
         <div className="max-w-6xl mx-auto py-8 px-4 animate-fade-in">
-             {/* Header */}
              <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
                 <div className="w-full md:w-auto">
                     <h1 className="text-3xl font-bold text-slate-900">Meu Day Use</h1>
@@ -406,7 +407,6 @@ const PartnerMyDayUse = ({ user }) => {
                 </Button>
             </div>
 
-            {/* Filtros */}
             <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm mb-6 flex items-center gap-4">
                 <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
@@ -427,7 +427,6 @@ const PartnerMyDayUse = ({ user }) => {
                 </div>
             </div>
 
-            {/* Lista Vazia */}
             {!loadingList && filteredList.length === 0 && (
                 <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
                     <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
@@ -439,11 +438,9 @@ const PartnerMyDayUse = ({ user }) => {
                 </div>
             )}
 
-            {/* Grid de Cards */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredList.map(item => (
                     <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col group">
-                        {/* Imagem */}
                         <div className="h-48 bg-slate-100 relative">
                             {item.images && item.images[0] ? (
                                 <img src={item.images[0]} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={item.name}/>
@@ -452,7 +449,6 @@ const PartnerMyDayUse = ({ user }) => {
                                     <ImageIcon size={40}/>
                                 </div>
                             )}
-                            {/* Badge de Status */}
                             <div className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-bold shadow-sm backdrop-blur-md border ${
                                 item.status === 'paused' 
                                 ? 'bg-amber-100/90 text-amber-700 border-amber-200' 
@@ -462,7 +458,6 @@ const PartnerMyDayUse = ({ user }) => {
                             </div>
                         </div>
 
-                        {/* Conteúdo */}
                         <div className="p-6 flex-1 flex flex-col">
                             <h3 className="font-bold text-xl text-slate-900 mb-1 line-clamp-1" title={item.name}>{item.name || 'Sem Nome'}</h3>
                             <p className="text-xs text-slate-400 mb-6 flex items-center gap-1">
@@ -472,15 +467,25 @@ const PartnerMyDayUse = ({ user }) => {
                             <div className="mt-auto grid grid-cols-3 gap-2">
                                 <button 
                                     onClick={() => handleToggleStatus(item)}
-                                    className={`col-span-1 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition-colors ${
-                                        item.paused 
-                                        ? 'bg-green-50 text-green-600 hover:bg-green-100' // Se está pausado, mostra botão VERDE para Ativar
-                                        : 'bg-amber-50 text-amber-600 hover:bg-amber-100' // Se está ativo, mostra botão LARANJA para Pausar
+                                    className={`flex flex-col items-center justify-center gap-1 p-2 rounded-xl transition-colors font-bold text-xs w-full h-20 
+                                    ${item.status === 'active' 
+                                        ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100' 
+                                        : 'bg-green-50 text-green-600 hover:bg-green-100 border border-green-100' 
                                     }`}
                                 >
-                                    <Power size={16}/> 
-                                    {item.paused ? 'Ativar Vendas' : 'Pausar Vendas'}
+                                    {item.status === 'active' ? (
+                                        <>
+                                            <Ban size={20} />
+                                            Pausar
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Power size={20} />
+                                            Ativar
+                                        </>
+                                    )}
                                 </button>
+
                                 <button 
                                     onClick={() => handleEditItem(item)}
                                     className="col-span-1 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-600 hover:bg-blue-100 flex flex-col items-center justify-center gap-1 transition-colors"
@@ -499,7 +504,6 @@ const PartnerMyDayUse = ({ user }) => {
                 ))}
             </div>
             
-            {/* Feedback Modal */}
             {feedback && createPortal(
                 <FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback?.type} title={feedback?.title} msg={feedback?.msg} />,
                 document.body
@@ -508,7 +512,7 @@ const PartnerMyDayUse = ({ user }) => {
       );
   }
 
-  // MODO EDIÇÃO (O COMPONENTE ANTERIOR)
+  // MODO EDIÇÃO
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 animate-fade-in">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -522,7 +526,6 @@ const PartnerMyDayUse = ({ user }) => {
             </div>
         </div>
         <div className="flex gap-3">
-             {/* BOTÃO PREVIEW RESTAURADO */}
              {formData.id && (
                 <Button 
                     onClick={() => window.open(`/preview/${formData.id}`, '_blank')} 
@@ -533,7 +536,6 @@ const PartnerMyDayUse = ({ user }) => {
                 </Button>
              )}
              
-             {/* BOTÃO PUBLICAR */}
              <Button onClick={handleSave} disabled={loading} className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2 pl-4 pr-6">
                 {loading ? <Loader2 className="animate-spin"/> : <><Rocket size={20}/> Publicar</>}
              </Button>
@@ -920,6 +922,231 @@ const PartnerMyDayUse = ({ user }) => {
         </ModalOverlay>, document.body
       )}
 
+      {/* --- CORREÇÃO 3: MODAL DE FUNCIONAMENTO (Estava faltando) --- */}
+      {editModal === 'operation' && createPortal(
+        <ModalOverlay onClose={() => setEditModal(null)}>
+          <div className="bg-white p-6 md:p-8 rounded-3xl w-full max-w-4xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center"><Clock size={20}/></div>
+                <h3 className="font-bold text-2xl text-slate-900">Funcionamento</h3>
+              </div>
+              <button onClick={()=>setEditModal(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+            </div>
+            
+            <div className="space-y-8">
+                <div>
+                    <label className="text-sm font-bold text-slate-700 block mb-4">Dias de Funcionamento Padrão</label>
+                    <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+                        {['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'].map((day, index) => {
+                            const isSelected = formData.availableDays.includes(index);
+                            return (
+                                <button
+                                    key={index}
+                                    onClick={() => {
+                                        const newDays = isSelected 
+                                            ? formData.availableDays.filter(d => d !== index)
+                                            : [...formData.availableDays, index];
+                                        setFormData({...formData, availableDays: newDays.sort()});
+                                    }}
+                                    className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl border-2 transition-all ${
+                                        isSelected 
+                                        ? 'border-[#0097A8] bg-[#0097A8]/5 text-[#0097A8] shadow-sm' 
+                                        : 'border-slate-100 text-slate-400 hover:border-slate-300'
+                                    }`}
+                                >
+                                    <span className="text-xs uppercase font-bold">{day.substring(0, 3)}</span>
+                                    {isSelected && <span className="w-2 h-2 bg-[#0097A8] rounded-full mt-2"></span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                    <label className="text-sm font-bold text-slate-700 block mb-4">Horário de Funcionamento Geral</label>
+                    <div className="flex items-center gap-4">
+                        <div className="flex-1">
+                            <span className="text-xs text-slate-500 mb-1 block">Abertura</span>
+                            <input 
+                                type="time" 
+                                className="w-full border p-3 rounded-xl bg-white outline-none focus:border-[#0097A8]" 
+                                value={formData.openingTime} 
+                                onChange={e => setFormData({...formData, openingTime: e.target.value})}
+                            />
+                        </div>
+                        <span className="text-slate-300 font-bold mt-4">-</span>
+                        <div className="flex-1">
+                            <span className="text-xs text-slate-500 mb-1 block">Fechamento</span>
+                            <input 
+                                type="time" 
+                                className="w-full border p-3 rounded-xl bg-white outline-none focus:border-[#0097A8]" 
+                                value={formData.closingTime} 
+                                onChange={e => setFormData({...formData, closingTime: e.target.value})}
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div className="flex justify-between items-center mb-4">
+                        <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <Calendar size={16}/> Horários Especiais / Feriados
+                        </label>
+                        <button 
+                            onClick={() => {
+                                const newSpecial = [...(formData.specialDates || []), { date: '', open: '09:00', close: '18:00', note: '' }];
+                                setFormData({...formData, specialDates: newSpecial});
+                            }}
+                            className="text-xs font-bold text-[#0097A8] flex items-center gap-1 hover:underline"
+                        >
+                            <Plus size={14}/> Adicionar Data
+                        </button>
+                    </div>
+
+                    <div className="space-y-3">
+                        {(!formData.specialDates || formData.specialDates.length === 0) && (
+                            <div className="text-center py-6 border-2 border-dashed border-slate-100 rounded-xl text-slate-400 text-sm">
+                                Nenhuma data especial configurada.
+                            </div>
+                        )}
+                        {formData.specialDates?.map((item, idx) => (
+                            <div key={idx} className="flex flex-col md:flex-row gap-3 bg-white p-3 rounded-xl border border-slate-200 items-end md:items-center animate-fade-in">
+                                <div className="flex-1 w-full">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Data</span>
+                                    <input 
+                                        type="date" 
+                                        className="w-full border p-2 rounded-lg text-sm bg-slate-50"
+                                        value={item.date}
+                                        onChange={e => {
+                                            const list = [...formData.specialDates];
+                                            list[idx].date = e.target.value;
+                                            setFormData({...formData, specialDates: list});
+                                        }}
+                                    />
+                                </div>
+                                <div className="w-24">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Abre</span>
+                                    <input 
+                                        type="time" 
+                                        className="w-full border p-2 rounded-lg text-sm"
+                                        value={item.open}
+                                        onChange={e => {
+                                            const list = [...formData.specialDates];
+                                            list[idx].open = e.target.value;
+                                            setFormData({...formData, specialDates: list});
+                                        }}
+                                    />
+                                </div>
+                                <div className="w-24">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Fecha</span>
+                                    <input 
+                                        type="time" 
+                                        className="w-full border p-2 rounded-lg text-sm"
+                                        value={item.close}
+                                        onChange={e => {
+                                            const list = [...formData.specialDates];
+                                            list[idx].close = e.target.value;
+                                            setFormData({...formData, specialDates: list});
+                                        }}
+                                    />
+                                </div>
+                                <div className="flex-1 w-full">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Motivo (Opcional)</span>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Ex: Natal"
+                                        className="w-full border p-2 rounded-lg text-sm"
+                                        value={item.note}
+                                        onChange={e => {
+                                            const list = [...formData.specialDates];
+                                            list[idx].note = e.target.value;
+                                            setFormData({...formData, specialDates: list});
+                                        }}
+                                    />
+                                </div>
+
+                                <button 
+                                    onClick={() => {
+                                        const list = formData.specialDates.filter((_, i) => i !== idx);
+                                        setFormData({...formData, specialDates: list});
+                                    }}
+                                    className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors mb-0.5"
+                                    title="Remover data"
+                                >
+                                    <Trash2 size={18}/>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                {/* 🔥 NOVO BLOCO: DATAS BLOQUEADAS */}
+                    <hr className="border-slate-100" />
+                    
+                    <div>
+                        <label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-4">
+                            <Ban size={16} className="text-red-500"/> Datas Bloqueadas (Exceções)
+                        </label>
+                        <p className="text-xs text-slate-400 mb-3">
+                            Selecione dias específicos em que o local estará fechado, mesmo que seja um dia de funcionamento normal.
+                        </p>
+
+                        <div className="flex gap-2 mb-4">
+                            <input 
+                                type="date" 
+                                className="border p-2 rounded-xl text-sm flex-1 outline-none focus:border-[#0097A8] bg-slate-50"
+                                value={blockedDateInput}
+                                onChange={(e) => setBlockedDateInput(e.target.value)}
+                            />
+                            <button 
+                                onClick={() => {
+                                    if (!blockedDateInput) return;
+                                    if (formData.blockedDates.includes(blockedDateInput)) {
+                                        alert("Esta data já está bloqueada.");
+                                        return;
+                                    }
+                                    setFormData({
+                                        ...formData, 
+                                        blockedDates: [...(formData.blockedDates || []), blockedDateInput].sort()
+                                    });
+                                    setBlockedDateInput('');
+                                }}
+                                className="bg-slate-800 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-700 transition-colors"
+                            >
+                                Bloquear Data
+                            </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {(!formData.blockedDates || formData.blockedDates.length === 0) && (
+                                <span className="text-xs text-slate-300 italic">Nenhuma data bloqueada.</span>
+                            )}
+                            {formData.blockedDates?.map((date) => (
+                                <div key={date} className="bg-red-50 border border-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 animate-fade-in">
+                                    {/* Formatação visual da data (DD/MM/AAAA) */}
+                                    {date.split('-').reverse().join('/')}
+                                    <button 
+                                        onClick={() => {
+                                            const newList = formData.blockedDates.filter(d => d !== date);
+                                            setFormData({...formData, blockedDates: newList});
+                                        }}
+                                        className="hover:text-red-800 transition-colors"
+                                    >
+                                        <X size={14}/>
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    {/* 🔥 FIM DO NOVO BLOCO */}
+                    
+                <Button onClick={() => setEditModal(null)} className="w-full py-4 text-lg mt-8">Confirmar</Button>
+            </div>
+          </div>
+        </ModalOverlay>, document.body
+      )}
+
+
       {editModal === 'capacity' && createPortal(
         <ModalOverlay onClose={() => setEditModal(null)}>
           <div className="bg-white p-6 md:p-8 rounded-3xl w-full max-w-3xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
@@ -1139,174 +1366,6 @@ const PartnerMyDayUse = ({ user }) => {
             <Button onClick={() => setEditModal(null)} className="w-full py-4 text-lg mt-8">Confirmar</Button>
           </div>
         </ModalOverlay>, document.body
-      )}
-
-      {editModal === 'operation' && createPortal(
-        <ModalOverlay onClose={() => setEditModal(null)}>
-          <div className="bg-white p-6 md:p-8 rounded-3xl w-full max-w-4xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-8">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center"><Clock size={20}/></div>
-                <h3 className="font-bold text-2xl text-slate-900">Funcionamento</h3>
-              </div>
-              <button onClick={()=>setEditModal(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
-            </div>
-            
-            <div className="space-y-8">
-                <div>
-                    <label className="text-sm font-bold text-slate-700 block mb-4">Dias de Funcionamento Padrão</label>
-                    <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-                        {['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'].map((day, index) => {
-                            const isSelected = formData.availableDays.includes(index);
-                            return (
-                                <button
-                                    key={index}
-                                    onClick={() => {
-                                        const newDays = isSelected 
-                                            ? formData.availableDays.filter(d => d !== index)
-                                            : [...formData.availableDays, index];
-                                        setFormData({...formData, availableDays: newDays.sort()});
-                                    }}
-                                    className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl border-2 transition-all ${
-                                        isSelected 
-                                        ? 'border-[#0097A8] bg-[#0097A8]/5 text-[#0097A8] shadow-sm' 
-                                        : 'border-slate-100 text-slate-400 hover:border-slate-300'
-                                    }`}
-                                >
-                                    <span className="text-xs uppercase font-bold">{day.substring(0, 3)}</span>
-                                    {isSelected && <span className="w-2 h-2 bg-[#0097A8] rounded-full mt-2"></span>}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                    <label className="text-sm font-bold text-slate-700 block mb-4">Horário de Funcionamento Geral</label>
-                    <div className="flex items-center gap-4">
-                        <div className="flex-1">
-                            <span className="text-xs text-slate-500 mb-1 block">Abertura</span>
-                            <input 
-                                type="time" 
-                                className="w-full border p-3 rounded-xl bg-white outline-none focus:border-[#0097A8]" 
-                                value={formData.openingTime} 
-                                onChange={e => setFormData({...formData, openingTime: e.target.value})}
-                            />
-                        </div>
-                        <span className="text-slate-300 font-bold mt-4">-</span>
-                        <div className="flex-1">
-                            <span className="text-xs text-slate-500 mb-1 block">Fechamento</span>
-                            <input 
-                                type="time" 
-                                className="w-full border p-3 rounded-xl bg-white outline-none focus:border-[#0097A8]" 
-                                value={formData.closingTime} 
-                                onChange={e => setFormData({...formData, closingTime: e.target.value})}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                <div>
-                    <div className="flex justify-between items-center mb-4">
-                        <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                            <Calendar size={16}/> Horários Especiais / Feriados
-                        </label>
-                        <button 
-                            onClick={() => {
-                                const newSpecial = [...(formData.specialDates || []), { date: '', open: '09:00', close: '18:00', note: '' }];
-                                setFormData({...formData, specialDates: newSpecial});
-                            }}
-                            className="text-xs font-bold text-[#0097A8] flex items-center gap-1 hover:underline"
-                        >
-                            <Plus size={14}/> Adicionar Data
-                        </button>
-                    </div>
-
-                    <div className="space-y-3">
-                        {(!formData.specialDates || formData.specialDates.length === 0) && (
-                            <div className="text-center py-6 border-2 border-dashed border-slate-100 rounded-xl text-slate-400 text-sm">
-                                Nenhuma data especial configurada.
-                            </div>
-                        )}
-                        {formData.specialDates?.map((item, idx) => (
-                            <div key={idx} className="flex flex-col md:flex-row gap-3 bg-white p-3 rounded-xl border border-slate-200 items-end md:items-center animate-fade-in">
-                                <div className="flex-1 w-full">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Data</span>
-                                    <input 
-                                        type="date" 
-                                        className="w-full border p-2 rounded-lg text-sm bg-slate-50"
-                                        value={item.date}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].date = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="w-24">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Abre</span>
-                                    <input 
-                                        type="time" 
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.open}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].open = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="w-24">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Fecha</span>
-                                    <input 
-                                        type="time" 
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.close}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].close = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="flex-1 w-full">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Motivo (Opcional)</span>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Ex: Natal"
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.note}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].note = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <button 
-                                    onClick={() => {
-                                        const list = formData.specialDates.filter((_, i) => i !== idx);
-                                        setFormData({...formData, specialDates: list});
-                                    }}
-                                    className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors mb-0.5"
-                                    title="Remover data"
-                                >
-                                    <Trash2 size={18}/>
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-                <Button onClick={() => setEditModal(null)} className="w-full py-4 text-lg mt-8">Confirmar</Button>
-            </div>
-          </div>
-        </ModalOverlay>, document.body
-      )}
-
-      {/* FEEDBACK MODAL */}
-      {feedback && createPortal(
-        <FeedbackModal isOpen={!!feedback} onClose={() => setFeedback(null)} type={feedback?.type} title={feedback?.title} msg={feedback?.msg} />,
-        document.body
       )}
 
       {/* MODAL DE SUCESSO DA PUBLICAÇÃO */}
