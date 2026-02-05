@@ -1,19 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { collection, query, where, getDocs, doc, Timestamp, getDoc } from 'firebase/firestore'; // updateDoc removido pois o hook faz isso
+import { collection, query, where, getDocs, doc, Timestamp, getDoc } from 'firebase/firestore'; 
 import { db } from '../firebase';
 import { 
   Users, DollarSign, TrendingUp, ArrowRight, QrCode, 
   ChevronDown, Eye, EyeOff, Calendar, RefreshCw,
-  ScanLine, X, AlertCircle, MessageCircle, Info,
-  Link as LinkIcon, Package, CheckCircle // Novos ícones necessários para o modal rico
+  MessageCircle, Info
 } from 'lucide-react';
 import { formatBRL } from '../utils/format';
 import Chart from 'react-apexcharts';
 import QrScannerModal from './QrScannerModal';
-import ModalOverlay from './ModalOverlay';
-import Button from './Button';
-import { useTicketValidation } from '../hooks/useTicketValidation'; // <--- SEU HOOK
+import TicketValidationModal from './TicketValidationModal'; // 🔥 SEU NOVO COMPONENTE
+import FeedbackModal from './FeedbackModal';
 
 const months = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -27,6 +24,7 @@ const PartnerOverview = ({ user, setActiveTab }) => {
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [showBalance, setShowBalance] = useState(false);
+  const [feedback, setFeedback] = useState(null);
 
   // Dados
   const [stats, setStats] = useState({
@@ -48,51 +46,82 @@ const PartnerOverview = ({ user, setActiveTab }) => {
     }
   });
 
-  // --- ESTADOS DO SCANNER E HOOK ---
+  // --- ESTADOS DO SCANNER PADRONIZADOS ---
   const [isScannerOpen, setIsScannerOpen] = useState(false);
-  const [parentVerified, setParentVerified] = useState(false); // Checkbox local
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scannedRes, setScannedRes] = useState(null);
 
-  // INTEGRANDO O HOOK DE VALIDAÇÃO (Substitui a lógica manual)
-  const { 
-      scannedRes, parentRes, loading: scanLoading, 
-      scanTicket, confirmValidation, resetScan 
-  } = useTicketValidation(user);
+  // --- FUNÇÃO DE BUSCA (PADRONIZADA IGUAL AO CALENDÁRIO) ---
+  const handleScanTicket = async (rawValue) => {
+      if (!user) return;
+      setScanLoading(true);
+      try {
+          let code = rawValue || '';
+          // Limpeza de URL se for QR de link
+          if (code.includes('http') || code.includes('/')) {
+              if (code.endsWith('/')) code = code.slice(0, -1);
+              const parts = code.split('/');
+              code = parts[parts.length - 1]; 
+          }
+          code = code.trim(); 
 
-  const handleScanWrapper = (code) => {
-      scanTicket(code);
-      setIsScannerOpen(false); 
-      setParentVerified(false);
-  };
+          // 1. Busca por TicketCode (Campo amigável)
+          const qTicketCode = query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("ticketCode", "==", code.toUpperCase()));
+          // 2. Busca por ID direto (Document ID)
+          const docRef = doc(db, "reservations", code);
+          
+          const [snapTicket, docSnapId] = await Promise.all([getDocs(qTicketCode), getDoc(docRef)]);
 
-  const handleConfirmWrapper = async () => {
-      const success = await confirmValidation(parentVerified);
-      if (success) {
-          // Atualiza KPI localmente após sucesso (Cosmético, para não precisar recarregar tudo)
-          setStats(prev => ({
-              ...prev,
-              checkinsToday: prev.checkinsToday + (Number(scannedRes.totalGuests) || 1),
-              pendingCheckinsToday: Math.max(0, prev.pendingCheckinsToday - (Number(scannedRes.totalGuests) || 1))
-          }));
+          let foundData = null;
+          if (!snapTicket.empty) {
+              foundData = { id: snapTicket.docs[0].id, ...snapTicket.docs[0].data() };
+          } else if (docSnapId.exists() && docSnapId.data().ownerId === user.uid) {
+              foundData = { id: docSnapId.id, ...docSnapId.data() };
+          }
+
+          if (!foundData) { 
+              setFeedback({ type: 'error', title: 'Não encontrado', msg: `Ingresso não localizado: ${code}` });
+              setScanLoading(false); 
+              return; 
+          }
+
+          const payStatus = (foundData.paymentStatus || foundData.status || '').toLowerCase();
+          if (['cancelled', 'rejected', 'refunded'].includes(payStatus)) {
+              setFeedback({ type: 'error', title: 'Cancelado', msg: 'Este ingresso foi cancelado ou reembolsado!' });
+          }
+
+          setScannedRes(foundData); 
+          setIsScannerOpen(false); // Fecha scanner e abre o modal de validação
+      } catch (error) { 
+          console.error("Erro busca:", error); 
+          setFeedback({ type: 'error', title: 'Erro', msg: 'Falha técnica ao buscar ingresso.' });
+      } finally { 
+          setScanLoading(false); 
       }
   };
 
-  // Helpers Visuais
-  const translateStatusDisplay = (status) => {
-      const s = (status || '').toLowerCase();
-      if (['approved', 'confirmed', 'paid'].includes(s)) return 'Pago/Confirmado';
-      if (['validated'].includes(s)) return 'Já Utilizado';
-      if (['pending', 'waiting_payment'].includes(s)) return 'Aguardando Pagamento';
-      if (['cancelled', 'rejected'].includes(s)) return 'Cancelado';
-      return status;
+  // --- SUCESSO NA VALIDAÇÃO ---
+  const handleValidationSuccess = (updatedRes) => {
+      setFeedback({ type: 'success', title: 'Entrada Confirmada', msg: `${updatedRes.guestName} liberado!` });
+      
+      // Atualiza os números da tela inicial em tempo real
+      setStats(prev => ({
+          ...prev,
+          checkinsToday: prev.checkinsToday + (Number(updatedRes.totalGuests) || 1),
+          pendingCheckinsToday: Math.max(0, prev.pendingCheckinsToday - (Number(updatedRes.totalGuests) || 1))
+      }));
+      
+      setScannedRes(null);
   };
 
+  // Helpers Visuais
   const maskedValue = (value, type = 'currency') => {
       if (!showBalance) return '••••••';
       if (type === 'currency') return formatBRL(value);
       return value;
   };
 
-  // --- BUSCA DE DADOS (MANTIDA INTACTA) ---
+  // --- BUSCA DE DADOS (MANTIDA) ---
   useEffect(() => {
     const fetchData = async () => {
       if (!user) return;
@@ -146,7 +175,7 @@ const PartnerOverview = ({ user, setActiveTab }) => {
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       
-      {/* BOTÃO DE SCANNER (SÓ APARECE NO DESKTOP AGORA) */}
+      {/* BOTÃO DE SCANNER (DESKTOP) */}
       <div className="hidden md:flex justify-end mb-[-40px] relative z-10">
           <button onClick={() => setIsScannerOpen(true)} className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-transform active:scale-95 text-sm">
               <QrCode size={18} className="text-[#0097A8]"/> Validar Ingresso
@@ -154,7 +183,7 @@ const PartnerOverview = ({ user, setActiveTab }) => {
       </div>
 
       <div className="grid md:grid-cols-2 gap-4 pt-10 md:pt-0">
-          {/* CARDS FINANCEIRO E VISITANTES (IGUAIS AO ANTERIOR) */}
+          {/* CARDS FINANCEIRO E VISITANTES */}
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm relative overflow-hidden">
               <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3">
@@ -200,103 +229,24 @@ const PartnerOverview = ({ user, setActiveTab }) => {
         </div>
       </div>
 
-      {/* --- MODAIS DE VALIDAÇÃO (USANDO O HOOK) --- */}
-      <QrScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onScan={handleScanWrapper} loading={scanLoading} />
+      {/* --- SISTEMA DE VALIDAÇÃO PADRONIZADO --- */}
+      <QrScannerModal 
+          isOpen={isScannerOpen} 
+          onClose={() => setIsScannerOpen(false)} 
+          onScan={handleScanTicket} 
+          loading={scanLoading} 
+      />
 
-      {scannedRes && createPortal(
-            <ModalOverlay onClose={resetScan}>
-                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in relative mx-4">
-                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-                        <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800">
-                            <ScanLine className="text-[#0097A8]"/> Conferir Ingresso
-                        </h3>
-                        <button onClick={resetScan}><X size={20}/></button>
-                    </div>
-
-                    <div className="text-center mb-6">
-                        <h2 className="text-2xl font-bold text-slate-900 leading-tight">{scannedRes.guestName}</h2>
-                        <p className="text-sm text-slate-500 font-mono mt-1">#{scannedRes.ticketCode || scannedRes.id.slice(0,6).toUpperCase()}</p>
-                    </div>
-
-                    {scannedRes.date !== new Date().toISOString().split('T')[0] && (
-                        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-xl text-left shadow-sm">
-                            <div className="flex items-center gap-2 text-red-800 font-bold mb-1"><AlertCircle size={20}/> <span>ATENÇÃO: DATA ERRADA!</span></div>
-                            <p className="text-sm text-red-700">Este ingresso é válido para <strong>{scannedRes.date ? scannedRes.date.split('-').reverse().join('/') : 'Data indefinida'}</strong>.<br/>Hoje é {new Date().toLocaleDateString('pt-BR')}.</p>
-                        </div>
-                    )}
-
-                    {/* DETALHAMENTO DE ITENS */}
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-6 space-y-3">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1"><Package size={12}/> Itens do Ingresso</p>
-                        <div className="space-y-2">
-                            {(scannedRes.cartItems || scannedRes.items)?.map((item, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-sm border-b border-slate-200/50 pb-1 last:border-0 last:pb-0">
-                                    <div className="leading-tight">
-                                        <span className="font-bold text-slate-700">{item.quantity || item.amount}x {item.title}</span>
-                                        {item.description && <p className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.description}</p>}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        <div className="pt-2 mt-2 border-t border-slate-200 flex justify-between items-center">
-                            <span className="text-xs font-bold text-slate-500">Status Atual:</span>
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${['approved','confirmed','paid'].includes(scannedRes.status || scannedRes.paymentStatus) ? 'bg-green-100 text-green-700' : scannedRes.status === 'validated' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
-                                {translateStatusDisplay(scannedRes.status === 'validated' ? 'validated' : (scannedRes.status || scannedRes.paymentStatus))}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* AVISO DE INGRESSO VINCULADO (COM LÓGICA DO HOOK) */}
-                    {scannedRes.linkedToReservationId && (
-                        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 text-left">
-                            <div className="flex items-center gap-2 text-amber-800 font-bold mb-2">
-                                <LinkIcon size={18}/> Verificação de Responsável
-                            </div>
-                            <p className="text-xs text-amber-700 mb-3">
-                                Este é um ingresso <strong>dependente</strong>. A entrada só é permitida na presença do titular.
-                            </p>
-                            {parentRes ? (
-                                <div className="bg-white p-3 rounded-lg border border-amber-100 mb-3">
-                                    <p className="text-[10px] text-slate-400 uppercase font-bold">Responsável</p>
-                                    <p className="font-bold text-slate-800">{parentRes.guestName}</p>
-                                    <p className="text-xs text-slate-500 font-mono">#{parentRes.ticketCode || parentRes.id.slice(0,6).toUpperCase()}</p>
-                                </div>
-                            ) : (
-                                <div className="text-xs text-slate-400 italic mb-3">Buscando dados do responsável...</div>
-                            )}
-                            <label className="flex items-start gap-3 cursor-pointer p-2 hover:bg-amber-100/50 rounded-lg transition-colors">
-                                <div className={`w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors ${parentVerified ? 'bg-amber-600 border-amber-600 text-white' : 'bg-white border-amber-300'}`}>
-                                    {parentVerified && <CheckCircle size={14}/>}
-                                </div>
-                                <input type="checkbox" className="hidden" checked={parentVerified} onChange={(e) => setParentVerified(e.target.checked)} />
-                                <span className="text-xs font-bold text-slate-700 leading-tight select-none">
-                                    Confirmo que o responsável acima está presente no local.
-                                </span>
-                            </label>
-                        </div>
-                    )}
-
-                    <div className="flex gap-3">
-                        <Button variant="ghost" onClick={resetScan} className="flex-1 justify-center">Cancelar</Button>
-                        {['approved', 'confirmed', 'paid'].includes(scannedRes.status || scannedRes.paymentStatus) && scannedRes.status !== 'validated' ? (
-                            <Button 
-                                onClick={handleConfirmWrapper} 
-                                disabled={scannedRes.linkedToReservationId && !parentVerified}
-                                className={`flex-1 justify-center shadow-lg ${scannedRes.linkedToReservationId && !parentVerified ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200'}`}
-                            >
-                                Confirmar Entrada
-                            </Button>
-                        ) : (
-                             <Button disabled className="flex-1 justify-center opacity-50 cursor-not-allowed bg-slate-200 text-slate-500 border-none">
-                                {scannedRes.status === 'validated' ? 'Já Validado' : 'Inválido'}
-                             </Button>
-                        )}
-                    </div>
-                </div>
-            </ModalOverlay>, 
-            document.body
+      {/* COMPONENTE NOVO QUE CONTÉM TODA A REGRA DE DEPENDENTES */}
+      {scannedRes && (
+           <TicketValidationModal 
+               reservation={scannedRes}
+               onClose={() => setScannedRes(null)}
+               onValidationSuccess={handleValidationSuccess}
+           />
       )}
 
+      <FeedbackModal isOpen={!!feedback} onClose={()=>setFeedback(null)} type={feedback?.type} title={feedback?.title} msg={feedback?.msg} />
     </div>
   );
 };

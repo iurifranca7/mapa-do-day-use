@@ -14,36 +14,16 @@ import Button from './Button';
 const VoucherModal = ({ isOpen, trip, onClose }) => {
   const printRef = useRef();
   
-  // 🔥 INICIALIZAÇÃO HÍBRIDA (Corrige "Endereço Carregando" eterno)
-  // Mescla dados da raiz (legado), do item e do bookingDetails para tentar preencher de imediato
+  // Inicialização Híbrida (Root + Item + BookingDetails)
   const [fullItem, setFullItem] = useState({
-      ...trip, // Pega dados da raiz (city, cep, etc do legado)
+      ...trip, 
       ...(trip?.item || {}),
       ...(trip?.bookingDetails?.item || {})
   });
 
-  useEffect(() => {
-      if (isOpen && trip) {
-          console.group("🕵️‍♂️ [VOUCHER MODAL] Análise de Dados");
-          console.log("Objeto Trip Completo:", trip);
-          
-          // Tenta achar o vínculo em todos os lugares possíveis
-          const linkNaRaiz = trip.linkedToReservationId || trip.parentTicketId;
-          const linkNosItens = trip.bookingDetails?.cartItems?.find(i => i.linkedToReservationId)?.linkedToReservationId;
-          const linkNosItensRaiz = trip.cartItems?.find(i => i.linkedToReservationId)?.linkedToReservationId;
-
-          console.log("🔗 Vínculo na Raiz:", linkNaRaiz);
-          console.log("🔗 Vínculo nos Itens (BookingDetails):", linkNosItens);
-          console.log("🔗 Vínculo nos Itens (Raiz):", linkNosItensRaiz);
-          console.groupEnd();
-      }
-  }, [isOpen, trip]);
-
-  // 🔥 USER EFFECT PARA ATUALIZAR INGRESSOS ANTIGOS
-  // Busca os dados mais recentes do estabelecimento (endereço, telefone) no banco
+  // Busca dados frescos do banco
   useEffect(() => {
     if (isOpen && trip) {
-        // Tenta achar o ID do local em qualquer estrutura possível
         const dayUseId = trip.bookingDetails?.dayuseId || trip.bookingDetails?.item?.id || trip.item?.id || trip.dayuseId;
 
         if (dayUseId) {
@@ -54,11 +34,9 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                     
                     if (docSnap.exists()) {
                         const freshData = docSnap.data();
-                        // Atualiza o estado priorizando os dados frescos do banco
                         setFullItem(prev => ({ 
                             ...prev, 
                             ...freshData,
-                            // Mantém o nome original da reserva caso o local tenha mudado de nome (opcional)
                             name: freshData.name || prev.name 
                         }));
                     }
@@ -73,13 +51,23 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
 
   if (!isOpen || !trip) return null;
 
-  // --- LÓGICA DE DADOS ---
-  const isLinkedVoucher = !!trip.linkedToReservationId;
-  // 🔥 Garante que use o ID da Reserva se não tiver paymentId
-  const transactionId = trip.paymentId || trip.id; 
-  const itemsList = trip.cartItems || trip.bookingDetails?.cartItems || [];
+  // --- LÓGICA DE DADOS CORRIGIDA ---
   
-  // Dados com fallback seguro
+  // 1. Normaliza a lista de itens
+  const itemsList = trip.cartItems || trip.bookingDetails?.cartItems || [];
+
+  // 🔥 2. DETECTA O VÍNCULO (CORREÇÃO AQUI)
+  // Procura o ID do responsável na raiz OU dentro de qualquer item do carrinho
+  const linkedId = trip.linkedToReservationId 
+                || trip.parentTicketId 
+                || itemsList.find(i => i.linkedToReservationId)?.linkedToReservationId;
+
+  const isLinkedVoucher = !!linkedId; // Se achou ID, é dependente
+
+  // 3. IDs de Transação
+  const transactionId = trip.paymentId || trip.id; 
+  
+  // 4. Fallbacks de Dados
   const allowFood = fullItem.allowFood !== undefined ? fullItem.allowFood : false; 
   const openTime = fullItem.openingTime || '08:00';
   const closeTime = fullItem.closingTime || '18:00';
@@ -90,7 +78,7 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
       }) 
     : '-';
 
-  // Endereço (Prioriza o que veio do banco, senão usa o da reserva)
+  // Endereço
   const addressQuery = [
       fullItem.street, 
       fullItem.number, 
@@ -169,25 +157,24 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                   {/* QR Code Highlight */}
                   <div className="my-6 flex flex-col items-center">
                       <div className="p-3 bg-white border-2 border-dashed border-slate-200 rounded-2xl">
-                          {/* QR Code aponta para o ID da Reserva */}
                           <QRCode value={trip.id} size={160} fgColor="#1e293b" />
                       </div>
                       <div className="mt-3 bg-slate-100 px-4 py-1.5 rounded-full border border-slate-200">
                           <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-0.5">Código</p>
                           <p className="text-lg font-mono font-bold text-slate-800 tracking-wider">
-                              {/* 🔥 MOSTRA O ID DA RESERVA (ÚNICO) */}
                               {trip.id.slice(0, 8).toUpperCase()}
                           </p>
                       </div>
                   </div>
 
+                  {/* 🔥 AVISO DE VÍNCULO (AZUL) */}
                   {isLinkedVoucher && (
                       <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl text-left flex items-start gap-3 mb-2">
                           <LinkIcon className="text-blue-500 shrink-0 mt-0.5" size={16}/>
                           <div>
                               <p className="text-xs font-bold text-blue-700">Ingresso Dependente</p>
                               <p className="text-[10px] text-blue-600 leading-tight">
-                                  Entrada permitida apenas com o titular da reserva <strong>#{trip.linkedToReservationId.slice(0,6).toUpperCase()}</strong>.
+                                  Entrada permitida apenas com o titular da reserva <strong>#{linkedId.slice(0,6).toUpperCase()}</strong>.
                               </p>
                           </div>
                       </div>
@@ -254,7 +241,6 @@ const VoucherModal = ({ isOpen, trip, onClose }) => {
                       <span>{fullItem.street}, {fullItem.number || 'S/N'} - {fullItem.district}, {fullItem.city} - {fullItem.state}</span>
                   ) : (
                       <span className="italic text-slate-400">
-                          {/* Se não achou na reserva e nem no banco ainda */}
                           Carregando endereço...
                       </span>
                   )}

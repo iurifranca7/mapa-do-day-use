@@ -18,6 +18,7 @@ import QrScannerModal from './QrScannerModal';
 import ModalOverlay from './ModalOverlay';
 import VoucherModal from './VoucherModal';
 import { notifyTicketStatusChange, notifyReschedule } from '../utils/notifications';
+import TicketValidationModal from './TicketValidationModal';
 
 const PartnerCalendar = ({ user }) => {
   const [loading, setLoading] = useState(false);
@@ -30,10 +31,6 @@ const PartnerCalendar = ({ user }) => {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [scannedRes, setScannedRes] = useState(null);
-  
-  // States para validação de dependentes (O Primo)
-  const [parentRes, setParentRes] = useState(null);
-  const [parentVerified, setParentVerified] = useState(false);
 
   // --- CONFIGURAÇÃO DE VISUALIZAÇÃO ---
   const [showFilters, setShowFilters] = useState(false); 
@@ -63,26 +60,6 @@ const PartnerCalendar = ({ user }) => {
   const [showValidationConfirm, setShowValidationConfirm] = useState(false);
   const [showVoucherModal, setShowVoucherModal] = useState(false);
 
-  // --- BUSCA DADOS DO RESPONSÁVEL (SE FOR DEPENDENTE) ---
-  useEffect(() => {
-      const fetchParent = async () => {
-          if (scannedRes?.linkedToReservationId) {
-              try {
-                  const parentDoc = await getDoc(doc(db, "reservations", scannedRes.linkedToReservationId));
-                  if (parentDoc.exists()) {
-                      setParentRes({ id: parentDoc.id, ...parentDoc.data() });
-                  }
-              } catch (error) {
-                  console.error("Erro ao buscar responsável:", error);
-              }
-          } else {
-              setParentRes(null);
-          }
-          setParentVerified(false); 
-      };
-      fetchParent();
-  }, [scannedRes]);
-
   // --- HELPERS ---
   const formatDateDisplay = (dateValue) => {
     if (!dateValue) return 'S/ Data';
@@ -107,17 +84,22 @@ const PartnerCalendar = ({ user }) => {
   };
 
   const getTicketStatus = (res) => {
-      const payStatus = (res.paymentStatus || res.status || '').toLowerCase();
+
+      // CORREÇÃO: Adicionamos 'res.mpStatus' como primeira opção de busca
+      const payStatus = (res.mpStatus || res.paymentStatus || res.status || '').toLowerCase();
+
       if (['rejected', 'cancelled', 'refunded', 'failed_payment'].includes(payStatus)) {
           return { label: 'Cancelado', color: 'bg-red-100 text-red-700', type: 'cancelled' };
       }
       if (['pending', 'in_process', 'waiting_payment'].includes(payStatus)) {
-          return { label: 'Aguardando Pgto', color: 'bg-amber-100 text-amber-700', type: 'pending' };
+          return { label: 'Pendente', color: 'bg-amber-100 text-amber-700', type: 'pending' };
       }
       if (['approved', 'confirmed', 'paid'].includes(payStatus)) {
+          // Se já foi validado (entrou), mudamos o selo visualmente, mas o pagamento continua confirmado
           if (res.status === 'validated' || res.checkedInAt) {
-              return { label: 'Validado', color: 'bg-blue-100 text-blue-700', type: 'validated' };
+              return { label: 'Já Utilizado', color: 'bg-blue-100 text-blue-700', type: 'validated' };
           }
+          
           const resDate = new Date(res.date + 'T23:59:59');
           const today = new Date();
           if (resDate < today) {
@@ -128,14 +110,19 @@ const PartnerCalendar = ({ user }) => {
       return { label: 'Pendente', color: 'bg-slate-100 text-slate-500', type: 'pending' };
   };
 
-  const getMPStatusInfo = (status, detail) => { 
-      const s = status?.toLowerCase() || '';
+  const getMPStatusInfo = (status, detail, fullRes) => { 
+      // 1. DEFINIÇÃO DA VARIÁVEL 's' (Essa linha é obrigatória)
+      const s = (fullRes?.mpStatus || status || '').toLowerCase();
+
+      // 2. CHECAGENS USANDO 's'
       if (s === 'approved' || s === 'confirmed') return { label: 'Aprovado', color: 'bg-green-100 text-green-700', icon: <CheckCircle size={14}/> };
       if (s === 'in_process') return { label: 'Em análise', color: 'bg-amber-100 text-amber-700', icon: <Clock size={14}/> };
       if (s === 'pending' || s === 'waiting_payment') return { label: 'Esperando Pagamento', color: 'bg-amber-100 text-amber-700', icon: <Clock size={14}/> };
       if (s === 'rejected') return { label: 'Recusado', color: 'bg-red-100 text-red-700', icon: <AlertTriangle size={14}/> };
       if (s === 'cancelled') return { label: 'Cancelado', color: 'bg-slate-200 text-slate-600', icon: <Ban size={14}/> };
-      return { label: status || 'Desconhecido', color: 'bg-slate-100 text-slate-500' };
+      
+      // 3. RETORNO PADRÃO
+      return { label: s === 'validated' ? 'Aprovado (Validado)' : (status || 'Desconhecido'), color: 'bg-slate-100 text-slate-500' };
   };
 
   const translatePaymentMethod = (method) => {
@@ -390,6 +377,13 @@ const PartnerCalendar = ({ user }) => {
       finally { setSyncing(false); }
   };
 
+  const handleValidationSuccess = (updatedRes) => {
+      setFeedback({ type: 'success', title: 'Entrada Confirmada', msg: `${updatedRes.guestName} liberado!` });
+      // Atualiza o cache local para refletir a validação instantaneamente
+      setReservationsCache(prev => prev.map(r => r.id === updatedRes.id ? {...r, status: 'validated', checkedInAt: new Date()} : r));
+      setScannedRes(null); // Fecha o modal
+  };
+
   const openRescheduleFromPanel = (res) => { setSelectedResIds([res.id]); setSelectedReservation(null); setShowRescheduleModal(true); };
   const handlePrevDay = () => { const d = new Date(uiSelectedDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setUiSelectedDate(getLocalDateString(d)); };
   const handleNextDay = () => { const d = new Date(uiSelectedDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setUiSelectedDate(getLocalDateString(d)); };
@@ -497,7 +491,8 @@ const PartnerCalendar = ({ user }) => {
                     </section>
                     <section>
                         <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><CreditCard size={16}/> Pagamento</h3>
-                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-500">Data Compra</span><span className="text-slate-700 font-medium">{formatDateTime(selectedReservation.createdAt)}</span></div><div className="flex justify-between items-start"><div className="flex items-center gap-2"><span className="text-slate-500 pt-1">Status de pagamento</span><button onClick={handleSyncPayment} disabled={syncing} title="Atualizar Status" className="text-[#0097A8] hover:bg-blue-50 p-1 rounded-full transition-colors animate-fade-in">{syncing ? <RefreshCw size={14} className="animate-spin"/> : <RefreshCw size={14}/>}</button></div>{(() => { const info = getMPStatusInfo(selectedReservation.paymentStatus || selectedReservation.status, selectedReservation.statusDetail); return (<div className="flex flex-col items-end"><span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1 ${info.color}`}>{info.icon} {info.label}</span>{info.desc && <span className="text-[10px] text-slate-500 mt-1 max-w-[150px] text-right leading-tight">{info.desc}</span>}</div>); })()}</div><div className="flex justify-between"><span className="text-slate-500">ID Transação</span><span className="font-mono text-xs text-slate-400 truncate w-32 text-right" title={selectedReservation.paymentId}>{selectedReservation.paymentId || selectedReservation.id}</span></div><div className="flex justify-between"><span className="text-slate-500">Método</span><span className="font-bold text-slate-700">{translatePaymentMethod(selectedReservation.paymentMethod)}</span></div></div>
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-500">Data Compra</span><span className="text-slate-700 font-medium">{formatDateTime(selectedReservation.createdAt)}</span></div><div className="flex justify-between items-start"><div className="flex items-center gap-2"><span className="text-slate-500 pt-1">Status de pagamento</span><button onClick={handleSyncPayment} disabled={syncing} title="Atualizar Status" className="text-[#0097A8] hover:bg-blue-50 p-1 rounded-full transition-colors animate-fade-in">{syncing ? <RefreshCw size={14} className="animate-spin"/> : <RefreshCw size={14}/>}</button></div>
+                        {(() => { const info = getMPStatusInfo(selectedReservation.paymentStatus || selectedReservation.status, selectedReservation.statusDetail,selectedReservation); return (<div className="flex flex-col items-end"><span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1 ${info.color}`}>{info.icon} {info.label}</span>{info.desc && <span className="text-[10px] text-slate-500 mt-1 max-w-[150px] text-right leading-tight">{info.desc}</span>}</div>); })()}</div><div className="flex justify-between"><span className="text-slate-500">ID Transação</span><span className="font-mono text-xs text-slate-400 truncate w-32 text-right" title={selectedReservation.paymentId}>{selectedReservation.paymentId || selectedReservation.id}</span></div><div className="flex justify-between"><span className="text-slate-500">Método</span><span className="font-bold text-slate-700">{translatePaymentMethod(selectedReservation.paymentMethod)}</span></div></div>
                     </section>
                     
                     {/* LOGS DE ACESSO ATUALIZADO */}
@@ -585,8 +580,38 @@ const PartnerCalendar = ({ user }) => {
                             )}
                         </div>
                     </section>
-                    <div className="pt-4 border-t border-slate-100 pb-20">{selectedReservation.status !== 'cancelled' && (<div className="grid grid-cols-2 gap-3"><Button onClick={() => openRescheduleFromPanel(selectedReservation)} className="bg-[#0097A8] hover:bg-[#008ba0] flex items-center justify-center gap-2"><RefreshCw size={16}/> Remarcar</Button><button onClick={() => handleCancelReservation(selectedReservation.id)} className="border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-xl font-bold text-sm py-3 flex items-center justify-center gap-2 transition-colors"><Ban size={16}/> Cancelar</button></div>)}{selectedReservation.status === 'cancelled' && (<div className="bg-red-50 text-red-600 p-3 rounded-xl text-center text-sm font-bold">Ingresso Cancelado</div>)}</div>
-                </div>
+<div className="pt-4 border-t border-slate-100 pb-20">
+                        {selectedReservation.status !== 'cancelled' ? (
+                            <div className="grid grid-cols-2 gap-3">
+                                <Button 
+                                    onClick={() => openRescheduleFromPanel(selectedReservation)} 
+                                    disabled={selectedReservation.status === 'validated' || selectedReservation.checkedInAt}
+                                    className={`flex items-center justify-center gap-2 ${selectedReservation.status === 'validated' ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-[#0097A8] hover:bg-[#008ba0]'}`}
+                                >
+                                    <RefreshCw size={16}/> Remarcar
+                                </Button>
+                                
+                                <button 
+                                    onClick={() => handleCancelReservation(selectedReservation.id)} 
+                                    disabled={selectedReservation.status === 'validated' || selectedReservation.checkedInAt}
+                                    className={`border rounded-xl font-bold text-sm py-3 flex items-center justify-center gap-2 transition-colors ${selectedReservation.status === 'validated' ? 'border-slate-200 text-slate-300 bg-slate-50 cursor-not-allowed' : 'border-red-200 text-red-600 bg-red-50 hover:bg-red-100'}`}
+                                >
+                                    <Ban size={16}/> Cancelar
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="bg-red-50 text-red-600 p-3 rounded-xl text-center text-sm font-bold">
+                                Ingresso Cancelado
+                            </div>
+                        )}
+                        
+                        {/* Aviso explicativo se estiver validado */}
+                        {(selectedReservation.status === 'validated' || selectedReservation.checkedInAt) && (
+                            <p className="text-[10px] text-center text-slate-400 mt-2">
+                                * Ingressos já validados não podem ser alterados.
+                            </p>
+                        )}
+                    </div>                </div>
             </div>
           </>, document.body
       )}
@@ -601,96 +626,14 @@ const PartnerCalendar = ({ user }) => {
       <QrScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onScan={handleScanTicket} loading={scanLoading} />
 
       {/* --- MODAL DE CONFERÊNCIA PÓS-SCAN --- */}
-      {scannedRes && createPortal(
-            <ModalOverlay onClose={() => setScannedRes(null)}>
-                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in relative mx-4">
-                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-                        <h3 className="font-bold text-lg flex items-center gap-2 text-slate-800">
-                            <ScanLine className="text-[#0097A8]"/> Conferir Ingresso
-                        </h3>
-                        <button onClick={() => setScannedRes(null)}><X size={20}/></button>
-                    </div>
+      {scannedRes && (
+           <TicketValidationModal 
+               reservation={scannedRes}
+               onClose={() => setScannedRes(null)}
+               onValidationSuccess={handleValidationSuccess}
+           />
+       )}
 
-                    <div className="text-center mb-6">
-                        <h2 className="text-2xl font-bold text-slate-900 leading-tight">{scannedRes.guestName}</h2>
-                        <p className="text-sm text-slate-500 font-mono mt-1">#{scannedRes.ticketCode || scannedRes.id.slice(0,6).toUpperCase()}</p>
-                    </div>
-
-                    {scannedRes.date !== new Date().toISOString().split('T')[0] && (
-                        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-xl text-left shadow-sm">
-                            <div className="flex items-center gap-2 text-red-800 font-bold mb-1"><AlertCircle size={20}/> <span>ATENÇÃO: DATA ERRADA!</span></div>
-                            <p className="text-sm text-red-700">Este ingresso é válido para <strong>{scannedRes.date ? scannedRes.date.split('-').reverse().join('/') : 'Data indefinida'}</strong>.<br/>Hoje é {new Date().toLocaleDateString('pt-BR')}.</p>
-                        </div>
-                    )}
-
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-6 space-y-3">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1"><Package size={12}/> Itens do Ingresso</p>
-                        <div className="space-y-2">
-                            {(scannedRes.cartItems || scannedRes.items)?.map((item, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-sm border-b border-slate-200/50 pb-1 last:border-0 last:pb-0">
-                                    <div className="leading-tight">
-                                        <span className="font-bold text-slate-700">{item.quantity || item.amount}x {item.title}</span>
-                                        {item.description && <p className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.description}</p>}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        <div className="pt-2 mt-2 border-t border-slate-200 flex justify-between items-center">
-                            <span className="text-xs font-bold text-slate-500">Status Atual:</span>
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${['approved','confirmed','paid'].includes(scannedRes.status || scannedRes.paymentStatus) ? 'bg-green-100 text-green-700' : scannedRes.status === 'validated' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
-                                {translateStatusDisplay(scannedRes.status === 'validated' ? 'validated' : (scannedRes.status || scannedRes.paymentStatus))}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* AVISO DE INGRESSO VINCULADO */}
-                    {scannedRes.linkedToReservationId && (
-                        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 text-left">
-                            <div className="flex items-center gap-2 text-amber-800 font-bold mb-2">
-                                <LinkIcon size={18}/> Verificação de Responsável
-                            </div>
-                            <p className="text-xs text-amber-700 mb-3">
-                                Este é um ingresso <strong>dependente</strong>. A entrada só é permitida na presença do titular.
-                            </p>
-                            {parentRes ? (
-                                <div className="bg-white p-3 rounded-lg border border-amber-100 mb-3">
-                                    <p className="text-[10px] text-slate-400 uppercase font-bold">Responsável</p>
-                                    <p className="font-bold text-slate-800">{parentRes.guestName}</p>
-                                    <p className="text-xs text-slate-500 font-mono">#{parentRes.ticketCode || parentRes.id.slice(0,6).toUpperCase()}</p>
-                                </div>
-                            ) : (
-                                <div className="text-xs text-slate-400 italic mb-3">Buscando dados do responsável...</div>
-                            )}
-                            <label className="flex items-start gap-3 cursor-pointer p-2 hover:bg-amber-100/50 rounded-lg transition-colors">
-                                <div className={`w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors ${parentVerified ? 'bg-amber-600 border-amber-600 text-white' : 'bg-white border-amber-300'}`}>
-                                    {parentVerified && <CheckCircle size={14}/>}
-                                </div>
-                                <input type="checkbox" className="hidden" checked={parentVerified} onChange={(e) => setParentVerified(e.target.checked)} />
-                                <span className="text-xs font-bold text-slate-700 leading-tight select-none">
-                                    Confirmo que o responsável acima está presente no local.
-                                </span>
-                            </label>
-                        </div>
-                    )}
-
-                    <div className="flex gap-3">
-                        <Button variant="ghost" onClick={() => setScannedRes(null)} className="flex-1 justify-center">Cancelar</Button>
-                        {['approved', 'confirmed', 'paid'].includes(scannedRes.status || scannedRes.paymentStatus) && scannedRes.status !== 'validated' ? (
-                            <Button 
-                                onClick={handleConfirmValidation} 
-                                disabled={scannedRes.linkedToReservationId && !parentVerified}
-                                className={`flex-1 justify-center shadow-lg ${scannedRes.linkedToReservationId && !parentVerified ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200'}`}
-                            >
-                                Confirmar Entrada
-                            </Button>
-                        ) : (
-                             <Button disabled className="flex-1 justify-center opacity-50 cursor-not-allowed bg-slate-200 text-slate-500 border-none">Inválido / Já Usado</Button>
-                        )}
-                    </div>
-                </div>
-            </ModalOverlay>, 
-            document.body
-      )}
     </div>
   );
 };
