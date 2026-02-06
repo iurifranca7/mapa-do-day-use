@@ -212,62 +212,69 @@ const PartnerSales = ({ user }) => {
   const [saleToRefund, setSaleToRefund] = useState(null); 
   const [refundLoading, setRefundLoading] = useState(false);
 
+  // Modais de Confirmação e Feedback
+  const [confirmModal, setConfirmModal] = useState(null); // { title, msg, onConfirm }
+  const [feedback, setFeedback] = useState(null); // { type, title, msg }
+
   // KPIs
   const [stats, setStats] = useState({ approvedCount: 0, totalRevenue: 0 });
 
-  // --- SINCRONIZAÇÃO FINANCEIRA (CORRIGIDA) ---
-  const handleSynchronize = async () => {
+  // --- SINCRONIZAÇÃO FINANCEIRA (COM MODAL BONITO) ---
+  const handleSynchronize = () => {
       const dates = getDateRangeDates(dateRange);
+      
       if (!dates) { 
-          alert("Selecione um período específico para atualizar."); 
+          setFeedback({ type: 'warning', title: 'Atenção', msg: 'Selecione um período específico para atualizar.' });
           return; 
       }
 
-      if (!window.confirm(`Deseja buscar dados reais no Mercado Pago de ${dates.start.toLocaleDateString()} até ${dates.end.toLocaleDateString()}?`)) return;
-      
-      setSyncing(true);
-      
-      // 🔥 LOG 1
-      console.log("🔄 [SYNC] Iniciando sincronização...");
+      // Abre modal de confirmação
+      setConfirmModal({
+          title: "Atualizar Financeiro?",
+          msg: `Deseja buscar dados reais no Mercado Pago de ${dates.start.toLocaleDateString()} até ${dates.end.toLocaleDateString()}? Isso pode levar alguns segundos.`,
+          onConfirm: async () => {
+              setConfirmModal(null); // Fecha o modal de confirmação
+              setSyncing(true);
 
-      try {
-          // 🔥 1. URL Relativa (Mesma lógica do Refund)
-          const endpoint = '/api/sync';
-          
-          // 🔥 2. Payload
-          const payload = {
-              ownerId: user.effectiveOwnerId || user.uid,
-              beginDate: dates.start.toISOString(),
-              endDate: dates.end.toISOString()
-          };
+              try {
+                  const endpoint = '/api/sync';
+                  const payload = {
+                      ownerId: user.effectiveOwnerId || user.uid,
+                      beginDate: dates.start.toISOString(),
+                      endDate: dates.end.toISOString()
+                  };
 
-          const response = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-          });
+                  const response = await fetch(endpoint, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                  });
 
-          const data = await response.json();
+                  const data = await response.json();
 
-          if (!response.ok) throw new Error(data.error || "Erro na API");
+                  if (!response.ok) throw new Error(data.error || "Erro na API");
+                  
+                  // Feedback de Sucesso Bonito
+                  setFeedback({ 
+                      type: 'success', 
+                      title: 'Sincronização Concluída', 
+                      msg: `Sucesso! ${data.updated} vendas foram auditadas e atualizadas com as taxas reais.` 
+                  });
+                  
+                  loadSales(); 
 
-          console.log("✅ [SYNC] Sucesso:", data);
-          alert(`Sucesso! ${data.updated} vendas foram auditadas e atualizadas com as taxas reais.`);
-          
-          // Recarrega a tabela para mostrar os novos dados (Taxas reais, datas de saque)
-          loadSales(); 
-
-      } catch (error) {
-          console.error("Erro Sync:", error);
-          alert(`Erro ao sincronizar: ${error.message}`);
-      } finally { 
-          setSyncing(false); 
-      }
+              } catch (error) {
+                  console.error("Erro Sync:", error);
+                  setFeedback({ type: 'error', title: 'Erro', msg: `Falha ao sincronizar: ${error.message}` });
+              } finally { 
+                  setSyncing(false); 
+              }
+          }
+      });
   };
 
   // --- LÓGICA DE ESTORNO (CORRIGIDA E LOGADA) ---
   const handleConfirmRefund = async (sale) => {
-    console.log("VERSAO_NOVA_REFUND")
       // Validação de segurança básica
       if (!sale.paymentId) {
           alert("Erro: Esta venda não possui ID de transação. Não é possível estornar automaticamente.");
@@ -275,17 +282,10 @@ const PartnerSales = ({ user }) => {
       }
 
       setRefundLoading(true);
-      
-      // 🔥 LOG 1: INÍCIO
-      console.group("💸 [DEBUG REFUND] Iniciando Processo");
-      console.log("1. Venda Selecionada:", sale);
-      console.log("2. ID Transação MP:", sale.paymentId);
-      console.log("3. Owner ID (Quem vai pagar):", user.effectiveOwnerId || user.uid);
 
       try {
           // 🔥 CORREÇÃO DA URL: Usa caminho relativo
           const endpoint = '/api/refund';
-          console.log("4. Chamando Endpoint:", endpoint);
 
           const payload = {
               paymentId: sale.paymentId,
@@ -296,26 +296,19 @@ const PartnerSales = ({ user }) => {
               guestName: sale.guestName,
               itemName: sale.items?.[0]?.title || 'Day Use'
           };
-          console.log("5. Payload enviado:", payload);
 
           const response = await fetch(endpoint, { 
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
           });
-
-          console.log("6. Status Resposta HTTP:", response.status);
           
           // Tenta ler o JSON independente do status para ver o erro
           const data = await response.json();
-          console.log("7. Resposta da API:", data);
 
           if (!response.ok) {
               throw new Error(data.message || `Erro API: ${response.statusText}`);
           }
-
-          // 2. SUCESSO NO MP -> AGORA ATUALIZA O FIREBASE
-          console.log("✅ Sucesso no MP! Atualizando Firebase...");
 
           await updateDoc(doc(db, "reservations", sale.id), {
               status: 'cancelled',       // Status geral da reserva
@@ -336,11 +329,18 @@ const PartnerSales = ({ user }) => {
           setSaleToRefund(null); 
           setSelectedSale(null);
           
-          alert(`Sucesso! O valor foi estornado e o cliente notificado.`);
+          setFeedback({ 
+              type: 'success', 
+              title: 'Estorno Realizado', 
+              msg: 'O valor foi devolvido para a conta do cliente e o e-mail de confirmação foi enviado.' 
+          });
 
       } catch (error) {
           console.error("❌ ERRO CRÍTICO NO ESTORNO:", error);
-          alert(`Falha no estorno: ${error.message}`);
+          setFeedback({ 
+              type: 'error', 
+              title: 'Falha no Estorno', 
+              msg: error.message});
       } finally {
           console.groupEnd();
           setRefundLoading(false);
@@ -631,6 +631,42 @@ const PartnerSales = ({ user }) => {
           onConfirm={handleConfirmRefund}
           loading={refundLoading}
       />
+
+        {/* MODAL DE FEEDBACK (Sucesso/Erro) */}
+            <FeedbackModal 
+                isOpen={!!feedback} 
+                onClose={() => setFeedback(null)} 
+                type={feedback?.type} 
+                title={feedback?.title} 
+                msg={feedback?.msg} 
+            />
+
+            {/* MODAL DE CONFIRMAÇÃO GENÉRICO (Para o Sync) */}
+            {confirmModal && createPortal(
+                <ModalOverlay onClose={() => setConfirmModal(null)}>
+                    <div className="bg-white p-6 rounded-2xl w-full max-w-sm shadow-2xl animate-fade-in">
+                        <h3 className="text-xl font-bold text-slate-900 mb-2">{confirmModal.title}</h3>
+                        <p className="text-slate-500 mb-6">{confirmModal.msg}</p>
+                        
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={() => setConfirmModal(null)}
+                                className="flex-1 py-3 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                onClick={confirmModal.onConfirm}
+                                className="flex-1 py-3 rounded-xl bg-[#0097A8] text-white font-bold hover:bg-[#008ba0] shadow-lg shadow-cyan-100 transition-colors"
+                            >
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </ModalOverlay>,
+                document.body
+            )}
+
     </div>
   );
 };

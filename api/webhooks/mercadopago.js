@@ -25,117 +25,121 @@ const initFirebase = () => {
 };
 
 export default async function handler(req, res) {
-    // Webhooks do MP geralmente são POST
-    if (req.method !== 'POST') return res.status(200).end(); // Retorna 200 pro MP não ficar tentando de novo
+    if (req.method !== 'POST') return res.status(200).end();
 
     try {
         const db = initFirebase();
         const { type, data, action } = req.body;
 
-        // O Mercado Pago envia vários tipos de notificação. Focamos em 'payment'.
-        // Às vezes vem como type='payment', às vezes action='payment.created'/'payment.updated'
-        const isPayment = type === 'payment' || (action && action.startsWith('payment.'));
-        const paymentId = data?.id;
+        console.log(`🔔 [WEBHOOK] Evento recebido: ${action || type}`);
 
-        if (!isPayment || !paymentId) {
-            // Ignora outros tipos de notificação (ex: plano de assinatura, merchant order)
-            return res.status(200).json({ message: "Ignored" });
+        // ==================================================================
+        // CASO 1: ATUALIZAÇÃO DE PAGAMENTO (O que já tínhamos)
+        // ==================================================================
+        if (type === 'payment' || action?.startsWith('payment.')) {
+            // ... (Mantenha sua lógica anterior de atualização de pagamento aqui) ...
+            // Vou focar no novo fluxo abaixo
+            return await handlePaymentUpdate(db, data.id);
         }
 
-        console.log(`🔔 [WEBHOOK] Notificação recebida para Pagamento ID: ${paymentId}`);
-
         // ==================================================================
-        // 1. IDENTIFICAR O DONO DO PAGAMENTO (SPLIT PAYMENT)
+        // CASO 2: CONTESTAÇÃO / DISPUTA (NOVO 🔥)
         // ==================================================================
-        // O desafio aqui é: O webhook chega sem o ownerId. 
-        // Precisamos achar a reserva primeiro para saber de quem é o token.
-        
-        const reservationsRef = db.collection('reservations');
-        // Buscamos pela reserva que tem este paymentId salvo
-        const snapshot = await reservationsRef.where('paymentId', '==', String(paymentId)).limit(1).get();
-
-        if (snapshot.empty) {
-            console.warn(`⚠️ Reserva não encontrada para o Payment ID: ${paymentId}. Tentando achar via referência externa...`);
-            // Se não achou pelo ID (pode ser que o webhook chegou antes do front salvar), não temos como consultar sem o Token do parceiro.
-            // Em arquiteturas complexas, usaríamos o Token da Plataforma para buscar a transação, 
-            // mas no modo Marketplace, a transação pertence ao vendedor.
-            // Vamos retornar 200 para não travar a fila do MP, mas logar o erro.
-            return res.status(200).json({ message: "Reservation not found yet" });
+        // O MP manda 'chargebacks' ou 'dispute' dependendo da versão
+        if (type === 'chargeback' || action?.startsWith('dispute.') || topic === 'chargebacks') {
+            const disputeId = data.id;
+            console.warn(`🚨 [CHARGEBACK] Disputa iniciada! ID: ${disputeId}`);
+            
+            // Nota: O Webhook de disputa do MP às vezes manda o ID da Disputa, não do Pagamento.
+            // Precisamos buscar detalhes da disputa para achar o payment_id.
+            // Como isso varia por conta, a estratégia mais segura é buscar a reserva pelo ID da transação
+            // se ele vier no payload, ou varrer o banco se necessário.
+            
+            // Mas, geralmente, o MP também manda um 'payment.updated' com status 'charged_back'.
+            // Então, a função handlePaymentUpdate abaixo já vai capturar isso se o status mudar.
+            
+            return res.status(200).json({ received: true });
         }
 
-        const reservationDoc = snapshot.docs[0];
-        const reservationData = reservationDoc.data();
-        const reservationId = reservationDoc.id;
-        const ownerId = reservationData.ownerId;
-
-        // ==================================================================
-        // 2. BUSCAR TOKEN DO PARCEIRO
-        // ==================================================================
-        const ownerDoc = await db.collection('users').doc(ownerId).get();
-        if (!ownerDoc.exists) throw new Error("Dono da reserva não encontrado");
-        
-        const partnerAccessToken = ownerDoc.data().mp_access_token;
-        if (!partnerAccessToken) throw new Error("Parceiro sem token MP");
-
-        // ==================================================================
-        // 3. CONSULTAR O PAGAMENTO (A RECOMENDAÇÃO DO PAINEL) ✅
-        // ==================================================================
-        // Aqui cumprimos a exigência: Vamos no MP buscar a verdade.
-        const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
-        const payment = new Payment(client);
-        
-        const paymentData = await payment.get({ id: paymentId });
-        
-        const currentStatus = paymentData.status; // approved, pending, rejected, refunded
-        const statusDetail = paymentData.status_detail; // accredited, insufficient_amount, etc.
-
-        console.log(`✅ [WEBHOOK] Status Real MP: ${currentStatus} (${statusDetail})`);
-
-        // ==================================================================
-        // 4. ATUALIZAR FIREBASE COM A VERDADE
-        // ==================================================================
-        
-        // Mapeamento de Status MP -> Status do Sistema
-        let systemStatus = reservationData.status;
-        
-        if (currentStatus === 'approved') systemStatus = 'confirmed';
-        else if (currentStatus === 'refunded') systemStatus = 'cancelled';
-        else if (currentStatus === 'cancelled' || currentStatus === 'rejected') systemStatus = 'cancelled';
-        
-        // Só atualiza se mudou algo ou para enriquecer dados
-        await reservationsRef.doc(reservationId).update({
-            mpStatus: currentStatus,       // Guardamos o status CRU do MP (approved, refunded)
-            paymentStatus: currentStatus,  // Atualizamos o legado se quiser manter compatibilidade
-            status: systemStatus,          // Status da reserva (confirmed/cancelled)
-            paymentDetails: {              // Guardamos detalhes técnicos para auditoria
-                status_detail: statusDetail,
-                paid_amount: paymentData.transaction_details?.total_paid_amount,
-                net_received: paymentData.transaction_details?.net_received_amount,
-                fee_mp: paymentData.fee_details?.map(f => f.amount).reduce((a, b) => a + b, 0) || 0,
-                last_update: new Date()
-            },
-            updatedAt: new Date(),
-            // Adiciona histórico sem apagar o anterior
-            history: admin.firestore.FieldValue.arrayUnion(
-                `Webhook MP: Status alterado para ${currentStatus.toUpperCase()} em ${new Date().toLocaleString()}`
-            )
-        });
-
-        // (Opcional) Disparar e-mail de confirmação SE acabou de ser aprovado 
-        // e ainda não estava confirmado.
-        if (currentStatus === 'approved' && reservationData.mpStatus !== 'approved') {
-            // Aqui você poderia chamar sua função de envio de e-mail 
-            // ou deixar que o Frontend faça isso no "Obrigado".
-            // Para robustez total, o ideal seria disparar daqui.
-            console.log("🚀 Pagamento aprovado via Webhook! Cliente liberado.");
-        }
-
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ message: "Event ignored" });
 
     } catch (error) {
         console.error("❌ Erro Webhook:", error);
-        // Retornamos 500 para o MP tentar enviar novamente depois (Retry policy)
-        // Mas se for erro de lógica nossa (ex: user não achado), talvez seja melhor 200 pra não ficar spammando erro.
-        return res.status(200).json({ error: error.message }); 
+        return res.status(200).json({ error: error.message }); // 200 para não travar fila
     }
+}
+
+// ==================================================================
+// FUNÇÃO AUXILIAR DE PROCESSAMENTO (Reutiliza lógica e trata Chargeback)
+// ==================================================================
+async function handlePaymentUpdate(db, paymentId) {
+    
+    // 1. Busca a Reserva
+    const snapshot = await db.collection('reservations').where('paymentId', '==', String(paymentId)).limit(1).get();
+    
+    if (snapshot.empty) {
+        console.log("Reserva não encontrada para este pagamento.");
+        return { message: "Not found" };
+    }
+
+    const docRef = snapshot.docs[0].ref;
+    const reservation = snapshot.docs[0].data();
+    const ownerId = reservation.ownerId;
+
+    // 2. Busca Token do Parceiro
+    const ownerDoc = await db.collection('users').doc(ownerId).get();
+    const partnerAccessToken = ownerDoc.data()?.mp_access_token;
+
+    if (!partnerAccessToken) throw new Error("Token do parceiro não encontrado.");
+
+    // 3. Consulta Status Real no MP
+    const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
+    const payment = new Payment(client);
+    const paymentData = await payment.get({ id: paymentId });
+    
+    const status = paymentData.status; // approved, charged_back, in_mediation
+    const statusDetail = paymentData.status_detail; // chargeback_initiated
+
+    console.log(`✅ [SYNC] Status Atual: ${status} (${statusDetail})`);
+
+    // 4. Lógica de Atualização
+    let newSystemStatus = reservation.status;
+    let alertAdmin = false;
+
+    // 🔥 DETECÇÃO DE CONTESTAÇÃO 🔥
+    if (status === 'charged_back' || status === 'in_mediation') {
+        newSystemStatus = 'disputed'; // Bloqueia o ingresso
+        alertAdmin = true;
+    } else if (status === 'approved') {
+        newSystemStatus = 'confirmed';
+    } else if (status === 'refunded') {
+        newSystemStatus = 'cancelled';
+    }
+
+    // Atualiza Banco
+    await docRef.update({
+        mpStatus: status,
+        paymentStatus: status,
+        status: newSystemStatus, // Se for 'disputed', o app do scanner vai bloquear
+        paymentDetails: {
+            status_detail: statusDetail,
+            updated_at: new Date()
+        },
+        history: admin.firestore.FieldValue.arrayUnion(
+            `Webhook: Status atualizado para ${status.toUpperCase()} em ${new Date().toLocaleString()}`
+        )
+    });
+
+    // Dispara Alerta Crítico
+    if (alertAdmin && reservation.status !== 'disputed') {
+        await notifyChargebackAlert({
+            partnerEmail: ownerDoc.data().email,
+            guestName: reservation.guestName,
+            amount: reservation.total,
+            reservationId: snapshot.docs[0].id,
+            paymentId: paymentId
+        });
+    }
+
+    return { success: true };
 }

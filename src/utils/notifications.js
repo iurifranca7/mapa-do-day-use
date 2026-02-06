@@ -38,7 +38,7 @@ const sendEmail = async (to, subject, html) => {
 // 1. NOTIFICAÇÃO CLIENTE (VOUCHER COMPLETO)
 // =============================================================================
 export const notifyCustomer = async (reservationData, reservationId) => {
-    // 1. Tenta encontrar o ID do Day Use em qualquer lugar possível (Novo ou Legado)
+    // 1. Tenta encontrar o ID do Day Use
     const dayUseId = reservationData.bookingDetails?.dayuseId 
                   || reservationData.bookingDetails?.item?.id 
                   || reservationData.item?.id 
@@ -46,7 +46,7 @@ export const notifyCustomer = async (reservationData, reservationId) => {
 
     let dbItemData = {};
 
-    // 2. Busca dados frescos do Banco de Dados (Endereço, Regras, Contato atualizados)
+    // 2. Busca dados frescos do Banco de Dados
     if (dayUseId) {
         try {
             const docRef = doc(db, "dayuses", dayUseId);
@@ -59,20 +59,18 @@ export const notifyCustomer = async (reservationData, reservationId) => {
         }
     }
 
-    // 3. Normaliza o objeto final (Prioridade: Banco > Nova Estrutura > Legado)
+    // 3. Normaliza o objeto final
     const itemData = {
-        ...reservationData,                 // Dados raiz (Legado: city, contactPhone)
-        ...(reservationData.item || {}),    // Objeto item (Legado)
-        ...(reservationData.bookingDetails?.item || {}), // Nova estrutura
-        ...dbItemData                       // Dados frescos do banco (Sobrescreve tudo para garantir atualização)
+        ...reservationData,
+        ...(reservationData.item || {}),
+        ...(reservationData.bookingDetails?.item || {}),
+        ...dbItemData
     };
 
-    // 4. Prepara variáveis para o HTML (Com fallbacks de segurança)
     const itemName = itemData.name || itemData.title || "Day Use";
     const itemCity = itemData.city || "";
     const itemState = itemData.state || "MG";
     
-    // Constrói endereço completo baseado nas suas imagens do banco
     const fullAddress = [
         itemData.street,
         itemData.number,
@@ -87,7 +85,6 @@ export const notifyCustomer = async (reservationData, reservationId) => {
     const purchaseDate = new Date().toLocaleString('pt-BR');
     const paymentLabel = reservationData.paymentMethod === 'pix' ? 'Pix' : 'Cartão';
     
-    // Horários (Tenta pegar do weeklyPrices ou usa fixo)
     let openingHours = `${itemData.openingTime || '08:00'} - ${itemData.closingTime || '18:00'}`;
     if (reservationData.date && itemData.weeklyPrices) {
         try {
@@ -98,7 +95,6 @@ export const notifyCustomer = async (reservationData, reservationId) => {
         } catch (e) {}
     }
 
-    // Regras de Comida
     let rulesHtml = '';
     if (itemData.allowFood !== undefined) {
         const isAllowed = itemData.allowFood;
@@ -111,11 +107,9 @@ export const notifyCustomer = async (reservationData, reservationId) => {
             </div>`;
     }
 
-    // Itens do Carrinho
     const cartItems = reservationData.cartItems || reservationData.bookingDetails?.cartItems || [];
     const adultsCount = reservationData.adults || reservationData.bookingDetails?.adults || 0;
     
-    // HTML DO EMAIL
     const html = `
         <div style="${STYLES.container}">
             <div style="${STYLES.wrapper}">
@@ -322,7 +316,6 @@ export const notifyTicketStatusChange = async (reservation, type) => {
 export const notifyPartner = async (reservationData, paymentId) => {
     if (!reservationData?.ownerId) return;
 
-    // Normalização básica para o parceiro também
     const itemData = {
         ...reservationData,
         ...(reservationData.item || {}),
@@ -330,7 +323,6 @@ export const notifyPartner = async (reservationData, paymentId) => {
     };
     const itemName = itemData.name || "Day Use";
 
-    // Busca dados do dono
     const ownerSnap = await getDoc(doc(db, "users", reservationData.ownerId));
     if (!ownerSnap.exists()) return;
     const ownerEmail = ownerSnap.data().email; 
@@ -411,7 +403,7 @@ export const notifyAdminNewClaim = async (claimData) => {
 export const notifyPartnerStatus = async (email, status) => {
     const isApproved = status === 'verified';
     const title = isApproved ? "Conta APROVADA! 🎉" : "Pendência na sua conta";
-    const headerColor = isApproved ? "#10B981" : "#F59E0B"; // Verde ou Laranja
+    const headerColor = isApproved ? "#10B981" : "#F59E0B"; 
     
     const message = isApproved 
         ? "Parabéns! Sua documentação foi analisada e aprovada com sucesso. Sua conta agora tem o selo de verificado e acesso completo ao painel."
@@ -483,4 +475,97 @@ export const notifyTransferApproved = async (claim) => {
         </div>`;
 
     await sendEmail(claim.userEmail, "Acesso Liberado! 🔑 - Mapa do Day Use", html);
+};
+
+// =============================================================================
+// 8. NOTIFICAÇÃO DE REEMBOLSO (ADICIONADA CONFORME SOLICITAÇÃO)
+// =============================================================================
+export const notifyRefund = async (guestEmail, guestName, amount, itemName, paymentId) => {
+    if (!guestEmail) return;
+
+    const html = `
+    <div style="${STYLES.container}">
+        <div style="${STYLES.wrapper}">
+            
+            <div style="background-color: #ef4444; padding: 30px; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">Reembolso Confirmado</h1>
+                <p style="color: #fee2e2; margin: 5px 0 0; font-size: 13px; font-weight: 500;">O valor foi devolvido para sua conta</p>
+            </div>
+
+            <div style="padding: 40px 30px;">
+                <p style="font-size: 16px; color: #334155; margin-bottom: 24px;">
+                    Olá, <strong>${guestName}</strong>.
+                </p>
+                <p style="font-size: 15px; color: #334155; line-height: 1.6; margin-bottom: 24px;">
+                    Confirmamos que o estorno referente à sua reserva em <strong>${itemName}</strong> foi processado com sucesso.
+                </p>
+
+                <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: center;">
+                    <p style="font-size: 10px; text-transform: uppercase; color: #991b1b; font-weight: 700; display: block; margin-bottom: 2px;">Valor Reembolsado</p>
+                    <p style="margin: 5px 0 0; font-size: 32px; font-weight: 700; color: #dc2626;">R$ ${amount}</p>
+                </div>
+
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                    <p style="margin: 0 0 10px; font-size: 13px; color: #1e293b;"><strong>ℹ️ Prazos Bancários:</strong></p>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #64748b; line-height: 1.5;">
+                        <li style="margin-bottom: 4px;"><strong>Pix:</strong> Geralmente imediato.</li>
+                        <li><strong>Cartão de Crédito:</strong> Pode levar de 1 a 2 faturas.</li>
+                    </ul>
+                </div>
+
+                <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #f1f5f9;">
+                    ID da Transação: ${paymentId}
+                </p>
+                <div style="${STYLES.footer}">Equipe Mapa do Day Use</div>
+            </div>
+        </div>
+    </div>`;
+
+    await sendEmail(guestEmail, `💸 Reembolso Confirmado: ${itemName}`, html);
+};
+
+// =============================================================================
+// 9. ALERTA DE CONTESTAÇÃO (CHARGEBACK) - CRÍTICO 🚨
+// =============================================================================
+export const notifyChargebackAlert = async ({ partnerEmail, guestName, amount, reservationId, paymentId }) => {
+    // Importamos os estilos aqui caso não estejam globais
+    const html = `
+    <div style="${STYLES.container}">
+        <div style="${STYLES.wrapper}">
+            <div style="${STYLES.header} background-color: #7f1d1d;"> <h1 style="${STYLES.headerTitle}">🚨 Ação Necessária: Contestação</h1>
+                <p style="${STYLES.headerSub}">Um pagamento foi contestado pelo banco do cliente</p>
+            </div>
+            <div style="${STYLES.body}">
+                <div style="${STYLES.alertBox} background-color: #fef2f2; border-color: #b91c1c; color: #991b1b;">
+                    <strong>O valor desta venda foi bloqueado temporariamente.</strong><br/>
+                    Você precisa enviar comprovantes de entrega ao Mercado Pago em até 7 dias para evitar perder o dinheiro.
+                </div>
+
+                <p style="margin-bottom: 20px;">Detalhes da Contestação:</p>
+                <div style="${STYLES.box}">
+                    <p><strong>Cliente:</strong> ${guestName}</p>
+                    <p><strong>Valor em Disputa:</strong> ${formatBRL(amount)}</p>
+                    <p><strong>ID Reserva:</strong> ${reservationId}</p>
+                    <p><strong>ID Transação:</strong> ${paymentId}</p>
+                </div>
+
+                <h3 style="font-size: 14px; color: #333;">O que fazer agora?</h3>
+                <ul style="font-size: 13px; color: #555; padding-left: 20px; line-height: 1.6;">
+                    <li>1. Acesse o Painel do Mercado Pago.</li>
+                    <li>2. Vá em "Gestão de Disputas".</li>
+                    <li>3. Anexe o print do Check-in ou validação do ingresso como prova.</li>
+                </ul>
+
+                <div style="text-align: center; margin-top: 30px;">
+                    <a href="https://www.mercadopago.com.br/developers/panel/disputes" style="${STYLES.btn} background-color: #b91c1c;">
+                        Resolver no Mercado Pago
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    await sendEmail(partnerEmail, `🚨 URGENTE: Contestação de Venda - ${guestName}`, html);
+    // Opcional: Mandar cópia para o Admin da plataforma
+    await sendEmail("admin@mapadodayuse.com", `🚨 MONITORA: Contestação no Parceiro`, html);
 };

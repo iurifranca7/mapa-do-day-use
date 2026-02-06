@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { db } from '../firebase'; // Ajuste o caminho conforme sua estrutura
+import { db } from '../firebase'; 
 import { 
     X, ScanLine, AlertCircle, Package, Link as LinkIcon, 
-    CheckCircle, Ban, Clock, AlertTriangle 
+    CheckCircle, Ban, AlertTriangle, ShieldAlert 
 } from 'lucide-react';
-import Button from './Button'; // Ajuste o caminho
-import ModalOverlay from './ModalOverlay'; // Ajuste o caminho
-import { notifyTicketStatusChange } from '../utils/notifications'; // Ajuste o caminho
+import Button from './Button'; 
+import ModalOverlay from './ModalOverlay'; 
+import { notifyTicketStatusChange } from '../utils/notifications'; 
 
 const TicketValidationModal = ({ 
     reservation, 
@@ -18,14 +18,12 @@ const TicketValidationModal = ({
     const [loading, setLoading] = useState(false);
     const [parentRes, setParentRes] = useState(null);
     const [parentVerified, setParentVerified] = useState(false);
-    const [feedback, setFeedback] = useState(null); // Feedback interno caso queira mostrar erro no modal
 
-    // --- 1. LÓGICA DE DETECÇÃO DE VÍNCULO E BUSCA DO RESPONSÁVEL ---
+    // --- 1. LÓGICA DE DETECÇÃO DE VÍNCULO ---
     useEffect(() => {
         const fetchParent = async () => {
             if (!reservation) return;
 
-            // Lógica Híbrida Blindada: Procura o vínculo na raiz, raiz legada ou itens
             const itemsList = reservation.cartItems || reservation.bookingDetails?.cartItems || [];
             const linkedId = reservation.linkedToReservationId 
                           || reservation.parentTicketId 
@@ -43,17 +41,81 @@ const TicketValidationModal = ({
             } else {
                 setParentRes(null);
             }
-            setParentVerified(false); // Reseta o checkbox ao abrir
+            setParentVerified(false); 
         };
 
         fetchParent();
     }, [reservation]);
 
-    // --- 2. AÇÃO DE VALIDAÇÃO ---
-    const handleConfirmValidation = async () => {
-        if (!reservation) return;
-        setLoading(true);
+    // --- 2. CHECAGEM DE BLOQUEIO (CHARGEBACK / FRAUDE) ---
+    if (!reservation) return null;
 
+    // Normaliza status para comparação segura
+    const status = (reservation.status || '').toLowerCase();
+    const mpStatus = (reservation.mpStatus || reservation.paymentStatus || '').toLowerCase();
+
+    // Lista Negra de Acesso
+    const BLOCK_LIST = [
+        'cancelled',      // Cancelado no sistema
+        'rejected',       // Recusado no pagamento
+        'refunded',       // Estornado (Dinheiro devolvido)
+        'disputed',       // 🔥 Disputa Aberta
+        'charged_back',   // 🔥 Dinheiro tomado pelo banco
+        'in_mediation'    // 🔥 Em análise de fraude
+    ];
+
+    const isBlocked = BLOCK_LIST.includes(status) || BLOCK_LIST.includes(mpStatus);
+    const isDispute = ['disputed', 'charged_back', 'in_mediation'].includes(mpStatus);
+
+    // --- 3. TELA DE BLOQUEIO (RENDERIZAÇÃO ANTECIPADA) ---
+    if (isBlocked) {
+        return createPortal(
+            <ModalOverlay onClose={onClose}>
+                <div className="bg-white p-6 rounded-3xl shadow-xl w-full max-w-md animate-fade-in relative mx-4 text-center border-t-8 border-red-600">
+                    <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+                        <ShieldAlert size={40} className="text-red-600"/>
+                    </div>
+                    
+                    <h2 className="text-2xl font-black text-red-600 mb-2 uppercase tracking-wide">
+                        {isDispute ? 'PAGAMENTO CONTESTADO' : 'ACESSO NEGADO'}
+                    </h2>
+                    
+                    <p className="text-slate-600 font-bold text-lg mb-1">{reservation.guestName}</p>
+                    <p className="text-slate-400 font-mono text-sm mb-6">#{reservation.ticketCode || reservation.id.slice(0,6).toUpperCase()}</p>
+
+                    <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-left mb-6">
+                        <p className="text-red-800 font-bold text-sm flex items-center gap-2 mb-1">
+                            <AlertTriangle size={16}/> Motivo do Bloqueio:
+                        </p>
+                        <p className="text-red-700 text-sm leading-relaxed">
+                            {isDispute 
+                                ? "Este pagamento foi contestado junto ao banco (Chargeback). O valor foi bloqueado e o ingresso cancelado automaticamente."
+                                : "Este ingresso consta como cancelado, reembolsado ou pagamento recusado."
+                            }
+                        </p>
+                    </div>
+
+                    <Button onClick={onClose} className="w-full bg-slate-800 hover:bg-slate-900 text-white justify-center py-4">
+                        Fechar e Recusar Entrada
+                    </Button>
+                </div>
+            </ModalOverlay>,
+            document.body
+        );
+    }
+
+    // --- 4. FLUXO NORMAL (Se não estiver bloqueado) ---
+    
+    // Recalcula variáveis para o fluxo normal
+    const statusInfo = { text: 'Pago/Confirmado', bg: 'bg-green-100', color: 'text-green-700' };
+    if (status === 'validated') { statusInfo.text = 'Já Utilizado'; statusInfo.bg = 'bg-blue-100'; statusInfo.color = 'text-blue-700'; }
+    
+    const isDateMismatch = reservation.date !== new Date().toISOString().split('T')[0];
+    const itemsList = reservation.cartItems || reservation.bookingDetails?.cartItems || [];
+    const linkedId = reservation.linkedToReservationId || reservation.parentTicketId || itemsList.find(i => i.linkedToReservationId)?.linkedToReservationId;
+
+    const handleConfirmValidation = async () => {
+        setLoading(true);
         try {
             const updateData = {
                 status: 'validated',
@@ -65,48 +127,23 @@ const TicketValidationModal = ({
                 )
             };
 
-            // Log se houver responsável verificado
             if (parentRes && parentVerified) {
-                const logMsg = `Entrada autorizada mediante presença do responsável: ${parentRes.guestName} (#${parentRes.id.slice(0,6).toUpperCase()})`;
-                updateData.checkInNote = logMsg;
+                updateData.checkInNote = `Entrada autorizada mediante presença do responsável: ${parentRes.guestName} (#${parentRes.id.slice(0,6).toUpperCase()})`;
             }
 
             await updateDoc(doc(db, "reservations", reservation.id), updateData);
-            
-            // Dispara notificação
             notifyTicketStatusChange(reservation, 'validated').catch(console.error);
 
-            // Avisa o componente pai que deu certo
-            if (onValidationSuccess) {
-                onValidationSuccess(reservation);
-            }
-            onClose(); // Fecha o modal
+            if (onValidationSuccess) onValidationSuccess(reservation);
+            onClose();
 
         } catch (error) {
             console.error("Erro ao validar:", error);
-            alert("Erro ao validar ingresso. Tente novamente.");
+            alert("Erro técnico. Tente novamente.");
         } finally {
             setLoading(false);
         }
     };
-
-    // --- HELPERS VISUAIS ---
-    const translateStatus = (status) => {
-        const s = (status || '').toLowerCase();
-        if (['approved', 'confirmed', 'paid'].includes(s)) return { text: 'Pago/Confirmado', bg: 'bg-green-100', color: 'text-green-700' };
-        if (['validated'].includes(s)) return { text: 'Já Utilizado', bg: 'bg-blue-100', color: 'text-blue-700' };
-        if (['cancelled', 'rejected'].includes(s)) return { text: 'Cancelado', bg: 'bg-red-100', color: 'text-red-700' };
-        return { text: status, bg: 'bg-slate-100', color: 'text-slate-500' };
-    };
-
-    if (!reservation) return null;
-
-    const statusInfo = translateStatus(reservation.status === 'validated' ? 'validated' : (reservation.status || reservation.paymentStatus));
-    const isDateMismatch = reservation.date !== new Date().toISOString().split('T')[0];
-    
-    // Recalcula ID para uso no render (mesma lógica do useEffect)
-    const itemsList = reservation.cartItems || reservation.bookingDetails?.cartItems || [];
-    const linkedId = reservation.linkedToReservationId || reservation.parentTicketId || itemsList.find(i => i.linkedToReservationId)?.linkedToReservationId;
 
     return createPortal(
         <ModalOverlay onClose={onClose}>
@@ -155,7 +192,7 @@ const TicketValidationModal = ({
                     </div>
                 </div>
 
-                {/* --- AVISO DE INGRESSO VINCULADO (BLINDADO) --- */}
+                {/* --- AVISO DE INGRESSO VINCULADO --- */}
                 {linkedId && (
                     <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 text-left">
                         <div className="flex items-center gap-2 text-amber-800 font-bold mb-2">
@@ -172,7 +209,6 @@ const TicketValidationModal = ({
                                 <div className="flex justify-between items-center mt-1">
                                     <p className="text-xs text-slate-500 font-mono">#{parentRes.ticketCode || parentRes.id.slice(0,6).toUpperCase()}</p>
                                     
-                                    {/* Status Visual do Pai */}
                                     {parentRes.status === 'validated' || parentRes.checkedInAt ? (
                                         <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
                                             <CheckCircle size={10}/> Já entrou
@@ -207,7 +243,11 @@ const TicketValidationModal = ({
                 <div className="flex gap-3">
                     <Button variant="ghost" onClick={onClose} className="flex-1 justify-center">Cancelar</Button>
                     
-                    {['approved', 'confirmed', 'paid'].includes(reservation.status || reservation.paymentStatus) && reservation.status !== 'validated' ? (
+                    {reservation.status === 'validated' ? (
+                        <Button disabled className="flex-1 justify-center opacity-50 cursor-not-allowed bg-blue-100 text-blue-700 border-none">
+                            Já Utilizado
+                        </Button>
+                    ) : (
                         <Button 
                             onClick={handleConfirmValidation} 
                             disabled={loading || (linkedId && !parentVerified)}
@@ -218,10 +258,6 @@ const TicketValidationModal = ({
                             }`}
                         >
                             {loading ? 'Validando...' : 'Confirmar Entrada'}
-                        </Button>
-                    ) : (
-                        <Button disabled className="flex-1 justify-center opacity-50 cursor-not-allowed bg-slate-200 text-slate-500 border-none">
-                            Inválido / Já Usado
                         </Button>
                     )}
                 </div>
