@@ -169,13 +169,17 @@ const PartnerProducts = ({ user }) => {
       includedSpecialDates: defaultDayUse?.specialDates?.map(d => d.date) || [],
       consumption: { adults: 0, children: 0, pets: 0, cars: 0, motos: 0 },
       stock: 0,
-      order: nextOrder // Novo campo
+      order: nextOrder,
+      hasMinRules: false, 
+      minQuantityRules: {} 
     });
     setIsModalOpen(true);
   };
 
   const handleEdit = (prod) => {
     const parentDayUse = myDayUses.find(d => d.id === prod.dayUseId);
+
+    const hasRules = prod.minQuantityRules && Object.keys(prod.minQuantityRules).length > 0;
     
     setFormData({ 
         ...prod,
@@ -259,7 +263,8 @@ const PartnerProducts = ({ user }) => {
         isPhysical: !!selectedType.isPhysical,
         stock: selectedType.isPhysical ? Number(formData.stock) : null,
         consumption: finalConsumption,
-        order: formData.order !== undefined ? Number(formData.order) : products.length // Salva ordem
+        order: formData.order !== undefined ? Number(formData.order) : products.length,
+        minQuantityRules: formData.hasMinRules ? formData.minQuantityRules : {}
       };
 
       if (formData.id) {
@@ -298,22 +303,48 @@ const PartnerProducts = ({ user }) => {
       });
   };
 
-  // --- RENDERIZAÇÃO: REGRAS DE IDADE (Mantido Igual) ---
+  // 🔥 CORREÇÃO FINAL: HANDLER DO MÍNIMO DE PESSOAS
+  const handleMinQuantityRuleChange = (key, value) => {
+      setFormData(prev => {
+          // Cria uma cópia segura das regras atuais
+          const currentRules = { ...prev.minQuantityRules };
+          
+          // Se o usuário apagou tudo, deixamos vazio para não travar o input
+          if (value === '') {
+              currentRules[key] = ''; 
+          } else {
+              // Salva o número exatamente como digitado (mesmo se for 1)
+              // Isso permite digitar "1", depois "0" virando "10"
+              currentRules[key] = Number(value);
+          }
+
+          return { 
+              ...prev, 
+              minQuantityRules: currentRules 
+          };
+      });
+  };
+
+  // --- RENDERIZAÇÃO: REGRAS DE IDADE E QUANTIDADE ---
   const renderAgeSettings = () => {
     if (!formData.type) return null;
     const childAges = Array.from({length: 18}, (_, i) => i); 
     const adultAges = Array.from({length: 83}, (_, i) => i + 10);
+    const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
     if (['adult', 'combo_adult'].includes(formData.type)) {
         return (
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-4 animate-fade-in">
-                <label className="text-xs font-bold text-slate-700 block mb-1">Classificação (Adultos)</label>
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500">Pessoas acima de:</span>
-                    <select className="flex-1 border p-2 rounded-lg bg-white outline-none focus:border-[#0097A8]" value={formData.ageMin} onChange={e => setFormData({...formData, ageMin: e.target.value})}>
-                        <option value="">Selecione...</option>
-                        {adultAges.map(age => <option key={age} value={age}>{age} anos</option>)}
-                    </select>
+            <div className="space-y-4">
+                {/* 1. Idade (Existente) */}
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-4 animate-fade-in">
+                    <label className="text-xs font-bold text-slate-700 block mb-1">Classificação (Adultos)</label>
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-slate-500">Pessoas acima de:</span>
+                        <select className="flex-1 border p-2 rounded-lg bg-white outline-none focus:border-[#0097A8]" value={formData.ageMin} onChange={e => setFormData({...formData, ageMin: e.target.value})}>
+                            <option value="">Selecione...</option>
+                            {adultAges.map(age => <option key={age} value={age}>{age} anos</option>)}
+                        </select>
+                    </div>
                 </div>
             </div>
         );
@@ -385,6 +416,93 @@ const PartnerProducts = ({ user }) => {
         );
     }
     return null;
+  };
+
+  // 🔥 2. RENDERIZAÇÃO: MÍNIMO DE PESSOAS (NOVA POSIÇÃO)
+  const renderMinQuantitySettings = () => {
+      if (!['adult', 'combo_adult'].includes(formData.type)) return null;
+
+      const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+      
+      // Busca dados do DayUse para pegar o nome dos feriados
+      const parentDayUse = myDayUses.find(d => d.id === formData.dayUseId);
+      const specialDatesMap = {};
+      if (parentDayUse?.specialDates) {
+          parentDayUse.specialDates.forEach(sd => {
+              specialDatesMap[sd.date] = sd.note || 'Feriado/Especial';
+          });
+      }
+
+      return (
+        <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 animate-fade-in mt-4">
+            <div className="flex items-center justify-between mb-3">
+                <label className="text-sm font-bold text-amber-800 flex items-center gap-2">
+                    <Users size={16}/> Mínimo de Pessoas por Dia
+                </label>
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={formData.hasMinRules} onChange={(e) => setFormData({...formData, hasMinRules: e.target.checked})} />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+            </div>
+            
+            {formData.hasMinRules && (
+                <div className="space-y-4 animate-slide-down">
+                    <p className="text-xs text-amber-700">Defina a quantidade mínima de pagantes para confirmar reserva em cada dia:</p>
+                    
+                    {/* Dias da Semana */}
+                    {formData.availableDays && formData.availableDays.length > 0 && (
+                        <div>
+                            <span className="text-[10px] font-bold text-amber-600 uppercase mb-2 block">Dias da Semana</span>
+                            <div className="grid grid-cols-2 gap-2">
+                                {formData.availableDays.map(dayIdx => (
+                                    <div key={`weekday-${dayIdx}`} className="flex items-center gap-2 bg-white p-2 rounded-lg border border-amber-100">
+                                        <span className="text-xs font-bold text-slate-500 w-8">{weekDays[dayIdx]}</span>
+                                        <input 
+                                            type="number" 
+                                            min="1"
+                                            className="w-full border-none p-0 text-sm font-bold text-slate-700 focus:ring-0 text-right"
+                                            placeholder="1"
+                                            // Correção: Acessa o valor corretamente
+                                            value={(formData.minQuantityRules && formData.minQuantityRules[dayIdx]) ?? ''} 
+                                            onChange={(e) => handleMinQuantityRuleChange(dayIdx, e.target.value)}
+                                        />
+                                        <span className="text-[10px] text-slate-400">min</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Datas Especiais (Se houver selecionadas) */}
+                    {formData.includedSpecialDates && formData.includedSpecialDates.length > 0 && (
+                        <div className="border-t border-amber-200/50 pt-2">
+                            <span className="text-[10px] font-bold text-amber-600 uppercase mb-2 block">Datas Especiais</span>
+                            <div className="grid grid-cols-1 gap-2">
+                                {formData.includedSpecialDates.map((dateStr) => (
+                                    <div key={`special-${dateStr}`} className="flex items-center gap-2 bg-white p-2 rounded-lg border border-amber-100">
+                                        <div className="flex-1">
+                                            <p className="text-xs font-bold text-slate-700">{dateStr.split('-').reverse().join('/')}</p>
+                                            <p className="text-[10px] text-slate-400 truncate">{specialDatesMap[dateStr]}</p>
+                                        </div>
+                                        <input 
+                                            type="number" 
+                                            min="1"
+                                            className="w-16 border-l border-slate-100 p-0 pl-2 text-sm font-bold text-slate-700 focus:ring-0 text-right"
+                                            placeholder="1"
+                                            // Correção: Acessa pela chave de data string
+                                            value={(formData.minQuantityRules && formData.minQuantityRules[dateStr]) ?? ''}
+                                            onChange={(e) => handleMinQuantityRuleChange(dateStr, e.target.value)}
+                                        />
+                                        <span className="text-[10px] text-slate-400">min</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+      );
   };
 
   // --- RENDERIZAÇÃO: CAMPOS DINÂMICOS (Mantido Igual) ---
@@ -592,10 +710,14 @@ const PartnerProducts = ({ user }) => {
                                     <p className="text-[10px] text-slate-400 mt-3">* Este produto estará disponível nos dias da semana marcados acima E nas datas especiais selecionadas.</p>
                                 </div>
                             )}
+                            {/* 🔥 3. AQUI FICA O NOVO CARD DE MÍNIMO DE PESSOAS */}
+                            {renderMinQuantitySettings()}
+
                             {renderDynamicFields()}
                             <Button onClick={handleSave} disabled={loading} className="w-full py-4 text-lg mt-4">{loading ? 'Salvando...' : 'Salvar Produto'}</Button>
                         </>
                     )}
+
                 </div>
             </div>
         </ModalOverlay>, document.body
