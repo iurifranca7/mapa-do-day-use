@@ -234,45 +234,62 @@ const PartnerSales = ({ user }) => {
       } finally { setSyncing(false); }
   };
 
-  // --- LÓGICA DE ESTORNO ---
-  // --- LÓGICA DE ESTORNO (CORRIGIDA) ---
+  // --- LÓGICA DE ESTORNO (CORRIGIDA E LOGADA) ---
   const handleConfirmRefund = async (sale) => {
+    console.log("VERSAO_NOVA_REFUND")
       // Validação de segurança básica
       if (!sale.paymentId) {
-          alert("Erro: Esta venda não possui ID de transação (pode ser manual ou antiga). Não é possível estornar automaticamente.");
+          alert("Erro: Esta venda não possui ID de transação. Não é possível estornar automaticamente.");
           return;
       }
 
       setRefundLoading(true);
+      
+      // 🔥 LOG 1: INÍCIO
+      console.group("💸 [DEBUG REFUND] Iniciando Processo");
+      console.log("1. Venda Selecionada:", sale);
+      console.log("2. ID Transação MP:", sale.paymentId);
+      console.log("3. Owner ID (Quem vai pagar):", user.effectiveOwnerId || user.uid);
+
       try {
-          // 1. CHAMADA REAL PARA A API (O PULO DO GATO)
-          // Ajuste a URL '/api/refund' se sua rota for diferente
-          const response = await fetch('https://SuaUrlDaAPI.com/api/refund', { 
+          // 🔥 CORREÇÃO DA URL: Usa caminho relativo
+          const endpoint = '/api/refund';
+          console.log("4. Chamando Endpoint:", endpoint);
+
+          const payload = {
+              paymentId: sale.paymentId,
+              amount: sale.paidAmount, 
+              // Envia o ID do chefe para a API buscar as credenciais dele
+              ownerId: user.effectiveOwnerId || user.uid, 
+              guestEmail: sale.guestEmail,
+              guestName: sale.guestName,
+              itemName: sale.items?.[0]?.title || 'Day Use'
+          };
+          console.log("5. Payload enviado:", payload);
+
+          const response = await fetch(endpoint, { 
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  paymentId: sale.paymentId,
-                  amount: sale.paidAmount, // Ou sale.netValue se quiser estornar só o liquido (cuidado com regras do MP)
-                  ownerId: user.effectiveOwnerId || user.uid, // Enviamos o ID do dono para a API buscar o token dele
-                  guestEmail: sale.guestEmail,
-                  guestName: sale.guestName,
-                  itemName: sale.items?.[0]?.title || 'Day Use'
-              })
+              body: JSON.stringify(payload)
           });
 
+          console.log("6. Status Resposta HTTP:", response.status);
+          
+          // Tenta ler o JSON independente do status para ver o erro
           const data = await response.json();
+          console.log("7. Resposta da API:", data);
 
           if (!response.ok) {
-              throw new Error(data.message || "Erro ao comunicar com Mercado Pago");
+              throw new Error(data.message || `Erro API: ${response.statusText}`);
           }
 
           // 2. SUCESSO NO MP -> AGORA ATUALIZA O FIREBASE
-          console.log("✅ Estorno confirmado no MP:", data);
+          console.log("✅ Sucesso no MP! Atualizando Firebase...");
 
           await updateDoc(doc(db, "reservations", sale.id), {
               status: 'cancelled',
               paymentStatus: 'refunded',
-              refundId: data.id, // Salva o ID do estorno
+              refundId: data.id, 
               updatedAt: new Date(),
               history: arrayUnion(
                   `Estorno de R$ ${sale.paidAmount} realizado em ${new Date().toLocaleString()}`,
@@ -287,14 +304,13 @@ const PartnerSales = ({ user }) => {
           setSaleToRefund(null); 
           setSelectedSale(null);
           
-          // Feedback visual
           alert(`Sucesso! O valor foi estornado e o cliente notificado.`);
 
       } catch (error) {
-          console.error("Erro no estorno:", error);
-          // Mostra o erro real do Mercado Pago para o usuário entender (ex: Saldo insuficiente)
+          console.error("❌ ERRO CRÍTICO NO ESTORNO:", error);
           alert(`Falha no estorno: ${error.message}`);
       } finally {
+          console.groupEnd();
           setRefundLoading(false);
       }
   };
