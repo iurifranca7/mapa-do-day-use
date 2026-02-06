@@ -215,23 +215,54 @@ const PartnerSales = ({ user }) => {
   // KPIs
   const [stats, setStats] = useState({ approvedCount: 0, totalRevenue: 0 });
 
-  // --- SINCRONIZAÇÃO ---
+  // --- SINCRONIZAÇÃO FINANCEIRA (CORRIGIDA) ---
   const handleSynchronize = async () => {
-      if (!window.confirm("Isso irá buscar dados reais no Mercado Pago. Deseja continuar?")) return;
-      setSyncing(true);
-      try {
-          const functions = getFunctions();
-          const synchronizeFn = httpsCallable(functions, 'synchronizeMercadoPagoTransactions');
-          const dates = getDateRangeDates(dateRange);
-          if (!dates) { alert("Selecione um período."); setSyncing(false); return; }
+      const dates = getDateRangeDates(dateRange);
+      if (!dates) { 
+          alert("Selecione um período específico para atualizar."); 
+          return; 
+      }
 
-          const result = await synchronizeFn({ begin_date: dates.start.toISOString(), end_date: dates.end.toISOString() });
-          alert(result.data.message || "Sincronização concluída!");
+      if (!window.confirm(`Deseja buscar dados reais no Mercado Pago de ${dates.start.toLocaleDateString()} até ${dates.end.toLocaleDateString()}?`)) return;
+      
+      setSyncing(true);
+      
+      // 🔥 LOG 1
+      console.log("🔄 [SYNC] Iniciando sincronização...");
+
+      try {
+          // 🔥 1. URL Relativa (Mesma lógica do Refund)
+          const endpoint = '/api/sync';
+          
+          // 🔥 2. Payload
+          const payload = {
+              ownerId: user.effectiveOwnerId || user.uid,
+              beginDate: dates.start.toISOString(),
+              endDate: dates.end.toISOString()
+          };
+
+          const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) throw new Error(data.error || "Erro na API");
+
+          console.log("✅ [SYNC] Sucesso:", data);
+          alert(`Sucesso! ${data.updated} vendas foram auditadas e atualizadas com as taxas reais.`);
+          
+          // Recarrega a tabela para mostrar os novos dados (Taxas reais, datas de saque)
           loadSales(); 
+
       } catch (error) {
           console.error("Erro Sync:", error);
-          alert("Erro ao sincronizar.");
-      } finally { setSyncing(false); }
+          alert(`Erro ao sincronizar: ${error.message}`);
+      } finally { 
+          setSyncing(false); 
+      }
   };
 
   // --- LÓGICA DE ESTORNO (CORRIGIDA E LOGADA) ---
