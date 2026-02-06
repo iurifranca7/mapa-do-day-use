@@ -141,7 +141,6 @@ const PartnerOverview = ({ user, setActiveTab }) => {
       
       // 🔥 1. Define o ID correto (Chefe ou Próprio)
       const targetId = user.effectiveOwnerId || user.uid;
-      console.log("📊 [OVERVIEW] Carregando métricas para:", targetId);
 
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];

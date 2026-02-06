@@ -60,7 +60,6 @@ const PartnerDashboard = () => {
 
   // 1. CARREGAMENTO INICIAL COM LÓGICA DE EQUIPE
   useEffect(() => {
-     console.log("🔄 [DASHBOARD] Iniciando observer de Auth...");
      
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
@@ -69,7 +68,6 @@ const PartnerDashboard = () => {
            const userDocSnap = await getDoc(userDocRef);
            
            if (!userDocSnap.exists()) {
-               console.error("❌ Usuário logado no Auth mas sem documento no Firestore!");
                return; 
            }
 
@@ -78,11 +76,9 @@ const PartnerDashboard = () => {
            // 2. Lógica do "Dono Efetivo" (Quem é o dono dos dados?)
            let effectiveOwnerId = u.uid; // Começa assumindo que é o próprio usuário
 
-           console.log("🧐 [DEBUG LÓGICA] Role:", userData.role, "| OwnerId:", userData.ownerId);
 
            // SE É SÓCIO OU STAFF E TEM UM CHEFE DEFINIDO
            if ((userData.role === 'staff' || userData.role === 'partner') && userData.ownerId) {
-               console.log("✅ Detectado Sócio/Staff. Trocando ID para o do Chefe...");
                effectiveOwnerId = userData.ownerId;
            }
            
@@ -97,15 +93,6 @@ const PartnerDashboard = () => {
                ...userData, 
                effectiveOwnerId: effectiveOwnerId 
            };
-
-           // 🔥 LOGS DE DEBUG (Agora é seguro chamar finalUserObj)
-           console.group("🔍 [DEBUG DASHBOARD] Análise Final");
-           console.log("1. UID Logado (Quem sou eu):", u.uid);
-           console.log("2. Role (Cargo):", userData.role);
-           console.log("3. OwnerId no Banco (Meu Chefe):", userData.ownerId);
-           console.log("🎯 ID EFETIVO (Quem vamos buscar):", effectiveOwnerId);
-           console.log("📦 Objeto Final:", finalUserObj);
-           console.groupEnd();
 
            // 4. Salva no Estado
            setUser(finalUserObj); 
@@ -122,7 +109,6 @@ const PartnerDashboard = () => {
            }
 
         } else {
-           console.log("🚪 Usuário não logado.");
            navigate('/'); 
         }
      });

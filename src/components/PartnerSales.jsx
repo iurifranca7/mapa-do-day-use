@@ -385,7 +385,6 @@ const PartnerSales = ({ user }) => {
     
     // 🔥 Define o ID correto (Chefe ou Próprio)
     const targetId = user.effectiveOwnerId || user.uid;
-    console.log("💰 [SALES] Buscando vendas para:", targetId);
 
     try {
         // Query Correta: Usa targetId em vez de user.uid
