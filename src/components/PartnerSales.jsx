@@ -11,7 +11,8 @@ import {
 import { formatBRL } from '../utils/format';
 import Button from './Button';
 import ModalOverlay from './ModalOverlay';
-import RefundModal from './RefundModal'; // Seu modal ajustado
+import RefundModal from './RefundModal'; 
+import FeedbackModal from './FeedbackModal';
 
 // --- DRAWER DE DETALHES (RAIO-X) ---
 const SaleDetailDrawer = ({ sale, onClose, onRequestRefund }) => {
