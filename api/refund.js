@@ -3,6 +3,35 @@ import { MailtrapClient } from 'mailtrap';
 import admin from 'firebase-admin';
 
 // ==================================================================
+// 1. HELPER DE EMAIL (EMBUTIDO PARA EVITAR ERRO DE IMPORTAÇÃO)
+// ==================================================================
+// Colocamos aqui dentro para garantir que a Vercel encontre o código
+const getRefundEmailHtml = (guestName, amount, paymentId, itemName) => {
+    const styleContainer = 'font-family: Arial, sans-serif; background-color: #f1f5f9; padding: 40px 0;';
+    const styleBox = 'max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0;';
+    
+    return `
+    <div style="${styleContainer}">
+        <div style="${styleBox}">
+            <div style="background-color: #ef4444; padding: 30px; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 24px;">Reembolso Confirmado</h1>
+            </div>
+            <div style="padding: 40px 30px;">
+                <p style="color: #333; font-size: 16px;">Olá, <strong>${guestName}</strong>.</p>
+                <p style="color: #555; line-height: 1.5;">O estorno referente à reserva em <strong>${itemName}</strong> foi processado.</p>
+                
+                <div style="background-color: #fef2f2; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0;">
+                    <p style="color: #991b1b; font-size: 12px; text-transform: uppercase; font-weight: bold;">Valor Reembolsado</p>
+                    <p style="color: #dc2626; font-size: 32px; font-weight: bold; margin: 10px 0;">R$ ${amount}</p>
+                </div>
+
+                <p style="color: #666; font-size: 13px; text-align: center;">ID Transação: ${paymentId}</p>
+            </div>
+        </div>
+    </div>`;
+};
+
+// ==================================================================
 // 2. INICIALIZAÇÃO FIREBASE (SINGLETON) - Igual ao process-payment
 // ==================================================================
 const initFirebase = () => {
