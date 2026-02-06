@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // 1. useRef Adicionado
 import { createPortal } from 'react-dom'; 
 import { doc, updateDoc, addDoc, getDocs, deleteDoc, collection, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
   User, MapPin, Info, Clock, Users, ShieldCheck, Coffee, 
   Edit, X, Image as ImageIcon, Trash2, Video, Search, Plus, Calendar, Utensils,
-  MoreVertical, Power, AlertTriangle, ArrowLeft, Loader2, ExternalLink, Check, Rocket, Ban // <--- CORREÇÃO 1: Ban adicionado
+  MoreVertical, Power, AlertTriangle, ArrowLeft, Loader2, ExternalLink, Check, Rocket, Ban 
 } from 'lucide-react';
 import Button from './Button';
 import ModalOverlay from './ModalOverlay';
@@ -37,8 +37,12 @@ const MEALS_LIST = [
 const PartnerMyDayUse = ({ user }) => {
   // --- STATES GERAIS ---
   const [loading, setLoading] = useState(false);
+  
+  // 🔥 2. TRAVA DE SEGURANÇA (Isso impede a duplicação)
+  const isSavingRef = useRef(false); 
+
   const [feedback, setFeedback] = useState(null);
-  const [viewMode, setViewMode] = useState('list'); // 'list' ou 'edit'
+  const [viewMode, setViewMode] = useState('list'); 
   
   // --- STATES LISTAGEM ---
   const [dayUsesList, setDayUsesList] = useState([]);
@@ -54,53 +58,49 @@ const PartnerMyDayUse = ({ user }) => {
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [blockedDateInput, setBlockedDateInput] = useState('');
   
-  // Lista estática de estados
   const states = [
     "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", 
     "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"
   ];
 
-  // State do Formulário (Resetado para novo)
   const initialFormState = {
     id: null,
-    status: 'active', // active | paused
-    // Responsável
+    status: 'active', 
     contactName: '', contactEmail: '', contactPhone: '', contactJob: '',
-    // Local
     cnpj: '', name: '', cep: '', street: '', number: '', district: '', city: '', state: '',
     localEmail: '', localPhone: '', localWhatsapp: '', referencePoint: '',
-    // Sobre
     description: '', videoUrl: '', menuUrl: '', logoUrl: '', images: ['', '', '', '', '', ''],
-    // Funcionamento
     availableDays: [0, 6], 
     openingTime: '09:00', closingTime: '18:00', specialDates: [],
     blockedDates: [],
-    // Capacidade
     capacityAdults: '', capacityChildren: '', capacityPets: '',
     parkingCars: '', parkingMoto: '',
     acceptsPets: false, hasPaidParking: false,
-    // Regras
     allowFood: false, hasSearch: false, usageRules: '', cancellationPolicy: '', observations: '',
-    // Comodidades
     amenities: [], meals: [], notIncludedItems: ''
   };
   
   const [formData, setFormData] = useState(initialFormState);
 
-  // 1. CARREGAR LISTA DE DAY USES
+  // 1. CARREGAR LISTA
   const fetchDayUses = async () => {
     if (!user) return;
     setLoadingList(true);
     try {
       const q = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
       const querySnapshot = await getDocs(q);
-      const list = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const list = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            ...data,      // 1. Espalha os dados primeiro
+            id: doc.id    // 2. Garante que o ID real do documento sobrescreva qualquer lixo
+          };
+      });
+      console.log("📋 Lista carregada:", list); // Log para conferir
       setDayUsesList(list);
     } catch (error) {
       console.error("Erro ao buscar lista:", error);
+      setLoadingList(false); 
     } finally {
       setLoadingList(false);
     }
@@ -110,7 +110,7 @@ const PartnerMyDayUse = ({ user }) => {
     fetchDayUses();
   }, [user]);
 
-  // 2. CARREGAR CIDADES (IBGE) - Só roda se estiver editando e mudar o estado
+  // 2. CARREGAR CIDADES
   useEffect(() => {
     if (viewMode === 'edit' && formData.state) {
       setLoadingCities(true);
@@ -127,7 +127,7 @@ const PartnerMyDayUse = ({ user }) => {
   }, [formData.state, viewMode]);
 
 
-  // --- ACTIONS DA LISTAGEM ---
+  // --- ACTIONS ---
 
   const handleCreateNew = () => {
     setFormData({ 
@@ -139,15 +139,18 @@ const PartnerMyDayUse = ({ user }) => {
   };
 
   const handleEditItem = (item) => {
-    // Garante array de imagens com 6 slots
+
+    console.log("🛠️ [DEBUG] Botão Editar Clicado!");
+    console.log("🛠️ [DEBUG] Item recebido para edição:", item);
+    console.log("🛠️ [DEBUG] ID do item:", item?.id);
+
     let loadedImages = item.images || [];
     while (loadedImages.length < 6) loadedImages.push('');
 
     setFormData({
-        ...initialFormState, // Garante que campos novos não quebrem itens antigos
+        ...initialFormState, 
         ...item,
         images: loadedImages,
-        // Garante compatibilidade de campos
         availableDays: item.availableDays || [0, 6],
         blockedDates: item.blockedDates || [],
         amenities: item.amenities || [],
@@ -159,13 +162,13 @@ const PartnerMyDayUse = ({ user }) => {
     setViewMode('edit');
   };
 
-  const handleToggleStatus = async (dayUse) => {
-    const isCurrentlyActive = dayUse.status === 'active';
+  const handleToggleStatus = async (item) => {
+    const isCurrentlyActive = item.status === 'active';
     const newStatus = isCurrentlyActive ? 'paused' : 'active';
     const newPausedValue = newStatus !== 'active';
 
     try {
-        const docRef = doc(db, "dayuses", dayUse.id);
+        const docRef = doc(db, "dayuses", item.id);
         
         await updateDoc(docRef, {
             status: newStatus,          
@@ -173,11 +176,10 @@ const PartnerMyDayUse = ({ user }) => {
             updatedAt: new Date()
         });
 
-        // --- CORREÇÃO 2: Nome do set estava errado (era setDayUses) ---
-        setDayUsesList(currentList => currentList.map(item => 
-            item.id === dayUse.id 
-                ? { ...item, status: newStatus, paused: newPausedValue } 
-                : item
+        setDayUsesList(currentList => currentList.map(d => 
+            d.id === item.id 
+                ? { ...d, status: newStatus, paused: newPausedValue } 
+                : d
         ));
 
     } catch (error) {
@@ -188,7 +190,6 @@ const PartnerMyDayUse = ({ user }) => {
 
   const handleDeleteItem = async (id) => {
     if(!window.confirm("Tem certeza que deseja excluir este Day Use? Essa ação não pode ser desfeita.")) return;
-    
     try {
         await deleteDoc(doc(db, "dayuses", id));
         fetchDayUses();
@@ -198,9 +199,8 @@ const PartnerMyDayUse = ({ user }) => {
     }
   };
 
-
   // --- HANDLERS DO FORMULÁRIO ---
-
+  // (Mantidos iguais aos anteriores, omitindo para economizar espaço se já estiverem ok)
   const handlePhoneChange = (e) => {
     let val = e.target.value.replace(/\D/g, '');
     if (val.length > 11) val = val.slice(0, 11);
@@ -314,27 +314,41 @@ const PartnerMyDayUse = ({ user }) => {
     setFormData({ ...formData, logoUrl: '' });
   };
 
-  // --- SALVAR E PUBLICAR ---
+  // 🔥 3. FUNÇÃO BLINDADA CONTRA DUPLICIDADE 🔥
   const handleSave = async () => {
+    // SE JÁ ESTIVER SALVANDO, ABORTA IMEDIATAMENTE (Trava de duplo clique)
+    if (isSavingRef.current) return; 
+
     setLoading(true);
+    isSavingRef.current = true; // Ativa a trava
+
     try {
+      // Validações
       const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (formData.contactEmail && !emailRegex.test(formData.contactEmail.trim())) {
           setFeedback({ type: 'error', title: 'E-mail Inválido', msg: 'Digite um e-mail válido.' });
-          setLoading(false); return;
+          setLoading(false); isSavingRef.current = false; return;
       }
       const cleanPhone = formData.contactPhone.replace(/\D/g, '');
       if (formData.contactPhone && (cleanPhone.length < 10 || cleanPhone.length > 11)) {
           setFeedback({ type: 'error', title: 'Telefone Inválido', msg: 'DDD + Número (10 ou 11 dígitos).' });
-          setLoading(false); return;
+          setLoading(false); isSavingRef.current = false; return;
       }
       const cleanCnpj = formData.cnpj ? formData.cnpj.replace(/\D/g, '') : '';
       if (formData.cnpj && cleanCnpj.length !== 14) {
           setFeedback({ type: 'error', title: 'CNPJ Inválido', msg: 'O CNPJ deve conter 14 dígitos.' });
-          setLoading(false); return;
+          setLoading(false); isSavingRef.current = false; return;
       }
 
-      const generatedSlug = generateSlug(formData.name);
+      // ADICIONE ESTES LOGS LOGO APÓS AS TRAVAS DE SEGURANÇA
+    console.log("💾 [DEBUG] handleSave Iniciado");
+    console.log("💾 [DEBUG] Estado atual do formData:", formData);
+    console.log("💾 [DEBUG] formData.id é:", formData.id);
+    console.log("💾 [DEBUG] Tipo do ID:", typeof formData.id);
+
+      // Prepara Dados
+      // Mantém o slug existente se for edição, cria novo se for novo
+      const generatedSlug = formData.slug || generateSlug(formData.name);
       
       const dataToSave = {
         ...formData,
@@ -352,19 +366,33 @@ const PartnerMyDayUse = ({ user }) => {
       };
 
       let savedId = formData.id;
+      
       if (formData.id) {
+
+        // ADICIONE ESTE LOG DENTRO DO IF
+        console.log("🔄 [DEBUG] Entrando no fluxo de UPDATE (Atualização). ID:", formData.id);
+        // Atualiza existente
         await updateDoc(doc(db, "dayuses", formData.id), dataToSave);
       } else {
+
+        console.log("✨ [DEBUG] Entrando no fluxo de CREATE (Criação Nova). Motivo: ID é nulo.");
+        // Cria novo
         const docRef = await addDoc(collection(db, "dayuses"), { ...dataToSave, createdAt: new Date() });
         savedId = docRef.id;
+
+        console.log("✅ [DEBUG] Novo documento criado com ID:", savedId);
       }
 
+      // Atualiza o estado local para que o próximo clique seja uma EDIÇÃO e não CRIAÇÃO
       setFormData(prev => ({ 
           ...prev, 
           id: savedId, 
           slug: generatedSlug, 
           status: 'active' 
       }));
+
+      // Atualiza a lista na tela principal também
+      fetchDayUses();
 
       setEditModal(null);
       setShowPublishModal(true);
@@ -374,6 +402,7 @@ const PartnerMyDayUse = ({ user }) => {
       setFeedback({ type: 'error', title: 'Erro', msg: 'Não foi possível publicar.' });
     } finally {
       setLoading(false);
+      isSavingRef.current = false; // Libera a trava SEMPRE no final
     }
   };
 
@@ -583,6 +612,11 @@ const PartnerMyDayUse = ({ user }) => {
                   {formData.specialDates.length} datas especiais configuradas
               </p>
           )}
+          {formData.blockedDates?.length > 0 && (
+              <p className="text-xs text-red-500 font-bold mt-1">
+                  {formData.blockedDates.length} datas bloqueadas
+              </p>
+          )}
         </SectionCard>
 
         <SectionCard title="Capacidade" icon={<Users size={20}/>} onEdit={() => setEditModal('capacity')}>
@@ -611,8 +645,6 @@ const PartnerMyDayUse = ({ user }) => {
 
       </div>
 
-      {/* --- MODAIS DE EDIÇÃO --- */}
-      
       {editModal === 'manager' && createPortal(
         <ModalOverlay onClose={() => setEditModal(null)}>
           <div className="bg-white p-6 md:p-8 rounded-3xl w-full max-w-3xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
@@ -683,7 +715,6 @@ const PartnerMyDayUse = ({ user }) => {
             </div>
             
             <div className="space-y-8">
-              {/* BLOCO 1: Identificação */}
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Informações Públicas</h4>
                   <div className="grid md:grid-cols-2 gap-6">
@@ -704,7 +735,6 @@ const PartnerMyDayUse = ({ user }) => {
                   </div>
               </div>
               
-              {/* BLOCO 2: Contato */}
               <div className="grid md:grid-cols-3 gap-6">
                 <div>
                     <label className="text-sm font-bold text-slate-700 block mb-1">WhatsApp (Principal)</label>
@@ -722,7 +752,6 @@ const PartnerMyDayUse = ({ user }) => {
               
               <hr className="border-slate-100" />
 
-              {/* BLOCO 3: Endereço Inteligente */}
               <div>
                   <div className="flex justify-between items-center mb-4">
                       <p className="text-lg font-bold text-slate-800">Endereço</p>
@@ -804,10 +833,7 @@ const PartnerMyDayUse = ({ user }) => {
             </div>
             
             <div className="grid md:grid-cols-2 gap-8">
-                {/* Lado Esquerdo: Logo, Textos e Links */}
                 <div className="space-y-6">
-                    
-                    {/* CAMPO DE LOGO */}
                     <div>
                         <label className="block text-sm font-bold text-slate-700 mb-3">Logo do Estabelecimento</label>
                         <div className="flex items-start gap-5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
@@ -884,7 +910,6 @@ const PartnerMyDayUse = ({ user }) => {
                     </div>
                 </div>
                 
-                {/* Lado Direito: Galeria */}
                 <div className="border-t md:border-t-0 md:border-l border-slate-100 pt-8 md:pt-0 md:pl-8">
                     <div className="flex justify-between items-end mb-4">
                         <label className="block text-sm font-bold text-slate-700">Galeria de Fotos</label>
@@ -928,7 +953,6 @@ const PartnerMyDayUse = ({ user }) => {
         </ModalOverlay>, document.body
       )}
 
-      {/* --- CORREÇÃO 3: MODAL DE FUNCIONAMENTO (Estava faltando) --- */}
       {editModal === 'operation' && createPortal(
         <ModalOverlay onClose={() => setEditModal(null)}>
           <div className="bg-white p-6 md:p-8 rounded-3xl w-full max-w-4xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
@@ -1017,141 +1041,79 @@ const PartnerMyDayUse = ({ user }) => {
                             </div>
                         )}
                         {formData.specialDates?.map((item, idx) => (
-                            <div key={idx} className="flex flex-col md:flex-row gap-3 bg-white p-3 rounded-xl border border-slate-200 items-end md:items-center animate-fade-in">
-                                <div className="flex-1 w-full">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Data</span>
-                                    <input 
-                                        type="date" 
-                                        className="w-full border p-2 rounded-lg text-sm bg-slate-50"
-                                        value={item.date}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].date = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="w-24">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Abre</span>
-                                    <input 
-                                        type="time" 
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.open}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].open = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="w-24">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Fecha</span>
-                                    <input 
-                                        type="time" 
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.close}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].close = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
-                                <div className="flex-1 w-full">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Motivo (Opcional)</span>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Ex: Natal"
-                                        className="w-full border p-2 rounded-lg text-sm"
-                                        value={item.note}
-                                        onChange={e => {
-                                            const list = [...formData.specialDates];
-                                            list[idx].note = e.target.value;
-                                            setFormData({...formData, specialDates: list});
-                                        }}
-                                    />
-                                </div>
+                             <div key={idx} className="flex flex-col md:flex-row gap-3 bg-white p-3 rounded-xl border border-slate-200 items-end md:items-center animate-fade-in">
+                                <div className="flex-1 w-full"><span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Data</span><input type="date" className="w-full border p-2 rounded-lg text-sm bg-slate-50" value={item.date} onChange={e => { const list = [...formData.specialDates]; list[idx].date = e.target.value; setFormData({...formData, specialDates: list}); }} /></div>
+                                <div className="w-24"><span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Abre</span><input type="time" className="w-full border p-2 rounded-lg text-sm" value={item.open} onChange={e => { const list = [...formData.specialDates]; list[idx].open = e.target.value; setFormData({...formData, specialDates: list}); }} /></div>
+                                <div className="w-24"><span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Fecha</span><input type="time" className="w-full border p-2 rounded-lg text-sm" value={item.close} onChange={e => { const list = [...formData.specialDates]; list[idx].close = e.target.value; setFormData({...formData, specialDates: list}); }} /></div>
+                                <div className="flex-1 w-full"><span className="text-[10px] text-slate-400 font-bold uppercase ml-1">Motivo</span><input type="text" placeholder="Ex: Natal" className="w-full border p-2 rounded-lg text-sm" value={item.note} onChange={e => { const list = [...formData.specialDates]; list[idx].note = e.target.value; setFormData({...formData, specialDates: list}); }} /></div>
+                                <button onClick={() => { const list = formData.specialDates.filter((_, i) => i !== idx); setFormData({...formData, specialDates: list}); }} className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors mb-0.5"><Trash2 size={18}/></button>
+                             </div>
+                        ))}
+                    </div>
+                </div>
 
-                                <button 
+                <hr className="border-slate-100" />
+                
+                <div>
+                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-4">
+                        <Ban size={16} className="text-red-500"/> Datas Bloqueadas (Exceções)
+                    </label>
+                    <p className="text-xs text-slate-400 mb-3">
+                        Selecione dias específicos em que o local estará fechado, mesmo que seja um dia de funcionamento normal.
+                    </p>
+
+                    <div className="flex gap-2 mb-4">
+                        <input 
+                            type="date" 
+                            className="border p-2 rounded-xl text-sm flex-1 outline-none focus:border-[#0097A8] bg-slate-50"
+                            value={blockedDateInput}
+                            onChange={(e) => setBlockedDateInput(e.target.value)}
+                        />
+                        <button 
+                            onClick={() => {
+                                if (!blockedDateInput) return;
+                                if (formData.blockedDates.includes(blockedDateInput)) {
+                                    alert("Esta data já está bloqueada.");
+                                    return;
+                                }
+                                setFormData({
+                                    ...formData, 
+                                    blockedDates: [...(formData.blockedDates || []), blockedDateInput].sort()
+                                });
+                                setBlockedDateInput('');
+                            }}
+                            className="bg-slate-800 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-700 transition-colors"
+                        >
+                            Bloquear Data
+                        </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        {(!formData.blockedDates || formData.blockedDates.length === 0) && (
+                            <span className="text-xs text-slate-300 italic">Nenhuma data bloqueada.</span>
+                        )}
+                        {formData.blockedDates?.map((date) => (
+                            <div key={date} className="bg-red-50 border border-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 animate-fade-in">
+                                 {date.split('-').reverse().join('/')}
+                                 <button 
                                     onClick={() => {
-                                        const list = formData.specialDates.filter((_, i) => i !== idx);
-                                        setFormData({...formData, specialDates: list});
+                                        const newList = formData.blockedDates.filter(d => d !== date);
+                                        setFormData({...formData, blockedDates: newList});
                                     }}
-                                    className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors mb-0.5"
-                                    title="Remover data"
-                                >
-                                    <Trash2 size={18}/>
-                                </button>
+                                    className="hover:text-red-800 transition-colors"
+                                 >
+                                    <X size={14}/>
+                                 </button>
                             </div>
                         ))}
                     </div>
                 </div>
-                {/* 🔥 NOVO BLOCO: DATAS BLOQUEADAS */}
-                    <hr className="border-slate-100" />
-                    
-                    <div>
-                        <label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-4">
-                            <Ban size={16} className="text-red-500"/> Datas Bloqueadas (Exceções)
-                        </label>
-                        <p className="text-xs text-slate-400 mb-3">
-                            Selecione dias específicos em que o local estará fechado, mesmo que seja um dia de funcionamento normal.
-                        </p>
 
-                        <div className="flex gap-2 mb-4">
-                            <input 
-                                type="date" 
-                                className="border p-2 rounded-xl text-sm flex-1 outline-none focus:border-[#0097A8] bg-slate-50"
-                                value={blockedDateInput}
-                                onChange={(e) => setBlockedDateInput(e.target.value)}
-                            />
-                            <button 
-                                onClick={() => {
-                                    if (!blockedDateInput) return;
-                                    if (formData.blockedDates.includes(blockedDateInput)) {
-                                        alert("Esta data já está bloqueada.");
-                                        return;
-                                    }
-                                    setFormData({
-                                        ...formData, 
-                                        blockedDates: [...(formData.blockedDates || []), blockedDateInput].sort()
-                                    });
-                                    setBlockedDateInput('');
-                                }}
-                                className="bg-slate-800 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-700 transition-colors"
-                            >
-                                Bloquear Data
-                            </button>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                            {(!formData.blockedDates || formData.blockedDates.length === 0) && (
-                                <span className="text-xs text-slate-300 italic">Nenhuma data bloqueada.</span>
-                            )}
-                            {formData.blockedDates?.map((date) => (
-                                <div key={date} className="bg-red-50 border border-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 animate-fade-in">
-                                    {/* Formatação visual da data (DD/MM/AAAA) */}
-                                    {date.split('-').reverse().join('/')}
-                                    <button 
-                                        onClick={() => {
-                                            const newList = formData.blockedDates.filter(d => d !== date);
-                                            setFormData({...formData, blockedDates: newList});
-                                        }}
-                                        className="hover:text-red-800 transition-colors"
-                                    >
-                                        <X size={14}/>
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    {/* 🔥 FIM DO NOVO BLOCO */}
-                    
-                <Button onClick={() => setEditModal(null)} className="w-full py-4 text-lg mt-8">Confirmar</Button>
-            </div>
+             </div>
+             <Button onClick={() => setEditModal(null)} className="w-full py-4 text-lg mt-8">Confirmar</Button>
           </div>
         </ModalOverlay>, document.body
       )}
-
 
       {editModal === 'capacity' && createPortal(
         <ModalOverlay onClose={() => setEditModal(null)}>
@@ -1165,7 +1127,6 @@ const PartnerMyDayUse = ({ user }) => {
             </div>
             
             <div className="space-y-8">
-              {/* 1. CAPACIDADE PESSOAS */}
               <div>
                   <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">Limite de Pessoas (Estoque Diário)</p>
                   <div className="grid grid-cols-2 gap-6">
@@ -1182,7 +1143,6 @@ const PartnerMyDayUse = ({ user }) => {
 
               <hr className="border-slate-100" />
 
-              {/* 2. PETS */}
               <div>
                   <label className="text-sm font-bold text-slate-700 block mb-2">O espaço aceita pet?</label>
                   <select 
@@ -1211,7 +1171,6 @@ const PartnerMyDayUse = ({ user }) => {
               
               <hr className="border-slate-100" />
 
-              {/* 3. ESTACIONAMENTO */}
               <div>
                 <label className="text-sm font-bold text-slate-700 block mb-2">Você disponibiliza estacionamento pago?</label>
                 <select 
@@ -1395,7 +1354,6 @@ const PartnerMyDayUse = ({ user }) => {
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Link Oficial de Vendas</label>
                 <div className="flex items-center gap-2">
                     <code className="text-sm font-mono text-slate-700 truncate flex-1 bg-white p-2 rounded border border-slate-100">
-                        {/* APLICAÇÃO DO TOLOWERCASE AQUI */}
                         {`${window.location.origin}/${formData.state?.toLowerCase()}/${formData.slug}`}
                     </code>
                     <button 
@@ -1414,7 +1372,6 @@ const PartnerMyDayUse = ({ user }) => {
             <div className="space-y-3">
                 <Button 
                     onClick={() => {
-                        // Abre a URL em minúsculo
                         window.open(`/${formData.state?.toLowerCase()}/${formData.slug}`, '_blank');
                     }} 
                     className="w-full py-4 text-lg flex items-center justify-center gap-2"

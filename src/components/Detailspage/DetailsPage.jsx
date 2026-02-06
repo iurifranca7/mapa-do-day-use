@@ -24,11 +24,23 @@ import { useSEO, useSchema } from '../../hooks/useSEO';
 import { notifyAdminNewClaim } from '../../utils/notifications';
 
 const DetailsPage = () => {
-  const { state: stateParam, slug } = useParams();
+  const params = useParams(); // Pega todos os parâmetros da URL
   const location = useLocation();
   const navigate = useNavigate();
-  
+
+  // 🔥 CORREÇÃO CRÍTICA DO SLUG E LOGS 🔥
+  // O React Router pode estar enviando o slug em :cityOrSlug OU :slug dependendo da rota
+  const slug = params.slug || params.cityOrSlug || params.id;
+  const stateParam = params.state;
   const idParam = location.state?.id;
+
+  // Logs de Diagnóstico (Agora seguros)
+  console.log("============= 🕵️‍♂️ RASTREAMENTO DE ROTA =============");
+  console.log("📍 URL Atual:", window.location.href);
+  console.log("📦 Params Crus:", params);
+  console.log("✅ Slug Final Identificado:", slug);
+  console.log("🔑 ID via State:", idParam);
+  console.log("====================================================");
 
   // States de Dados
   const [item, setItem] = useState(null);
@@ -36,7 +48,7 @@ const DetailsPage = () => {
   const [relatedItems, setRelatedItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // States de Autenticação (CORREÇÃO: Estado local em vez de Contexto)
+  // States de Autenticação
   const [user, setUser] = useState(null);
 
   // States de UI
@@ -54,7 +66,7 @@ const DetailsPage = () => {
 
   try { useSEO(item ? item.name : "Carregando...", item ? item.description : ""); } catch(e) {}
 
-  // 1. MONITORAR AUTENTICAÇÃO (CORREÇÃO)
+  // 1. MONITORAR AUTENTICAÇÃO
   useEffect(() => {
     const auth = getAuth();
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -65,6 +77,8 @@ const DetailsPage = () => {
 
   // 2. FETCH DATA
   useEffect(() => {
+    console.log("🚀 [DETAILS] Iniciando busca. Slug:", slug, "ID Param:", idParam);
+    
     setLoading(true);
     let unsubDayUse = () => {};
     let unsubProducts = () => {};
@@ -72,16 +86,30 @@ const DetailsPage = () => {
     const fetchData = async () => {
       try {
         let docId = idParam;
+        
+        // Se não veio ID (veio direto pelo link), busca pelo slug
         if (!docId && slug) {
+          console.log("🔎 [DETAILS] Buscando ID pelo slug:", slug);
           const q = query(collection(db, "dayuses"), where("slug", "==", slug)); 
           const snap = await getDocs(q);
-          if (!snap.empty) docId = snap.docs[0].id;
+          
+          if (!snap.empty) {
+              docId = snap.docs[0].id;
+              console.log("✅ [DETAILS] ID encontrado pelo slug:", docId);
+          } else {
+              console.warn("⚠️ [DETAILS] Nenhum Day Use encontrado com este slug.");
+              setLoading(false); // Para o loading se não achar
+              return;
+          }
         }
 
         if (docId) {
+          console.log("📡 [DETAILS] Iniciando listener do documento:", docId);
+          
           unsubDayUse = onSnapshot(doc(db, "dayuses", docId), (docSnap) => {
               if (docSnap.exists()) {
                   const data = { id: docSnap.id, ...docSnap.data() };
+                  console.log("📦 [DETAILS] Dados carregados:", data.name);
                   setItem(data);
                   
                   if (data.city && relatedItems.length === 0) {
@@ -98,15 +126,23 @@ const DetailsPage = () => {
                           setProducts(prodsList);
                       });
                   }
+              } else {
+                  console.warn("⚠️ [DETAILS] Documento excluído ou inexistente.");
               }
-              setLoading(false);
+              setLoading(false); // Finaliza o loading com sucesso
           });
-        } else { setLoading(false); }
-      } catch (error) { console.error(error); setLoading(false); }
+        } else { 
+            console.log("🚫 [DETAILS] Sem DocID válido. Parando.");
+            setLoading(false); 
+        }
+      } catch (error) { 
+          console.error("❌ [DETAILS] Erro geral no fetchData:", error); 
+          setLoading(false); 
+      }
     };
     fetchData();
     return () => { unsubDayUse(); unsubProducts(); };
-  }, [slug, idParam]);
+  }, [slug, idParam]); // Reage a mudanças no slug corrigido
 
   // 3. ENVIO DA SOLICITAÇÃO (CLAIM)
   const handleClaimSubmit = async (e) => {
@@ -181,7 +217,26 @@ const DetailsPage = () => {
     </div>
   );
 
-  if (loading || !item) return <div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 border-4 border-[#0097A8] border-t-transparent rounded-full animate-spin"/></div>;
+  // 1. Se estiver carregando, mostra o spinner
+  if (loading) {
+      return (
+          <div className="min-h-screen flex items-center justify-center">
+              <div className="w-8 h-8 border-4 border-[#0097A8] border-t-transparent rounded-full animate-spin"/>
+          </div>
+      );
+  }
+
+  // 2. Se parou de carregar e NÃO tem item, mostra erro 404 (CORREÇÃO DO LOOPING)
+  if (!item) {
+      return (
+          <div className="min-h-screen flex flex-col items-center justify-center text-slate-500 gap-4">
+              <Ban size={48} className="text-slate-300"/>
+              <h2 className="text-xl font-bold">Day Use não encontrado</h2>
+              <p>Verifique o endereço ou tente buscar novamente.</p>
+              <Button onClick={() => navigate('/')}>Voltar para o Início</Button>
+          </div>
+      );
+  }
 
   const allProductsPaused = products.length > 0 && products.every(p => p.status === 'paused');
   const isLocallyPaused = item.paused || allProductsPaused;
@@ -193,7 +248,6 @@ const DetailsPage = () => {
       
       {showClaimSuccess && createPortal(<SuccessModal isOpen={showClaimSuccess} onClose={() => setShowClaimSuccess(false)} title="Solicitação Enviada!" message="Recebemos seus dados. Entraremos em contato em breve." actionLabel="Entendi" onAction={() => setShowClaimSuccess(false)} />, document.body)}
       
-      {/* MODAL DE SOLICITAÇÃO */}
       {showClaimModal && createPortal(
         <ModalOverlay onClose={() => setShowClaimModal(false)}>
             <div className="bg-white p-8 rounded-3xl w-full max-w-md animate-fade-in">
@@ -235,7 +289,6 @@ const DetailsPage = () => {
             </div>
          </div>
          <div className="lg:col-span-1 h-fit sticky top-24">
-            {/* CORREÇÃO: Passando o usuário autenticado para o BookingCard */}
             {isLocallyPaused ? <PausedMessage /> : <BookingCard item={item} products={activeProducts} date={date} setDate={setDate} handleBook={handleBook} availableSpots={Number(item.capacityAdults || 999)} isSoldOut={false} isTimeBlocked={false} checkingStock={false} user={user} />}
          </div>
       </div>
