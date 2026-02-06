@@ -1,21 +1,40 @@
 import { MercadoPagoConfig, PaymentRefund } from 'mercadopago';
 import { MailtrapClient } from 'mailtrap';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
+import { getRefundEmailHtml } from '../../utils/templates'; // Importando seu template limpo
 
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined,
-        }),
-    });
-}
+// ==================================================================
+// 1. INICIALIZAÇÃO FIREBASE (SINGLETON) - Igual ao process-payment
+// ==================================================================
+const initFirebase = () => {
+    if (admin.apps.length > 0) {
+        return admin.firestore();
+    }
 
-const db = admin.firestore();
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
+
+    try {
+        if (projectId && clientEmail && privateKeyRaw) {
+            const privateKey = privateKeyRaw.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
+            const credential = admin.credential.cert({ projectId, clientEmail, privateKey });
+            admin.initializeApp({ credential });
+        } else {
+            throw new Error("Credenciais do Firebase incompletas no ambiente.");
+        }
+    } catch (e) { 
+        console.error("❌ Erro Crítico Firebase (Refund):", e);
+        throw new Error(`Server Error: ${e.message}`); 
+    }
+
+    return admin.firestore();
+};
 
 export default async function handler(req, res) {
-    // Configuração de CORS (Essencial para chamar do front)
+    // ==================================================================
+    // 2. CONFIGURAÇÃO CORS MANUAL (Igual ao process-payment)
+    // ==================================================================
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -25,47 +44,53 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     try {
+        // Inicializa o banco
+        const db = initFirebase();
+        
         const { paymentId, amount, ownerId, guestEmail, guestName, itemName } = req.body;
 
-        // 1. Validações Básicas
+        // --- VALIDAÇÕES ---
         if (!paymentId) throw new Error("ID do pagamento não fornecido.");
         if (!ownerId) throw new Error("ID do proprietário (ownerId) necessário para localizar as credenciais.");
 
-        // 2. BUSCA SEGURA DO TOKEN DO PARCEIRO (Server-Side)
-        console.log(`🔍 [API] Buscando credenciais para o parceiro: ${ownerId}`);
-        const userDoc = await db.collection('users').doc(ownerId).get();
+        // ==================================================================
+        // 3. BUSCA DO TOKEN DO PARCEIRO (Igual ao process-payment)
+        // ==================================================================
+        console.log(`🔍 [API REFUND] Buscando credenciais para o parceiro: ${ownerId}`);
+        const userRef = db.collection('users').doc(ownerId);
+        const userDoc = await userRef.get();
         
         if (!userDoc.exists) throw new Error("Parceiro não encontrado no banco de dados.");
         
         const userData = userDoc.data();
-        
-        // Verifica onde o token está salvo (ajuste conforme seu padrão de salvamento)
         const partnerAccessToken = userData.mp_access_token || userData.mercadopago?.access_token;
 
         if (!partnerAccessToken) {
+            console.error(`❌ ERRO: Parceiro ${ownerId} sem token MP.`);
             throw new Error("Este parceiro não conectou a conta do Mercado Pago. Impossível realizar estorno.");
         }
 
-        // 3. Conexão MP com o Token do PARCEIRO
+        // ==================================================================
+        // 4. PROCESSAMENTO DO ESTORNO NO MERCADO PAGO
+        // ==================================================================
+        // Autentica COMO O VENDEDOR (Parceiro)
         const client = new MercadoPagoConfig({ accessToken: partnerAccessToken });
         const refund = new PaymentRefund(client);
 
+        // Se amount for undefined ou 0, o MP entende como reembolso TOTAL
         const body = amount ? { amount: Number(amount) } : undefined;
         
-        console.log(`💸 [API] Processando Estorno MP ID ${paymentId} (${amount ? 'R$'+amount : 'Total'})...`);
+        console.log(`💸 [API REFUND] Processando ID ${paymentId} (${amount ? 'R$'+amount : 'Total'})...`);
         
-        // EXECUTA O ESTORNO NO MERCADO PAGO
         const result = await refund.create({ payment_id: paymentId, body });
 
-        // 4. ENVIO DE EMAIL (MAILTRAP)
+        // ==================================================================
+        // 5. ENVIO DE EMAIL (MAILTRAP)
+        // ==================================================================
         if (guestEmail && process.env.MAILTRAP_TOKEN) {
             try {
-                console.log(`📧 [API] Enviando email para ${guestEmail}`);
                 const mailtrap = new MailtrapClient({ token: process.env.MAILTRAP_TOKEN });
-                
-                // Use seu e-mail verificado no Mailtrap aqui
-                const senderEmail = "no-reply@mapadodayuse.com"; 
-                // Se estiver em modo sandbox/demo, use o e-mail da sandbox
+                const senderEmail = "no-reply@mapadodayuse.com"; // Ajuste se necessário
                 
                 await mailtrap.send({
                     from: { email: senderEmail, name: "Mapa do Day Use" },
@@ -79,28 +104,30 @@ export default async function handler(req, res) {
                     ),
                     category: "Refund Notification"
                 });
+                console.log(`📧 [API REFUND] Email enviado para ${guestEmail}`);
             } catch (emailError) {
-                console.error("⚠️ [API] Erro ao enviar e-mail (mas estorno ok):", emailError);
+                console.error("⚠️ [API REFUND] Falha no envio de email (ignorado):", emailError);
             }
         }
 
+        // Retorno de Sucesso
         return res.status(200).json({ 
             success: true, 
-            id: result.id,
-            status: result.status,
-            message: "Estorno realizado com sucesso no Mercado Pago."
+            id: result.id, 
+            status: result.status, 
+            message: "Estorno realizado com sucesso no Mercado Pago." 
         });
 
     } catch (error) {
-        console.error("❌ [API] Erro Fatal Refund:", error);
+        console.error("❌ [ERRO API REFUND]:", error);
         
-        // Tenta extrair a mensagem de erro real do Mercado Pago
-        const mpError = error.cause?.message || error.message;
+        // Tenta extrair a mensagem de erro real do Mercado Pago (ex: "Insufficient balance")
+        const mpError = error.cause?.message || error.message || "Erro desconhecido";
         
         return res.status(500).json({ 
             error: 'Erro no reembolso', 
             message: mpError,
-            details: error 
+            details: process.env.NODE_ENV === 'development' ? error : undefined
         });
     }
 }
