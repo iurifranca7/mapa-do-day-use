@@ -235,31 +235,65 @@ const PartnerSales = ({ user }) => {
   };
 
   // --- LÓGICA DE ESTORNO ---
+  // --- LÓGICA DE ESTORNO (CORRIGIDA) ---
   const handleConfirmRefund = async (sale) => {
+      // Validação de segurança básica
+      if (!sale.paymentId) {
+          alert("Erro: Esta venda não possui ID de transação (pode ser manual ou antiga). Não é possível estornar automaticamente.");
+          return;
+      }
+
       setRefundLoading(true);
       try {
-          // Futuro: Chamada de API Real
-          // await fetch('/api/refund', ...);
-          
-          // Simulação no Firebase para feedback
+          // 1. CHAMADA REAL PARA A API (O PULO DO GATO)
+          // Ajuste a URL '/api/refund' se sua rota for diferente
+          const response = await fetch('https://SuaUrlDaAPI.com/api/refund', { 
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  paymentId: sale.paymentId,
+                  amount: sale.paidAmount, // Ou sale.netValue se quiser estornar só o liquido (cuidado com regras do MP)
+                  ownerId: user.effectiveOwnerId || user.uid, // Enviamos o ID do dono para a API buscar o token dele
+                  guestEmail: sale.guestEmail,
+                  guestName: sale.guestName,
+                  itemName: sale.items?.[0]?.title || 'Day Use'
+              })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+              throw new Error(data.message || "Erro ao comunicar com Mercado Pago");
+          }
+
+          // 2. SUCESSO NO MP -> AGORA ATUALIZA O FIREBASE
+          console.log("✅ Estorno confirmado no MP:", data);
+
           await updateDoc(doc(db, "reservations", sale.id), {
               status: 'cancelled',
               paymentStatus: 'refunded',
+              refundId: data.id, // Salva o ID do estorno
               updatedAt: new Date(),
-              history: ["Estorno solicitado via Painel em " + new Date().toLocaleString()]
+              history: arrayUnion(
+                  `Estorno de R$ ${sale.paidAmount} realizado em ${new Date().toLocaleString()}`,
+                  `ID Reembolso MP: ${data.id}`
+              )
           });
 
-          // Atualiza listas locais
+          // 3. ATUALIZA A TELA
           setSalesData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
           setFilteredData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
           
-          // Fecha tudo
           setSaleToRefund(null); 
           setSelectedSale(null);
-          alert("Estorno processado com sucesso!");
+          
+          // Feedback visual
+          alert(`Sucesso! O valor foi estornado e o cliente notificado.`);
+
       } catch (error) {
           console.error("Erro no estorno:", error);
-          alert("Erro ao processar estorno. Tente novamente.");
+          // Mostra o erro real do Mercado Pago para o usuário entender (ex: Saldo insuficiente)
+          alert(`Falha no estorno: ${error.message}`);
       } finally {
           setRefundLoading(false);
       }
@@ -311,7 +345,7 @@ const PartnerSales = ({ user }) => {
           feePercent = sourceUrl.includes('mapadodayuse.com') ? 12 : 0;
           feeValue = grossValue * (feePercent / 100);
           netValue = grossValue - feeValue - couponValue;
-          releaseDate = 'Previsão D+14'; // Estimativa visual
+          releaseDate = 'Previsão D+30'; // Estimativa visual
       }
 
       // 🔥 CORREÇÃO 2: ITENS HÍBRIDOS (Procura em items, cartItems ou financialSnapshot)
