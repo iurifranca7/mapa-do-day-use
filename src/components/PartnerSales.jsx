@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore'; 
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore'; 
 import { getFunctions, httpsCallable } from 'firebase/functions'; 
 import { db } from '../firebase';
 import { 
@@ -287,8 +287,9 @@ const PartnerSales = ({ user }) => {
           console.log("✅ Sucesso no MP! Atualizando Firebase...");
 
           await updateDoc(doc(db, "reservations", sale.id), {
-              status: 'cancelled',
-              paymentStatus: 'refunded',
+              status: 'cancelled',       // Status geral da reserva
+              paymentStatus: 'refunded', // Status legado de pagamento
+              mpStatus: 'refunded',      // 🔥 STATUS REAL (Importante para o enriquecimento)
               refundId: data.id, 
               updatedAt: new Date(),
               history: arrayUnion(
@@ -298,8 +299,8 @@ const PartnerSales = ({ user }) => {
           });
 
           // 3. ATUALIZA A TELA
-          setSalesData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
-          setFilteredData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', status: 'cancelled' } : s));
+          setSalesData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', mpStatus: 'refunded', status: 'cancelled' } : s));
+          setFilteredData(prev => prev.map(s => s.id === sale.id ? { ...s, paymentStatus: 'refunded', mpStatus: 'refunded', status: 'cancelled' } : s));
           
           setSaleToRefund(null); 
           setSelectedSale(null);
@@ -331,7 +332,7 @@ const PartnerSales = ({ user }) => {
       }
   };
 
-  // --- ENRIQUECIMENTO INTELIGENTE ---
+  // --- ENRIQUECIMENTO INTELIGENTE (CORRIGIDO) ---
   const enrichData = (doc) => {
       const data = doc.data();
       
@@ -347,7 +348,10 @@ const PartnerSales = ({ user }) => {
       let feePercent = 0;
       let releaseDate = null;
       let paymentMethodDisplay = data.paymentMethod || '-';
-      let statusDisplay = data.paymentStatus || data.status;
+      
+      // 🔥 CORREÇÃO: Prioridade absoluta para 'mpStatus' (conforme seu print)
+      // Se não tiver mpStatus, cai para paymentStatus e por fim status geral
+      let statusDisplay = data.mpStatus || data.paymentStatus || data.status;
 
       if (isReconciled) {
           feeValue = data.mercadoPagoFee || 0;
@@ -355,16 +359,17 @@ const PartnerSales = ({ user }) => {
           feePercent = grossValue > 0 ? ((feeValue / grossValue) * 100).toFixed(2) : 0;
           releaseDate = data.mercadoPagoReleaseDate ? new Date(data.mercadoPagoReleaseDate).toLocaleDateString() : 'Pendente';
           paymentMethodDisplay = data.paymentMethodDetail || paymentMethodDisplay;
+          // Se já reconciliou, usa o status auditado, senão mantem o mpStatus
           statusDisplay = data.mercadoPagoStatus || statusDisplay;
       } else {
           const sourceUrl = data.sourceUrl || 'mapadodayuse.com';
           feePercent = sourceUrl.includes('mapadodayuse.com') ? 12 : 0;
           feeValue = grossValue * (feePercent / 100);
           netValue = grossValue - feeValue - couponValue;
-          releaseDate = 'Previsão D+30'; // Estimativa visual
+          releaseDate = 'Previsão D+30'; 
       }
 
-      // 🔥 CORREÇÃO 2: ITENS HÍBRIDOS (Procura em items, cartItems ou financialSnapshot)
+      // Itens Híbridos
       const rawItems = data.cartItems || data.items || data.financialSnapshot?.items || [];
       const normalizedItems = rawItems.map(i => ({
           title: i.title || i.name || 'Day Use',
@@ -387,8 +392,8 @@ const PartnerSales = ({ user }) => {
           releaseDate,
           isReconciled,
           paymentMethod: paymentMethodDisplay,
-          paymentStatus: statusDisplay,
-          items: normalizedItems, // 🔥 ITENS CORRIGIDOS
+          paymentStatus: statusDisplay, // Agora carrega o valor correto (ex: refunded, pending)
+          items: normalizedItems,
           
           sourceDisplay: (data.sourceUrl || 'mapadodayuse.com').replace('https://', '').replace('www.', '').split('/')[0]
       };
