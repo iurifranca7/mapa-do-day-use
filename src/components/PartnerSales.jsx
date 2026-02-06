@@ -344,29 +344,48 @@ const PartnerSales = ({ user }) => {
       };
   };
 
+  // --- CARREGAMENTO DAS VENDAS ---
   const loadSales = async () => {
     if (!user) return;
     setLoading(true);
+    
+    // 🔥 Define o ID correto (Chefe ou Próprio)
+    const targetId = user.effectiveOwnerId || user.uid;
+    console.log("💰 [SALES] Buscando vendas para:", targetId);
+
     try {
-        const q = query(collection(db, "reservations"), where("ownerId", "==", user.uid));
+        // Query Correta: Usa targetId em vez de user.uid
+        const q = query(
+            collection(db, "reservations"), 
+            where("ownerId", "==", targetId)
+        );
+        
         const snapshot = await getDocs(q);
         const dates = getDateRangeDates(dateRange);
         
         let allData = snapshot.docs.map(enrichData);
 
+        // Filtro de Data
         if (dates && dateRange !== 'all') {
             allData = allData.filter(item => item.createdAtDate >= dates.start && item.createdAtDate <= dates.end);
         }
+        
+        // Ordenação
         allData.sort((a, b) => b.createdAtDate - a.createdAtDate);
         setSalesData(allData);
 
+        // Estatísticas
         const approvedOnly = allData.filter(i => ['approved', 'confirmed', 'paid'].includes((i.paymentStatus || i.status).toLowerCase()));
         setStats({
             approvedCount: approvedOnly.length,
             totalRevenue: approvedOnly.reduce((acc, curr) => acc + curr.paidAmount, 0)
         });
 
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+    } catch (err) { 
+        console.error("Erro ao carregar vendas:", err); 
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   useEffect(() => { loadSales(); }, [user, dateRange, customStart, customEnd]);

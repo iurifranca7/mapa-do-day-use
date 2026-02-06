@@ -159,9 +159,11 @@ const PartnerCalendar = ({ user }) => {
       const startDate = new Date(baseDate); startDate.setDate(startDate.getDate() - 5);
       const endDate = new Date(baseDate); endDate.setDate(endDate.getDate() + 15);
 
+      const targetOwnerId = user.effectiveOwnerId || user.uid;
+
       const q = query(
         collection(db, "reservations"), 
-        where("ownerId", "==", user.uid),
+        where("ownerId", "==", targetOwnerId), // <--- CORREÇÃO
         where("date", ">=", getLocalDateString(startDate)),
         where("date", "<=", getLocalDateString(endDate))
       );
@@ -580,7 +582,7 @@ const PartnerCalendar = ({ user }) => {
                             )}
                         </div>
                     </section>
-<div className="pt-4 border-t border-slate-100 pb-20">
+                        <div className="pt-4 border-t border-slate-100 pb-20">
                         {selectedReservation.status !== 'cancelled' ? (
                             <div className="grid grid-cols-2 gap-3">
                                 <Button 
@@ -611,10 +613,10 @@ const PartnerCalendar = ({ user }) => {
                                 * Ingressos já validados não podem ser alterados.
                             </p>
                         )}
-                    </div>                </div>
-            </div>
-          </>, document.body
-      )}
+                        </div>                </div>
+                            </div>
+                        </>, document.body
+                        )}
 
       {/* --- MODAIS DE SUPORTE --- */}
       {showRescheduleModal && createPortal(<div className="fixed inset-0 z-[10002] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl"><h3 className="text-xl font-bold text-slate-900 mb-2 text-center">Reagendar Ingressos</h3><div className="mb-6"><input type="date" className="w-full border p-4 rounded-xl outline-none focus:border-[#0097A8] bg-slate-50 text-lg font-bold text-slate-700" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} min={new Date().toISOString().split('T')[0]} /></div><div className="flex gap-3"><button onClick={() => setShowRescheduleModal(false)} className="flex-1 py-3 rounded-xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">Cancelar</button><Button onClick={handleBulkReschedule} disabled={loading} className="flex-1 py-3 text-base">{loading ? '...' : 'Confirmar'}</Button></div></div></div>, document.body)}

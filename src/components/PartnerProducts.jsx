@@ -43,27 +43,38 @@ const PartnerProducts = ({ user }) => {
   const [isReorderOpen, setIsReorderOpen] = useState(false);
 
   // 1. CARREGAMENTO INICIAL
+  // 1. CARREGAMENTO INICIAL CORRIGIDO
   const loadData = async () => {
     if (!user) return;
     setLoading(true);
+    
+    // 🔥 Define o ID correto (Chefe ou Próprio)
+    const targetId = user.effectiveOwnerId || user.uid; 
+    console.log("📦 [PRODUCTS] Buscando produtos para o dono:", targetId);
+
     try {
-      const qDayUse = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
+      // 1. Busca Day Uses do Chefe
+      const qDayUse = query(collection(db, "dayuses"), where("ownerId", "==", targetId));
       const snapDayUse = await getDocs(qDayUse);
       const dayUsesData = snapDayUse.docs.map(d => ({ id: d.id, ...d.data() }));
       setMyDayUses(dayUsesData);
-
-      // Busca produtos ordenados por 'order'
-      const qProd = query(collection(db, "products"), where("ownerId", "==", user.uid), orderBy("order", "asc"));
-      // Fallback se não tiver índice composto ainda (ordenação no front)
-      const snapProd = await getDocs(qProd).catch(async () => {
-          const qProdSimple = query(collection(db, "products"), where("ownerId", "==", user.uid));
-          return await getDocs(qProdSimple);
-      });
       
-      let loadedProducts = snapProd.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Garante ordenação numérica no front caso o backend falhe ou não tenha order
-      loadedProducts.sort((a, b) => (a.order || 999) - (b.order || 999));
+      // 2. Busca Produtos do Chefe (Tenta com order, se falhar pega sem order)
+      let loadedProducts = [];
+      try {
+          // Tenta query com ordenação (Requer índice composto no Firebase)
+          const qProdOrdered = query(collection(db, "products"), where("ownerId", "==", targetId), orderBy("order", "asc"));
+          const snapProd = await getDocs(qProdOrdered);
+          loadedProducts = snapProd.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (indexError) {
+          console.warn("⚠️ Índice de ordenação não encontrado. Buscando sem ordem e ordenando no front.");
+          // Fallback: Busca simples
+          const qProdSimple = query(collection(db, "products"), where("ownerId", "==", targetId));
+          const snapProd = await getDocs(qProdSimple);
+          loadedProducts = snapProd.docs.map(d => ({ id: d.id, ...d.data() }));
+          // Ordena via Javascript
+          loadedProducts.sort((a, b) => (a.order || 999) - (b.order || 999));
+      }
 
       setProducts(loadedProducts);
 
@@ -244,7 +255,7 @@ const PartnerProducts = ({ user }) => {
       }
 
       const payload = {
-        ownerId: user.uid,
+        ownerId: user.effectiveOwnerId || user.uid,
         dayUseId: formData.dayUseId,
         updatedAt: new Date(),
         type: formData.type,

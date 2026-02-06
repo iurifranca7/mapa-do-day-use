@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 // Ícones
 import { 
   LayoutDashboard, MapPin, Package, DollarSign, ChevronRight,
-  FileText, Tag, Users, Calendar as CalendarIcon, 
+  FileText, Tag, Users, Calendar as CalendarIcon, Shield,
   LogOut, Store, Trash2, X, QrCode, MoreHorizontal, Home
 } from 'lucide-react';
 
@@ -30,7 +30,8 @@ import PartnerCoupons from './PartnerCoupons';
 import Button from './Button';
 import FeedbackModal from './FeedbackModal';
 import QrScannerModal from './QrScannerModal'; 
-import TicketValidationModal from './TicketValidationModal'; // 🔥 SEU NOVO COMPONENTE
+import TicketValidationModal from './TicketValidationModal';
+import PartnerTeam from './PartnerTeam';
 
 const PartnerDashboard = () => {
   const navigate = useNavigate();
@@ -57,83 +58,78 @@ const PartnerDashboard = () => {
   const [newMemberRole, setNewMemberRole] = useState('staff');
   const [feedback, setFeedback] = useState(null);
 
-  // 1. CARREGAMENTO INICIAL
-  // 1. CARREGAMENTO INICIAL COM LOGS DE DEBUG
+  // 1. CARREGAMENTO INICIAL COM LÓGICA DE EQUIPE
   useEffect(() => {
-     console.log("🔄 [DASHBOARD] Iniciando verificação de auth...");
-     console.log("🔗 [DASHBOARD] ID na URL (partnerId):", partnerId); // Verifica se o router pegou o ID
-
+     console.log("🔄 [DASHBOARD] Iniciando observer de Auth...");
+     
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
-           console.log("👤 [AUTH] Usuário logado (Admin/Você):", u.uid, u.email);
-
-           // Pega dados do usuário logado
+           // 1. Busca dados do usuário no Firestore
            const userDocRef = doc(db, "users", u.uid);
            const userDocSnap = await getDoc(userDocRef);
            
-           let effectiveOwnerId = u.uid; 
-           let isImpersonating = false;
+           if (!userDocSnap.exists()) {
+               console.error("❌ Usuário logado no Auth mas sem documento no Firestore!");
+               return; 
+           }
+
+           const userData = userDocSnap.data();
            
-           // --- LÓGICA NOVA PARA O ADMIN ---
-           if (partnerId) {
-               console.log("🕵️‍♂️ [MODO ESPIÃO] Detectado ID na URL. Tentando acessar como:", partnerId);
-               effectiveOwnerId = partnerId;
-               isImpersonating = true;
-           } else {
-               if(userDocSnap.exists()) {
-                   const d = userDocSnap.data();
-                   if (d.ownerId) effectiveOwnerId = d.ownerId;
-               }
+           // 2. Lógica do "Dono Efetivo" (Quem é o dono dos dados?)
+           let effectiveOwnerId = u.uid; // Começa assumindo que é o próprio usuário
+
+           console.log("🧐 [DEBUG LÓGICA] Role:", userData.role, "| OwnerId:", userData.ownerId);
+
+           // SE É SÓCIO OU STAFF E TEM UM CHEFE DEFINIDO
+           if ((userData.role === 'staff' || userData.role === 'partner') && userData.ownerId) {
+               console.log("✅ Detectado Sócio/Staff. Trocando ID para o do Chefe...");
+               effectiveOwnerId = userData.ownerId;
            }
            
-           console.log("🎯 [FINAL] ID Efetivo que será usado:", effectiveOwnerId);
+           // SE É ADMIN ESPIÃO
+           if (partnerId && userData.role === 'admin') {
+               effectiveOwnerId = partnerId;
+           }
 
-           // Busca dados do Dono Efetivo
-           try {
-               const ownerDocSnap = await getDoc(doc(db, "users", effectiveOwnerId));
-               
-               if(ownerDocSnap.exists()) {
-                   console.log("✅ [DB] Dados do Parceiro encontrados:", ownerDocSnap.data());
-                   const ownerData = ownerDocSnap.data();
+           // 3. Montagem do Objeto Final (CRIANDO A VARIÁVEL PRIMEIRO)
+           const finalUserObj = { 
+               ...u, 
+               ...userData, 
+               effectiveOwnerId: effectiveOwnerId 
+           };
+
+           // 🔥 LOGS DE DEBUG (Agora é seguro chamar finalUserObj)
+           console.group("🔍 [DEBUG DASHBOARD] Análise Final");
+           console.log("1. UID Logado (Quem sou eu):", u.uid);
+           console.log("2. Role (Cargo):", userData.role);
+           console.log("3. OwnerId no Banco (Meu Chefe):", userData.ownerId);
+           console.log("🎯 ID EFETIVO (Quem vamos buscar):", effectiveOwnerId);
+           console.log("📦 Objeto Final:", finalUserObj);
+           console.groupEnd();
+
+           // 4. Salva no Estado
+           setUser(finalUserObj); 
+           setMainOwnerId(effectiveOwnerId);
+
+           // Busca dados extras do dono (Status Doc, Mercado Pago)
+           if (effectiveOwnerId) {
+               const ownerSnap = await getDoc(doc(db, "users", effectiveOwnerId));
+               if(ownerSnap.exists()) {
+                   const ownerData = ownerSnap.data();
                    setDocStatus(ownerData.docStatus || 'none');
                    if(ownerData.mp_access_token) setMpConnected(true);
-
-                   // Monta o objeto User
-                   const finalUserObj = { 
-                     ...u, 
-                     uid: effectiveOwnerId, // O ID MÁGICO
-                     role: isImpersonating ? 'admin_view' : (userDocSnap.data()?.role || 'partner'), 
-                     displayName: isImpersonating ? `[Admin] ${ownerDocSnap.data()?.displayName}` : (u.displayName || userDocSnap.data()?.displayName),
-                     photoURL: u.photoURL || userDocSnap.data()?.photoURL
-                   };
-                   
-                   console.log("🚀 [STATE] Atualizando User State para:", finalUserObj);
-                   setUser(finalUserObj); 
-
-                   setMainOwnerId(effectiveOwnerId);
-
-                   // Busca equipe
-                   const qStaff = query(collection(db, "users"), where("ownerId", "==", effectiveOwnerId));
-                   onSnapshot(qStaff, s => setStaffList(s.docs.map(d => ({id: d.id, ...d.data()}))));
-
-               } else {
-                   console.warn("⚠️ [DB] Usuário parceiro NÃO encontrado no banco com ID:", effectiveOwnerId);
-                   alert("Parceiro não encontrado no banco de dados.");
-               }
-           } catch (error) {
-               console.error("❌ [ERRO CRÍTICO] Falha ao buscar dados do parceiro:", error);
-               if (error.code === 'permission-denied') {
-                   alert("ERRO DE PERMISSÃO: O Firebase bloqueou você de ver os dados deste parceiro. Verifique as 'Firestore Rules'.");
                }
            }
 
         } else {
-           console.log("🚪 [AUTH] Nenhum usuário logado. Redirecionando...");
+           console.log("🚪 Usuário não logado.");
            navigate('/'); 
         }
      });
      return unsub;
   }, [navigate, partnerId]);
+
+  const isStaff = user?.role === 'staff';
 
   // --- FUNÇÃO DE BUSCA (PADRONIZADA IGUAL AO CALENDÁRIO) ---
   const handleScanTicket = async (rawValue) => {
@@ -242,32 +238,61 @@ const PartnerDashboard = () => {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
       
-      {/* 1. SIDEBAR DESKTOP (ESCONDIDA NO MOBILE) */}
+      {/* 1. SIDEBAR DESKTOP (CONDICIONAL) */}
       <aside className="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col z-20 shadow-xl">
           <div className="p-6">
+              {/* PERFIL DO USUÁRIO */}
               <div className="flex items-center gap-3 mb-8">
-                  {user.photoURL ? <img src={user.photoURL} className="w-10 h-10 rounded-xl object-cover" alt="Perfil" /> : <div className="w-10 h-10 bg-[#0097A8] rounded-xl flex items-center justify-center text-white"><Store size={20}/></div>}
+                  {user.photoURL ? (
+                      <img src={user.photoURL} className="w-10 h-10 rounded-xl object-cover" alt="Perfil" />
+                  ) : (
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white ${isStaff ? 'bg-blue-500' : 'bg-[#0097A8]'}`}>
+                          {isStaff ? <Shield size={20}/> : <Store size={20}/>}
+                      </div>
+                  )}
                   <div>
-                      <h2 className="font-bold text-slate-900 text-sm truncate w-32">{user.displayName || "Meu Negócio"}</h2>
-                      <p className="text-xs text-slate-400">Painel Parceiro</p>
+                      <h2 className="font-bold text-slate-900 text-sm truncate w-32">{user.displayName || "Usuário"}</h2>
+                      <p className="text-xs text-slate-400">
+                          {isStaff ? 'Membro da Equipe' : 'Painel Parceiro'}
+                      </p>
                   </div>
               </div>
               
+              {/* NAVEGAÇÃO */}
               <nav className="space-y-1">
-                  <NavItem icon={<LayoutDashboard size={20}/>} label="Painel" active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')}/>
-                  <NavItem icon={<DollarSign size={20}/>} label="Vendas" active={activeTab==='sales'} onClick={()=>setActiveTab('sales')}/>
+                  {/* Visível Apenas para DONOS/SÓCIOS */}
+                  {!isStaff && (
+                      <>
+                          <NavItem icon={<LayoutDashboard size={20}/>} label="Painel" active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')}/>
+                          <NavItem icon={<DollarSign size={20}/>} label="Vendas" active={activeTab==='sales'} onClick={()=>setActiveTab('sales')}/>
+                      </>
+                  )}
+
+                  {/* Visível para TODOS (Agenda é a ferramenta de trabalho do Staff) */}
                   <NavItem icon={<CalendarIcon size={20}/>} label="Agenda" active={activeTab==='calendar'} onClick={()=>setActiveTab('calendar')}/>
-                  <div className="my-4 border-t border-slate-100"></div>
-                  <NavItem icon={<MapPin size={20}/>} label="Meu Day Use" active={activeTab==='my-dayuse'} onClick={()=>setActiveTab('my-dayuse')}/>
-                  <NavItem icon={<Package size={20}/>} label="Produtos" active={activeTab==='products'} onClick={()=>setActiveTab('products')}/>
-                  <NavItem icon={<Tag size={20}/>} label="Cupons" active={activeTab==='coupons'} onClick={()=>setActiveTab('coupons')}/>
-                  <NavItem icon={<FileText size={20}/>} label="Relatórios" active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}/>
-                  <NavItem icon={<Users size={20}/>} label="Equipe" active={activeTab==='team'} onClick={()=>setActiveTab('team')}/>
+                  
+                  {/* Visível Apenas para DONOS/SÓCIOS */}
+                  {!isStaff && (
+                      <>
+                          <div className="my-4 border-t border-slate-100"></div>
+                          <NavItem icon={<MapPin size={20}/>} label="Meu Day Use" active={activeTab==='my-dayuse'} onClick={()=>setActiveTab('my-dayuse')}/>
+                          <NavItem icon={<Package size={20}/>} label="Produtos" active={activeTab==='products'} onClick={()=>setActiveTab('products')}/>
+                          <NavItem icon={<Tag size={20}/>} label="Cupons" active={activeTab==='coupons'} onClick={()=>setActiveTab('coupons')}/>
+                          <NavItem icon={<FileText size={20}/>} label="Relatórios" active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}/>
+                          <NavItem icon={<Users size={20}/>} label="Equipe" active={activeTab==='team'} onClick={()=>setActiveTab('team')}/>
+                      </>
+                  )}
               </nav>
           </div>
+
+          {/* RODAPÉ DA SIDEBAR */}
           <div className="mt-auto p-6 border-t border-slate-100">
-              <button onClick={() => navigate('/')} className="flex items-center gap-3 text-sm font-bold text-slate-500 hover:text-[#0097A8] mb-4 transition-colors"><Home size={18}/> Ir para o Site</button>
-              <button onClick={handleLogout} className="flex items-center gap-3 text-sm font-bold text-red-500 hover:text-red-700 transition-colors"><LogOut size={18}/> Sair</button>
+              <button onClick={() => navigate('/')} className="flex items-center gap-3 text-sm font-bold text-slate-500 hover:text-[#0097A8] mb-4 transition-colors">
+                  <Home size={18}/> Ir para o Site
+              </button>
+              <button onClick={handleLogout} className="flex items-center gap-3 text-sm font-bold text-red-500 hover:text-red-700 transition-colors">
+                  <LogOut size={18}/> Sair
+              </button>
           </div>
       </aside>
 
@@ -320,44 +345,25 @@ const PartnerDashboard = () => {
               {activeTab === 'reports' && <PartnerReports user={user} />}
               
               {/* ABA EQUIPE INLINE */}
-              {activeTab === 'team' && (
-                  <div className="max-w-4xl mx-auto animate-fade-in mt-4">
-                      <div className="mb-6"><h1 className="text-2xl font-bold text-slate-900">Equipe</h1><p className="text-slate-500 text-sm">Adicione membros para gerenciar o painel.</p></div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
-                          <div>
-                              <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">Membros Ativos</h3>
-                              {staffList.length === 0 ? <p className="text-sm text-slate-400 italic">Nenhum membro.</p> : (
-                                  <ul className="space-y-2">{staffList.map(s => (
-                                      <li key={s.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                          <div><p className="text-sm font-bold text-slate-700">{s.email}</p><p className="text-[10px] text-slate-400 font-bold uppercase">{s.role === 'partner' ? 'Sócio' : 'Portaria'}</p></div>
-                                          <button onClick={() => handleDeleteStaff(s.id)} className="text-red-400 hover:text-red-600 p-2"><Trash2 size={16}/></button>
-                                      </li>
-                                  ))}</ul>
-                              )}
-                          </div>
-                          <div className="pt-4 border-t border-slate-100">
-                              <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">Convidar Novo</h3>
-                              <form onSubmit={handleAddStaff} className="space-y-3">
-                                  <input className="w-full border p-3 rounded-xl text-sm bg-slate-50" placeholder="E-mail" value={staffEmail} onChange={e=>setStaffEmail(e.target.value)} required type="email"/>
-                                  <div className="flex gap-2">
-                                      <input className="w-full border p-3 rounded-xl text-sm bg-slate-50" placeholder="Senha" type="password" value={staffPass} onChange={e=>setStaffPass(e.target.value)} required />
-                                      <select className="border p-3 rounded-xl text-sm bg-slate-50 font-bold text-slate-600" value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)}><option value="staff">Portaria</option><option value="partner">Sócio</option></select>
-                                  </div>
-                                  <Button type="submit" disabled={staffLoading} className="w-full py-3 text-sm">{staffLoading ? '...' : 'Adicionar Membro'}</Button>
-                              </form>
-                          </div>
-                      </div>
-                  </div>
-              )}
+              {activeTab === 'team' && <PartnerTeam user={user} />}
           </div>
       </main>
 
-      {/* 3. BOTTOM NAVIGATION (MOBILE APPS STYLE) */}
+      {/* 3. BOTTOM NAVIGATION (MOBILE - CONDICIONAL) */}
       <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 flex justify-between items-end px-2 pb-2 pt-1 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-          <MobileNavItem icon={<LayoutDashboard size={20}/>} label="Painel" active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')} />
-          <MobileNavItem icon={<DollarSign size={20}/>} label="Vendas" active={activeTab==='sales'} onClick={()=>setActiveTab('sales')} />
           
-          {/* BOTÃO CENTRAL DE SCANNER (Floating Action Button) */}
+          {/* Se for DONO, vê Painel e Vendas. Se for STAFF, vê espaço vazio ou itens simplificados */}
+          {!isStaff ? (
+              <>
+                  <MobileNavItem icon={<LayoutDashboard size={20}/>} label="Painel" active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')} />
+                  <MobileNavItem icon={<DollarSign size={20}/>} label="Vendas" active={activeTab==='sales'} onClick={()=>setActiveTab('sales')} />
+              </>
+          ) : (
+              // Staff no mobile vê um botão "Sair" rápido à esquerda ou apenas espaço para centralizar o scanner
+              <MobileNavItem icon={<LogOut size={20}/>} label="Sair" active={false} onClick={handleLogout} />
+          )}
+          
+          {/* BOTÃO CENTRAL DE SCANNER (Sempre Visível) */}
           <div className="relative -top-5">
               <button 
                   onClick={() => setIsScannerOpen(true)}
@@ -367,12 +373,20 @@ const PartnerDashboard = () => {
               </button>
           </div>
 
+          {/* Agenda sempre visível */}
           <MobileNavItem icon={<CalendarIcon size={20}/>} label="Agenda" active={activeTab==='calendar'} onClick={()=>setActiveTab('calendar')} />
-          <MobileNavItem icon={<MoreHorizontal size={20}/>} label="Mais" active={isMoreMenuOpen} onClick={()=>setIsMoreMenuOpen(true)} />
+          
+          {/* Menu "Mais" (Configurações) - Visível para Dono, Oculto ou Limitado para Staff */}
+          {!isStaff ? (
+             <MobileNavItem icon={<MoreHorizontal size={20}/>} label="Mais" active={isMoreMenuOpen} onClick={()=>setIsMoreMenuOpen(true)} />
+          ) : (
+             // Staff não precisa de menu "Mais" complexo, talvez um atalho pro Site
+             <MobileNavItem icon={<Home size={20}/>} label="Site" active={false} onClick={()=>navigate('/')} />
+          )}
       </nav>
 
       {/* 4. DRAWER LATERAL "MAIS" (MOBILE) */}
-      {isMoreMenuOpen && (
+      {isMoreMenuOpen && !isStaff && (
           <div className="fixed inset-0 z-50 md:hidden">
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsMoreMenuOpen(false)}></div>
               <div className="absolute right-0 top-0 h-full w-[80%] max-w-xs bg-white shadow-2xl animate-slide-in-right flex flex-col">

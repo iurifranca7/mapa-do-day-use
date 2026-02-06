@@ -83,24 +83,47 @@ const PartnerMyDayUse = ({ user }) => {
   const [formData, setFormData] = useState(initialFormState);
 
   // 1. CARREGAR LISTA
+  // 1. CARREGAR LISTA
   const fetchDayUses = async () => {
-    if (!user) return;
+    if (!user) {
+        console.log("❌ [MY DAY USE] Usuário não detectado ainda.");
+        return;
+    }
+
     setLoadingList(true);
+    
+    // 🔥 DEFINIÇÃO DO ID ALVO (Com Logs)
+    const targetId = user.effectiveOwnerId || user.uid;
+
+    console.group("🔍 [DEBUG MY DAY USE] Iniciando Busca");
+    console.log("1. Objeto User Recebido:", user);
+    console.log("2. UID do Usuário:", user.uid);
+    console.log("3. EffectiveOwnerId:", user.effectiveOwnerId);
+    console.log("🎯 ID FINAL USADO NA QUERY:", targetId);
+    console.groupEnd();
+
     try {
-      const q = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
+      // A Query corrigida
+      const q = query(collection(db, "dayuses"), where("ownerId", "==", targetId));
+      
       const querySnapshot = await getDocs(q);
+      
+      console.log(`📊 [RESULTADO] Encontrados ${querySnapshot.size} Day Uses para o ID ${targetId}`);
+
       const list = querySnapshot.docs.map(doc => {
           const data = doc.data();
           return {
-            ...data,      // 1. Espalha os dados primeiro
-            id: doc.id    // 2. Garante que o ID real do documento sobrescreva qualquer lixo
+            ...data,      
+            id: doc.id    
           };
       });
-      console.log("📋 Lista carregada:", list); // Log para conferir
       setDayUsesList(list);
     } catch (error) {
-      console.error("Erro ao buscar lista:", error);
-      setLoadingList(false); 
+      console.error("❌ Erro ao buscar lista:", error);
+      // Se for erro de permissão, vai aparecer aqui
+      if (error.code === 'permission-denied') {
+          console.error("🚫 O Firebase bloqueou a leitura. Verifique se as regras permitem que o usuário", user.uid, "leia dados do dono", targetId);
+      }
     } finally {
       setLoadingList(false);
     }
@@ -353,7 +376,7 @@ const PartnerMyDayUse = ({ user }) => {
       const dataToSave = {
         ...formData,
         contactEmail: formData.contactEmail.trim().toLowerCase(),
-        ownerId: user.uid,
+        ownerId: user.effectiveOwnerId || user.uid,
         slug: generatedSlug,
         updatedAt: new Date(),
         status: 'active',

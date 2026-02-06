@@ -51,13 +51,16 @@ const PartnerOverview = ({ user, setActiveTab }) => {
   const [scanLoading, setScanLoading] = useState(false);
   const [scannedRes, setScannedRes] = useState(null);
 
-  // --- FUNÇÃO DE BUSCA (PADRONIZADA IGUAL AO CALENDÁRIO) ---
+  // --- FUNÇÃO DE BUSCA (CORRIGIDA PARA SÓCIOS) ---
   const handleScanTicket = async (rawValue) => {
       if (!user) return;
       setScanLoading(true);
+      
+      // 🔥 Define o ID correto
+      const targetId = user.effectiveOwnerId || user.uid;
+
       try {
           let code = rawValue || '';
-          // Limpeza de URL se for QR de link
           if (code.includes('http') || code.includes('/')) {
               if (code.endsWith('/')) code = code.slice(0, -1);
               const parts = code.split('/');
@@ -65,8 +68,13 @@ const PartnerOverview = ({ user, setActiveTab }) => {
           }
           code = code.trim(); 
 
-          // 1. Busca por TicketCode (Campo amigável)
-          const qTicketCode = query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("ticketCode", "==", code.toUpperCase()));
+          // 1. Busca por TicketCode no banco do CHEFE
+          const qTicketCode = query(
+              collection(db, "reservations"), 
+              where("ownerId", "==", targetId), // <--- CORREÇÃO AQUI
+              where("ticketCode", "==", code.toUpperCase())
+          );
+          
           // 2. Busca por ID direto (Document ID)
           const docRef = doc(db, "reservations", code);
           
@@ -75,8 +83,12 @@ const PartnerOverview = ({ user, setActiveTab }) => {
           let foundData = null;
           if (!snapTicket.empty) {
               foundData = { id: snapTicket.docs[0].id, ...snapTicket.docs[0].data() };
-          } else if (docSnapId.exists() && docSnapId.data().ownerId === user.uid) {
-              foundData = { id: docSnapId.id, ...docSnapId.data() };
+          } else if (docSnapId.exists()) {
+              // Verifica se o ingresso pertence ao chefe (segurança extra)
+              const data = docSnapId.data();
+              if (data.ownerId === targetId) { // <--- VALIDAÇÃO CORRIGIDA
+                  foundData = { id: docSnapId.id, ...data };
+              }
           }
 
           if (!foundData) { 
@@ -91,7 +103,7 @@ const PartnerOverview = ({ user, setActiveTab }) => {
           }
 
           setScannedRes(foundData); 
-          setIsScannerOpen(false); // Fecha scanner e abre o modal de validação
+          setIsScannerOpen(false); 
       } catch (error) { 
           console.error("Erro busca:", error); 
           setFeedback({ type: 'error', title: 'Erro', msg: 'Falha técnica ao buscar ingresso.' });
@@ -121,20 +133,36 @@ const PartnerOverview = ({ user, setActiveTab }) => {
       return value;
   };
 
-  // --- BUSCA DE DADOS (MANTIDA) ---
+  // --- BUSCA DE DADOS (CORRIGIDA PARA SÓCIOS) ---
   useEffect(() => {
     const fetchData = async () => {
       if (!user) return;
       setIsRefreshing(true);
       
+      // 🔥 1. Define o ID correto (Chefe ou Próprio)
+      const targetId = user.effectiveOwnerId || user.uid;
+      console.log("📊 [OVERVIEW] Carregando métricas para:", targetId);
+
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
       const startOfMonth = new Date(filterYear, filterMonth, 1);
       const endOfMonth = new Date(filterYear, filterMonth + 1, 0, 23, 59, 59);
 
       try {
-        const qFinancial = query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("createdAt", ">=", Timestamp.fromDate(startOfMonth)), where("createdAt", "<=", Timestamp.fromDate(endOfMonth)));
-        const qOperational = query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("date", "==", todayStr));
+        // Query Financeira (Mês todo)
+        const qFinancial = query(
+            collection(db, "reservations"), 
+            where("ownerId", "==", targetId), // <--- CORREÇÃO AQUI
+            where("createdAt", ">=", Timestamp.fromDate(startOfMonth)), 
+            where("createdAt", "<=", Timestamp.fromDate(endOfMonth))
+        );
+
+        // Query Operacional (Hoje)
+        const qOperational = query(
+            collection(db, "reservations"), 
+            where("ownerId", "==", targetId), // <--- CORREÇÃO AQUI
+            where("date", "==", todayStr)
+        );
 
         const [snapFinancial, snapOperational] = await Promise.all([getDocs(qFinancial), getDocs(qOperational)]);
 

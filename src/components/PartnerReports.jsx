@@ -47,30 +47,45 @@ const PartnerReports = ({ user }) => {
   };
 
   // --- 2. MOTOR DE DADOS (Extração) ---
+  // --- 2. MOTOR DE DADOS (Extração CORRIGIDA) ---
   const fetchReportData = async () => {
       if (!user) return [];
-      const q = query(collection(db, "reservations"), where("ownerId", "==", user.uid));
-      const snapshot = await getDocs(q);
       
-      const dates = getDateRangeDates(dateRange);
-      let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // 🔥 Define o ID correto (Chefe ou Próprio)
+      const targetId = user.effectiveOwnerId || user.uid;
+      console.log("📊 [REPORTS] Gerando relatório para:", targetId);
 
-      // Filtro de Data
-      if (dates && dateRange !== 'all') {
-          data = data.filter(item => {
-              const d = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
-              return d >= dates.start && d <= dates.end;
+      try {
+          const q = query(
+              collection(db, "reservations"), 
+              where("ownerId", "==", targetId) // <--- CORREÇÃO AQUI
+          );
+          
+          const snapshot = await getDocs(q);
+          const dates = getDateRangeDates(dateRange);
+          let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          // Filtro de Data
+          if (dates && dateRange !== 'all') {
+              data = data.filter(item => {
+                  const d = item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt);
+                  return d >= dates.start && d <= dates.end;
+              });
+          }
+          
+          // Ordenação Padrão
+          data.sort((a, b) => {
+              const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+              const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+              return dateB - dateA;
           });
-      }
-      
-      // Ordenação Padrão
-      data.sort((a, b) => {
-          const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
-          const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
-          return dateB - dateA;
-      });
 
-      return data;
+          return data;
+      } catch (error) {
+          console.error("Erro ao buscar dados do relatório:", error);
+          setFeedback({ type: 'error', msg: 'Erro de permissão ou conexão.' });
+          return [];
+      }
   };
 
   // --- 3. PROCESSADORES DE RELATÓRIO (Lógica Específica) ---

@@ -1185,88 +1185,6 @@ const StockIndicator = ({ dayuseId, date, currentReservationId }) => {
     return <span className="text-xs font-medium text-green-600 flex items-center gap-1"><CheckCircle size={12}/> Vagas disponíveis ({stock})</span>;
 };
 
-const StaffDashboard = () => {
-  const [reservations, setReservations] = useState([]);
-  const [selectedRes, setSelectedRes] = useState(null);
-  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [showScanner, setShowScanner] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-  const [user, setUser] = useState(null);
-  const [ownerId, setOwnerId] = useState(null);
-
-  useEffect(() => {
-     const unsub = onAuthStateChanged(auth, async u => {
-        if(u) {
-           setUser(u);
-           const userDoc = await getDoc(doc(db, "users", u.uid));
-           if(userDoc.exists() && userDoc.data().ownerId) {
-               setOwnerId(userDoc.data().ownerId);
-               const qRes = query(collection(db, "reservations"), where("ownerId", "==", userDoc.data().ownerId));
-               onSnapshot(qRes, s => setReservations(s.docs.map(d => ({id: d.id, ...d.data()}))));
-           }
-        }
-     });
-     return unsub;
-  }, []);
-
-  const resendVerify = async () => {
-      try { await sendEmailVerification(user); alert("E-mail enviado!"); } 
-      catch(e) { alert("Erro ao enviar."); }
-  };
-
-  // ... (código anterior de filtros e validação mantido, omitido para brevidade)
-  const dailyGuests = reservations.filter(r => r.date === filterDate && (r.guestName || "Viajante").toLowerCase().includes(searchTerm.toLowerCase()));
-  const dailyStats = dailyGuests.reduce((acc, curr) => ({ adults: acc.adults + (curr.adults || 0), children: acc.children + (curr.children || 0), pets: acc.pets + (curr.pets || 0), total: acc.total + (curr.adults || 0) + (curr.children || 0) }), { adults: 0, children: 0, pets: 0, total: 0 });
-  const handleValidate = async (resId, codeInput) => { if(codeInput.toUpperCase() === resId.slice(0,6).toUpperCase() || resId === codeInput) { try { await updateDoc(doc(db, "reservations", resId), { status: 'validated' }); const res = reservations.find(r => r.id === resId); setFeedback({ type: 'success', title: 'Acesso Liberado! 🎉', msg: `Bem-vindo(a), ${res?.guestName || 'Visitante'}.` }); } catch (e) { setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao validar.' }); } } else { setFeedback({ type: 'error', title: 'Inválido', msg: 'Código incorreto.' }); } };
-  const onScanSuccess = (decodedText) => { setShowScanner(false); const res = reservations.find(r => r.id === decodedText); if (res) { if (res.status === 'validated') setFeedback({ type: 'warning', title: 'Atenção', msg: 'Ingresso JÁ UTILIZADO.' }); else if (res.status === 'cancelled') setFeedback({ type: 'error', title: 'Cancelado', msg: 'Ingresso cancelado.' }); else handleValidate(res.id, res.id); } else { setFeedback({ type: 'error', title: 'Não Encontrado', msg: 'QR Code não pertence a este local.' }); } };
-
-  if (!user) return <div className="text-center py-20 text-slate-400">Carregando acesso...</div>;
-  if (!ownerId) return <div className="text-center py-20 text-red-400">Erro: Conta não vinculada a um parceiro. Peça ao administrador para recadastrar.</div>;
-
-  return (
-    <div className="max-w-4xl mx-auto py-8 px-4 animate-fade-in space-y-6">
-       <VoucherModal isOpen={!!selectedRes} trip={selectedRes} onClose={()=>setSelectedRes(null)} isPartnerView={true}/>
-       
-       {/* TRAVA DE E-MAIL DO STAFF */}
-       {!user.emailVerified ? (
-           <div className="bg-white p-12 rounded-3xl border border-slate-100 shadow-xl text-center">
-                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Lock size={40} className="text-yellow-600"/>
-                </div>
-                <h2 className="text-2xl font-bold text-slate-900 mb-2">Acesso Pendente</h2>
-                <p className="text-slate-600 mb-6 max-w-sm mx-auto">
-                    Olá! Para segurança do estabelecimento, você precisa confirmar seu e-mail antes de validar ingressos.
-                </p>
-                <div className="flex flex-col items-center gap-3">
-                    <Button onClick={resendVerify}>Reenviar E-mail de Confirmação</Button>
-                    <button onClick={() => window.location.reload()} className="text-sm text-[#0097A8] hover:underline font-bold mt-2">Já confirmei, atualizar página</button>
-                </div>
-           </div>
-       ) : (
-           <>
-               <QrScannerModal isOpen={showScanner} onClose={()=>setShowScanner(false)} onScan={onScanSuccess} />
-               {/* Feedback e Lista Normal */}
-               {feedback && createPortal( <ModalOverlay onClose={() => setFeedback(null)}> <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full"> <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${feedback.type === 'success' ? 'bg-green-100 text-green-600' : feedback.type === 'warning' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}> {feedback.type === 'success' ? <CheckCircle size={32}/> : <AlertCircle size={32}/>} </div> <h2 className="text-xl font-bold text-slate-900 mb-2">{feedback.title}</h2> <p className="text-slate-600 mb-6 text-sm">{feedback.msg}</p> <Button onClick={() => setFeedback(null)} className="w-full justify-center">Fechar</Button> </div> </ModalOverlay>, document.body )}
-
-               <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-                  <div><h1 className="text-2xl font-bold text-slate-900">Portaria</h1><p className="text-slate-500 text-sm">Controle de Acesso Diário</p></div>
-                  <div className="text-right"><p className="text-xs text-slate-400 font-bold uppercase">Hoje</p><p className="text-2xl font-bold text-[#0097A8]">{dailyStats.total} <span className="text-sm font-normal text-slate-400">pessoas</span></p></div>
-               </div>
-
-               <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-                   <div className="flex gap-4 mb-6"><input type="date" className="border p-3 rounded-xl text-slate-600 font-medium" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/><Button className="flex-1" onClick={() => setShowScanner(true)}><ScanLine size={20}/> Ler QR Code</Button></div>
-                   <div className="relative mb-6"><Search size={18} className="absolute left-3 top-3.5 text-slate-400"/><input className="w-full border p-3 pl-10 rounded-xl outline-none focus:ring-2 focus:ring-[#0097A8]" placeholder="Buscar nome..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/></div>
-                   <div className="space-y-3">{dailyGuests.length === 0 ? <p className="text-center text-slate-400 py-8">Nenhum ingresso para hoje.</p> : dailyGuests.map(r => (<div key={r.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-100"><div><p className="font-bold text-slate-900">{r.guestName}</p><div className="flex gap-2 text-xs text-slate-500 mt-1"><span>{r.adults} Adt</span> • <span>{r.children} Cri</span> • <span>{r.pets} Pets</span></div></div>{r.status === 'validated' ? (<div className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> OK</div>) : (<Button className="px-4 py-1.5 h-auto text-xs" onClick={()=>handleValidate(r.id, r.id.slice(0,6))}>Validar</Button>)}</div>))}</div>
-               </div>
-           </>
-       )}
-    </div>
-  );
-};
-
-// ... (outros componentes)
-
 // -----------------------------------------------------------------------------
 // COMPONENTE: CALENDÁRIO DE OCUPAÇÃO (PARCEIRO)
 // -----------------------------------------------------------------------------
@@ -2568,7 +2486,7 @@ const AuthActionHandler = ({ onVerificationSuccess, onResetPasswordRequest, setG
               if (role === 'partner') {
                   navigate('/partner'); // Manda o parceiro direto para o dashboard
               } else if (role === 'staff') {
-                  navigate('/portaria');
+                  navigate('/partner');
               } else {
                   navigate('/minhas-viagens'); // Usuário comum vai para ingressos
               }
@@ -2697,7 +2615,7 @@ const Layout = ({ children }) => {
   const handleLoginSuccess = (userWithRole) => {
      setShowLogin(false);
      if (userWithRole.role === 'partner') navigate('/partner');
-     else if (userWithRole.role === 'staff') navigate('/portaria');
+     else if (userWithRole.role === 'staff') navigate('/partner');
      else if (userWithRole.role === 'admin') navigate('/admin');
      else navigate('/minhas-viagens');
   };
@@ -2801,8 +2719,8 @@ const Layout = ({ children }) => {
                     )}
                     
                     {user.role === 'staff' && (
-                        <Button variant="ghost" onClick={()=>navigate('/portaria')} className="px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                            Portaria
+                        <Button variant="ghost" onClick={()=>navigate('/partner')} className="px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
+                            Agenda
                         </Button>
                     )}
                     
@@ -5429,11 +5347,12 @@ const App = () => {
         <Route 
             path="/partner" 
             element={
-                <ProtectedRoute allowedRoles={['partner']}>
+                <ProtectedRoute allowedRoles={['partner', 'staff']}>
                     <Layout><PartnerDashboard /></Layout>
                 </ProtectedRoute>
             } 
         />
+
         <Route 
             path="/partner/new" 
             element={
@@ -5455,16 +5374,6 @@ const App = () => {
             element={
                 <ProtectedRoute allowedRoles={['partner']}>
                     <Layout><PartnerVerification /></Layout>
-                </ProtectedRoute>
-            } 
-        />
-
-        {/* Apenas Staff (Portaria) */}
-        <Route 
-            path="/portaria" 
-            element={
-                <ProtectedRoute allowedRoles={['staff']}>
-                    <Layout><StaffDashboard /></Layout>
                 </ProtectedRoute>
             } 
         />

@@ -28,35 +28,23 @@ const PartnerCoupons = ({ user }) => {
   const loadData = async () => {
     if (!user) return;
     setLoading(true);
+
+    // 🔥 Define o ID correto (Chefe ou Próprio)
+    const targetId = user.effectiveOwnerId || user.uid;
+    console.log("🎟️ [COUPONS] Buscando dados para:", targetId);
+    
     try {
-      // A) Carregar Produtos (Mantido, mas ajustado para garantir busca correta)
-      const qProd = query(collection(db, "products"), where("ownerId", "==", user.uid));
+      // A) Carregar Cupons da Coleção (Jeito Certo)
+      const q = query(collection(db, "coupons"), where("ownerId", "==", targetId));
+      const snapshot = await getDocs(q);
+      const couponsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCoupons(couponsList);
+
+      // B) Carregar Produtos (Para o Select de vincular produtos)
+      const qProd = query(collection(db, "products"), where("ownerId", "==", targetId));
       const snapProd = await getDocs(qProd);
-      const prodList = snapProd.docs.map(d => ({ id: d.id, title: d.data().title }));
-      setProducts(prodList);
-
-      // B) Carregar Cupons (CORRIGIDO: Busca dentro do Day Use)
-      // Primeiro, achamos o Day Use desse parceiro
-      const qDayUse = query(collection(db, "dayuses"), where("ownerId", "==", user.uid));
-      const snapDayUse = await getDocs(qDayUse);
-
-      if (!snapDayUse.empty) {
-        const dayUseDoc = snapDayUse.docs[0]; // Assume 1 Day Use por parceiro por enquanto
-        const dayUseData = dayUseDoc.data();
-        
-        // Pega o array de cupons OU inicia vazio
-        const allCoupons = dayUseData.coupons || [];
-
-        // FILTRO IMPORTANTE: Esconde cupons criados pelo Admin
-        // (Conforme sua regra: "cupons criados pelo admin não precisa aparecer para o parceiro")
-        const partnerCoupons = allCoupons
-            .map((c, index) => ({ ...c, id: index, dayUseId: dayUseDoc.id })) // Adiciona ID temporário (índice) para a lista
-            .filter(c => c.createdBy !== 'admin'); 
-
-        setCoupons(partnerCoupons);
-      } else {
-        setCoupons([]);
-      }
+      const productsList = snapProd.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setProducts(productsList);
 
     } catch (err) {
       console.error(err);
@@ -171,17 +159,23 @@ const PartnerCoupons = ({ user }) => {
     }
 
     // Validação de Produtos
-    if (!formData.applyToAllProducts && formData.selectedProductIds.length === 0) {
+    if (!formData.applyToAllProducts && (!formData.selectedProductIds || formData.selectedProductIds.length === 0)) {
         alert("Selecione pelo menos um produto ou marque 'Aplicar em todos'.");
         return;
     }
 
     setLoading(true);
+    
+    // 🔥 Define o ID correto
+    const targetId = user.effectiveOwnerId || user.uid;
+
     try {
       const payload = {
-        ownerId: user.uid,
+        // 🔥 CORREÇÃO: Salva no nome do Chefe
+        ownerId: targetId,
+        
         updatedAt: new Date(),
-        code: formData.code.toUpperCase().trim(), // Sempre maiúsculo
+        code: formData.code.toUpperCase().trim(),
         discountType: formData.discountType,
         discountValue: Number(formData.discountValue),
         
