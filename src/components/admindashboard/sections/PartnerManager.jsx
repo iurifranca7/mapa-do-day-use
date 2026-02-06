@@ -186,15 +186,15 @@ const PartnerManager = ({ dayUses, pendingUsers, claims, onOpenDocModal, onOpenC
                   </td>
 
                   <td className="p-4 text-right">
-                    {/* LINK CORRIGIDO PARA ROTA ADMIN */}
-                    <a 
-                      href={`/partner-panel/${d.id}`} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-[#0097A8] hover:text-[#007f8f] font-bold text-xs flex items-center justify-end gap-1"
-                    >
-                      Acessar <ExternalLink size={12}/>
-                    </a>
+                    {/* LINK CORRIGIDO: Passa o ID do Dono (User), não do Passeio */}
+                      <a 
+                        href={`/partner-panel/${d.ownerId}`}  // <--- MUDANÇA AQUI: de d.id para d.ownerId
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-[#0097A8] hover:text-[#007f8f] font-bold text-xs flex items-center justify-end gap-1"
+                      >
+                        Acessar <ExternalLink size={12}/>
+                      </a>
                   </td>
                 </tr>
               ))}

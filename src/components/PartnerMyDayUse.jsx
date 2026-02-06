@@ -14,18 +14,24 @@ import { generateSlug, formatBRL } from '../utils/format';
 
 // --- CONSTANTES ---
 const AMENITIES_LIST = [
-  "Piscina", "Piscina aquecida", "Piscina infantil", "Sauna", "Jacuzzi", "Ofurô",
-  "Churrasqueira", "Campo de Futebol", "Quadra de tênis", "Quadra de areia",
-  "Playground", "Salão de jogos", "Sinuca", "Totó/Pebolim", "Ping Pong",
-  "Trilha ecológica", "Cachoeira", "Pesca esportiva", "Passeio a cavalo",
-  "Fazendinha", "Redário", "Espaço Zen", "Massagem", "Wi-Fi", "Estacionamento",
-  "Pet friendly", "Acessibilidade", "Tirolesa", "Arvorismo", "Caiaque", "Pedalinho",
-  "Animais exóticos", "Espaços instagramaveis", "Área verde", "Canoagem","Stand Up paddle",
-  "Pesque e solte"
+  "Piscina adulto", "Piscina infantil", "Piscina aquecida", "Cachoeira / Riacho", "Cascata/Cachoeira artificial",
+    "Acesso à represa / lago", "Bicicletas", "Quadriciclo", "Passeio a cavalo", "Caiaque / Stand up",
+    "Trilha", "Pesque e solte", "Fazendinha / Animais", "Espaço kids", "Recreação infantil",
+    "Quadra de areia", "Campo de futebol", "Campo de vôlei e peteca", "Beach tennis / futvôlei",
+    "Academia", "Sauna mista a vapor", "Hidromassagem / Banheira / Ofurô", "Massagem",
+    "Espaço para meditação", "Capela", "Redes", "Vista / Mirante", "Fogo de chão / Lareira",
+    "Churrasqueira", "Cozinha equipada", "Bar / Restaurante / Quiosque", "Sala de jogos", "Música ao vivo", 
+    "Estacionamento", "Wi-Fi", "Piscina climatizada", "Playground", "Área verde", "Lagoa com água da nascente", 
+    "Piscina com água da nascente", "Pratos e talheres", "Tomadas disponíveis", "Pia com torneira", "Tirolesa infantil",
+    "Tirolesa Adulto", "Gangorra", "Cachoeira com túnel",  "Parque aquático adulto", "Piscina coberta", "Sauna masculina a vapor",
+    "Sauna feminina a vapor", "Vara de pesca", "Iscas para pesca", "Banheiro com ducha quente","Lago", "Pesque e pague", "Balanço",
+    "Ducha fria", "Banheiros com ducha", "Sinuca", "Espaço de leitura", "Quadra poliesportiva", "Piscina semiolímpica", 
+    "Quadra de peteca e vôlei", "Barco a remo", "Pedalinho", "Bike park", "Escorrega de sabão", "Cama elástica infantil",
+    "Vale jurássico", "Piscina de borda infinita", "Solarium", "Toboágua", "Acesso a acomodação", "Monitor infantil", "Passeio de charrete"
 ];
 
 const MEALS_LIST = [
-  "Café da Manhã", "Almoço","Sobremesa","Café da tarde", "Jantar", "Petiscos", "Bebidas não alcoólicas", "Bebidas alcoólicas", "Buffet livre", "À La Carte"
+  "Café da manhã", "Almoço", "Café da tarde", "Petiscos", "Sobremesas", "Bebidas NÃO Alcoólicas", "Bebidas Alcoólicas", "Buffet Livre"
 ];
 
 const PartnerMyDayUse = ({ user }) => {

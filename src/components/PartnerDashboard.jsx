@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 // Ícones
 import { 
@@ -37,6 +37,7 @@ const PartnerDashboard = () => {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const { partnerId } = useParams();
   
   // --- ESTADOS DO SCANNER PADRONIZADOS ---
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -57,42 +58,82 @@ const PartnerDashboard = () => {
   const [feedback, setFeedback] = useState(null);
 
   // 1. CARREGAMENTO INICIAL
+  // 1. CARREGAMENTO INICIAL COM LOGS DE DEBUG
   useEffect(() => {
+     console.log("🔄 [DASHBOARD] Iniciando verificação de auth...");
+     console.log("🔗 [DASHBOARD] ID na URL (partnerId):", partnerId); // Verifica se o router pegou o ID
+
      const unsub = onAuthStateChanged(auth, async u => {
         if(u) {
+           console.log("👤 [AUTH] Usuário logado (Admin/Você):", u.uid, u.email);
+
+           // Pega dados do usuário logado
            const userDocRef = doc(db, "users", u.uid);
            const userDocSnap = await getDoc(userDocRef);
-           let effectiveOwnerId = u.uid; 
            
-           if(userDocSnap.exists()) {
-               const d = userDocSnap.data();
-               if (d.ownerId) effectiveOwnerId = d.ownerId;
-               
+           let effectiveOwnerId = u.uid; 
+           let isImpersonating = false;
+           
+           // --- LÓGICA NOVA PARA O ADMIN ---
+           if (partnerId) {
+               console.log("🕵️‍♂️ [MODO ESPIÃO] Detectado ID na URL. Tentando acessar como:", partnerId);
+               effectiveOwnerId = partnerId;
+               isImpersonating = true;
+           } else {
+               if(userDocSnap.exists()) {
+                   const d = userDocSnap.data();
+                   if (d.ownerId) effectiveOwnerId = d.ownerId;
+               }
+           }
+           
+           console.log("🎯 [FINAL] ID Efetivo que será usado:", effectiveOwnerId);
+
+           // Busca dados do Dono Efetivo
+           try {
                const ownerDocSnap = await getDoc(doc(db, "users", effectiveOwnerId));
+               
                if(ownerDocSnap.exists()) {
+                   console.log("✅ [DB] Dados do Parceiro encontrados:", ownerDocSnap.data());
                    const ownerData = ownerDocSnap.data();
                    setDocStatus(ownerData.docStatus || 'none');
                    if(ownerData.mp_access_token) setMpConnected(true);
+
+                   // Monta o objeto User
+                   const finalUserObj = { 
+                     ...u, 
+                     uid: effectiveOwnerId, // O ID MÁGICO
+                     role: isImpersonating ? 'admin_view' : (userDocSnap.data()?.role || 'partner'), 
+                     displayName: isImpersonating ? `[Admin] ${ownerDocSnap.data()?.displayName}` : (u.displayName || userDocSnap.data()?.displayName),
+                     photoURL: u.photoURL || userDocSnap.data()?.photoURL
+                   };
+                   
+                   console.log("🚀 [STATE] Atualizando User State para:", finalUserObj);
+                   setUser(finalUserObj); 
+
+                   setMainOwnerId(effectiveOwnerId);
+
+                   // Busca equipe
+                   const qStaff = query(collection(db, "users"), where("ownerId", "==", effectiveOwnerId));
+                   onSnapshot(qStaff, s => setStaffList(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+               } else {
+                   console.warn("⚠️ [DB] Usuário parceiro NÃO encontrado no banco com ID:", effectiveOwnerId);
+                   alert("Parceiro não encontrado no banco de dados.");
+               }
+           } catch (error) {
+               console.error("❌ [ERRO CRÍTICO] Falha ao buscar dados do parceiro:", error);
+               if (error.code === 'permission-denied') {
+                   alert("ERRO DE PERMISSÃO: O Firebase bloqueou você de ver os dados deste parceiro. Verifique as 'Firestore Rules'.");
                }
            }
 
-           setUser({ 
-             ...u, 
-             role: userDocSnap.data()?.role || 'partner', 
-             displayName: u.displayName || userDocSnap.data()?.displayName,
-             photoURL: u.photoURL || userDocSnap.data()?.photoURL
-           }); 
-           setMainOwnerId(effectiveOwnerId);
-
-           const qStaff = query(collection(db, "users"), where("ownerId", "==", effectiveOwnerId));
-           onSnapshot(qStaff, s => setStaffList(s.docs.map(d => ({id: d.id, ...d.data()}))));
-
         } else {
+           console.log("🚪 [AUTH] Nenhum usuário logado. Redirecionando...");
            navigate('/'); 
         }
      });
      return unsub;
-  }, [navigate]);
+  }, [navigate, partnerId]);
 
   // --- FUNÇÃO DE BUSCA (PADRONIZADA IGUAL AO CALENDÁRIO) ---
   const handleScanTicket = async (rawValue) => {
