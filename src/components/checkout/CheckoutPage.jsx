@@ -304,41 +304,6 @@ const CheckoutPage = () => {
 
     // Limpa CPF para envio (apenas números)
     const cleanDoc = (docNumber || "").replace(/\D/g, ''); 
-
-    // 🚨 VERIFICAÇÃO DE ESTOQUE DE ÚLTIMA HORA (LAST MILE CHECK)
-  try {
-      // Busca o dado mais fresco do banco
-      const freshDoc = await getDoc(doc(db, "dayuses", itemData.id));
-      if (freshDoc.exists()) {
-          const freshData = freshDoc.data();
-          
-          // Verifica capacidade global do dia (Porta 1)
-          // Precisamos contar as reservas confirmadas para esta data
-          const qRes = query(
-              collection(db, "reservations"), 
-              where("bookingDetails.dayuseId", "==", itemData.id),
-              where("date", "==", bookingData.date),
-              where("status", "in", ["approved", "paid", "confirmed"])
-          );
-          const snapRes = await getDocs(qRes);
-          const currentGuests = snapRes.docs.reduce((acc, d) => acc + (d.data().totalGuests || 0), 0);
-          
-          const totalGuestsInCart = bookingData.adults + bookingData.children; // Simplificado
-          
-          if (freshData.maxCapacity && (currentGuests + totalGuestsInCart) > freshData.maxCapacity) {
-              alert("Desculpe, as vagas para esta data acabaram de esgotar!");
-              setIsSoldOut(true);
-              setProcessing(false);
-              return;
-          }
-
-          // TODO: Se quiser ser MUITO rigoroso, verificar também o limite do Lote específico aqui.
-          // Mas a verificação global já evita o pior (overbooking do hotel).
-      }
-  } catch (err) {
-      console.error("Erro ao verificar estoque:", err);
-      // Opcional: Bloquear ou deixar passar (Fail Open vs Fail Closed)
-  }
     
     // Validação simples de CPF se não for cupom 100%
     if ((paymentMethod === 'card' || paymentMethod === 'pix') && cleanDoc.length < 11) { 
