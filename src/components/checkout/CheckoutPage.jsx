@@ -96,7 +96,7 @@ const CheckoutPage = () => {
   useEffect(() => {
     const initSDK = async () => {
         if (window.mpInstance) { setMpInstance(window.mpInstance); return; }
-        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY; 
+        const mpKey = import.meta.env.VITE_MP_PUBLIC_KEY_TEST; 
         if (!mpKey) return;
         try {
             if (!window.MercadoPago) await loadMercadoPago();
@@ -112,7 +112,7 @@ const CheckoutPage = () => {
 
   useEffect(() => {
   if (window.MercadoPago && !mpInstance) {
-    const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
+    const mp = new window.MercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY_TEST);
     setMpInstance(mp);
     console.log("✅ Mercado Pago instanciado com sucesso");
   }
