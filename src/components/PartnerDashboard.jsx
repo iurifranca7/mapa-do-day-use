@@ -85,6 +85,10 @@ const PartnerDashboard = () => {
            // SE É ADMIN ESPIÃO
            if (partnerId && userData.role === 'admin') {
                effectiveOwnerId = partnerId;
+               console.log(`🕵️‍♂️ MODO ADMIN ATIVADO: Acessando painel de ${partnerId}`);
+               
+               // Opcional: Adicionar uma flag visual no objeto do usuário para mostrarmos um alerta na tela
+               userData.isAdminViewing = true; 
            }
 
            // 3. Montagem do Objeto Final (CRIANDO A VARIÁVEL PRIMEIRO)
@@ -223,6 +227,13 @@ const PartnerDashboard = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
+
+        {/* ALERTA DE MODO ADMIN */}
+      {user?.isAdminViewing && (
+        <div className="fixed top-0 left-0 w-full bg-amber-500 text-white text-xs font-bold text-center py-1 z-[60] shadow-md">
+           ⚠️ MODO ADMINISTRADOR: Você está editando o painel do parceiro {partnerId}
+        </div>
+      )}
       
       {/* 1. SIDEBAR DESKTOP (CONDICIONAL) */}
       <aside className="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col z-20 shadow-xl">

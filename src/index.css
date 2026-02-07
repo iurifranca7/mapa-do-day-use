@@ -40,3 +40,13 @@ iframe[src*="mercadopago"] {
     z-index: 50;
     background: white; /* As vezes o fundo transparente buga o clique */
 }
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

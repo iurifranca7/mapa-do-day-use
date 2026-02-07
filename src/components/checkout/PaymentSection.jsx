@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Lock, CreditCard, QrCode, ChevronDown, Info } from 'lucide-react';
 import Button from './../Button';
 import { formatBRL } from '../../utils/format';
-import CreditCardForm from './../../CreditCardForm';
+import CreditCardForm from './CreditCardForm';
 import AddressForm from './AddressForm';
 
 const PaymentSection = ({

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Calendar as CalendarIcon, CheckCircle, Ban, Lock, ShoppingCart, 
-  Trash2, Flame, AlertCircle, Link as LinkIcon, Info, X
+  Trash2, Flame, AlertCircle, Link as LinkIcon, Info, X, AlertTriangle
 } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore'; 
 import { db } from '../../firebase'; 
@@ -30,6 +30,9 @@ const BookingCard = ({
   const [foundReservation, setFoundReservation] = useState(null);
   const [pendingProductToAdd, setPendingProductToAdd] = useState(null);
   const [feedbackMsg, setFeedbackMsg] = useState(null);
+
+  const [minQtyModalOpen, setMinQtyModalOpen] = useState(false);
+  const [violationData, setViolationData] = useState(null);
 
   useEffect(() => { setCart({}); }, [date]);
 
@@ -109,10 +112,12 @@ const BookingCard = ({
       return !rule.valid;
   });
 
+  // 🔥 LÓGICA DE PREÇO (COM PROMOÇÃO)
   const totalAmount = validProducts.reduce((acc, prod) => {
       const qty = cart[prod.id]?.quantity || 0; 
-      const price = prod.price || prod.priceAdult || 0;
-      return acc + (qty * price);
+      // Verifica se tem promoção ativa
+      const unitPrice = (prod.hasPromo && prod.promoPrice) ? Number(prod.promoPrice) : (prod.price || prod.priceAdult || 0);
+      return acc + (qty * unitPrice);
   }, 0);
 
   const totalItems = Object.values(cart).reduce((a, b) => a + (b.quantity || 0), 0);
@@ -187,19 +192,61 @@ const BookingCard = ({
       }
   };
 
-  const updateQuantity = async (prod, delta) => {
-      const prodId = prod.id;
-      const currentEntry = cart[prodId] || { quantity: 0 };
-      const currentQty = currentEntry.quantity;
-      const newQty = Math.max(0, currentQty + delta);
+// 🔥 LÓGICA DE ATUALIZAÇÃO DE QUANTIDADE (COM TRAVA DE ESTOQUE E LOTE)
+  const updateQuantity = async (prod, delta) => {
+      const prodId = prod.id;
+      const currentEntry = cart[prodId] || { quantity: 0 };
+      const currentQty = currentEntry.quantity;
+      
+      // --- DEFINIÇÃO DOS LIMITES (FUNIL) ---
+      let productLimit = 999; // Limite específico deste produto (Lote ou Físico)
+      let globalLimit = 999;  // Limite global do hotel
 
-      // Validações de Estoque e Dependência
-      if (delta > 0) {
-          if (availableSpots !== null && (totalItems + 1) > availableSpots && !prod.isPhysical) {
-              showToast("Limite de vagas do dia atingido.");
-              return; 
-          }
+      // 1. Porta Global (Hotel)
+      if (!prod.isPhysical) {
+          globalLimit = availableSpots !== null ? Number(availableSpots) : 999;
+      }
 
+      // 2. Porta Produto (Lote ou Físico)
+      if (prod.isPhysical) {
+          // Produto físico: Limite é o estoque absoluto
+          if (prod.stock !== null && prod.stock !== undefined) productLimit = Number(prod.stock);
+      } else if (prod.hasDailyLimit && prod.dailyLimit > 0) {
+          // Lote Diário: Limite é a cota configurada para o dia
+          // NOTA: Para ser perfeito, precisaríamos saber quantos JÁ foram vendidos hoje (do banco)
+          // Como o 'availableSpots' já desconta o total, aqui controlamos apenas se o usuário
+          // não está tentando comprar mais do que a cota TOTAL do lote permite.
+          // O ideal seria: productLimit = prod.dailyLimit - (vendasDoDiaDesteProduto);
+          // Por enquanto, assumimos o dailyLimit como teto máximo de compra por vez se não tivermos o dado de vendas.
+          productLimit = Number(prod.dailyLimit);
+      }
+
+      // Calcula nova quantidade potencial
+      const newQty = currentQty + delta;
+
+      // --- VALIDAÇÃO ---
+      if (delta > 0) {
+          // A) Porta do Produto (Lote/Estoque)
+          if (newQty > productLimit) {
+              const msg = prod.hasDailyLimit ? `Limite diário deste lote é ${productLimit}.` : `Restam apenas ${productLimit} unidades.`;
+              showToast(msg, "warning");
+              return; 
+          }
+
+          // B) Porta Global (Hotel Cheio)
+          // Verifica se a soma de TODOS os itens não físicos no carrinho + 1 excede as vagas
+          const currentTotalGuests = Object.keys(cart).reduce((acc, key) => {
+              const item = products.find(p => p.id === key);
+              if (item && !item.isPhysical) return acc + cart[key].quantity;
+              return acc;
+          }, 0);
+
+          if (!prod.isPhysical && (currentTotalGuests + 1) > globalLimit) {
+              showToast("Limite total de vagas do day use atingido.", "warning");
+              return; 
+          }
+
+          // C) Lógica de Dependência (Criança/Pet precisa de Adulto)
           const isDependent = DEPENDENT_TYPES.includes(prod.type);
           if (isDependent) {
               const hasGuardianInCart = validProducts.some(p => 
@@ -214,6 +261,7 @@ const BookingCard = ({
           }
       }
 
+      // --- LÓGICA DE REMOÇÃO (DELTA NEGATIVO) ---
       if (delta < 0) {
           if (GUARDIAN_TYPES.includes(prod.type)) {
               const otherGuardiansQty = validProducts.reduce((sum, p) => {
@@ -222,8 +270,8 @@ const BookingCard = ({
                   return sum;
               }, 0);
 
-              if (otherGuardiansQty === 0 && newQty === 0) {
-                  // Se remover o último adulto, verifica se tem dependentes órfãos
+              // Se zerar os adultos, verifica se sobraram crianças órfãs
+              if (otherGuardiansQty === 0 && Math.max(0, newQty) === 0) {
                   const hasOrphanDependents = validProducts.some(p => 
                       DEPENDENT_TYPES.includes(p.type) && 
                       cart[p.id]?.quantity > 0 && 
@@ -248,10 +296,12 @@ const BookingCard = ({
           }
       }
 
+      // Atualiza o estado finalmente
       setCart(prev => {
           const newCart = { ...prev };
-          if (newQty === 0) delete newCart[prodId];
-          else newCart[prodId] = { ...currentEntry, quantity: newQty };
+          const finalQty = Math.max(0, newQty);
+          if (finalQty === 0) delete newCart[prodId];
+          else newCart[prodId] = { ...currentEntry, quantity: finalQty };
           return newCart;
       });
   };
@@ -261,6 +311,9 @@ const BookingCard = ({
           .filter(p => cart[p.id]?.quantity > 0)
           .map(p => {
               const cartItem = cart[p.id];
+              // 🔥 Define preço final do item
+              const finalPrice = (p.hasPromo && p.promoPrice) ? Number(p.promoPrice) : (p.price || 0);
+              
               let snapshot = 999; 
               if (p.isPhysical) {
                   snapshot = p.stock !== null && p.stock !== undefined ? Number(p.stock) : 999;
@@ -270,7 +323,9 @@ const BookingCard = ({
               return {
                   ...p,
                   quantity: cartItem.quantity,
-                  totalItem: cartItem.quantity * (p.price || 0),
+                  price: finalPrice, // Envia o preço já com desconto
+                  originalPrice: p.price, // Útil para relatórios futuros ("quanto dei de desconto?")
+                  totalItem: cartItem.quantity * finalPrice,
                   stockSnapshot: snapshot,
                   linkedToReservationId: cartItem.linkedTo || null 
               };
@@ -329,6 +384,37 @@ const BookingCard = ({
           document.body
       )}
 
+      {/* --- MODAL DE REGRA MÍNIMA (NOVO) --- */}
+      {minQtyModalOpen && violationData && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fade-in">
+              <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setMinQtyModalOpen(false)}></div>
+              <div className="bg-white rounded-3xl w-full max-w-sm p-6 relative z-10 shadow-2xl animate-scale-up text-center">
+                  
+                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle size={32} />
+                  </div>
+
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Quantidade Mínima</h3>
+                  
+                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+                      Para o ingresso <strong>{violationData.title}</strong>, é necessário selecionar pelo menos <strong className="text-amber-600 text-lg">{violationData.min} pessoas</strong> nesta data.
+                  </p>
+
+                  <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl mb-6 text-xs text-amber-800 font-medium">
+                      Essa regra garante a melhor experiência para grupos neste dia específico.
+                  </div>
+
+                  <button 
+                      onClick={() => setMinQtyModalOpen(false)} 
+                      className="w-full py-3.5 rounded-xl bg-slate-800 text-white font-bold hover:bg-slate-900 transition-colors"
+                  >
+                      Entendi, vou ajustar
+                  </button>
+              </div>
+          </div>,
+          document.body
+      )}
+
       {/* 1. SELEÇÃO DE DATA */}
       <div>
         <div className="flex justify-between items-center mb-3">
@@ -359,50 +445,194 @@ const BookingCard = ({
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 border-t border-slate-100 pt-4"><ShoppingCart size={14}/> Ingressos Disponíveis</p>
                     <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
                         {validProducts.map(prod => {
+
+                            let ageText = null;
+                            
+                            // Regra para Crianças
+                            if (['child', 'combo_child'].includes(prod.type)) {
+                                if (prod.ageType === 'free' && prod.ageMax) {
+                                    ageText = `Até ${prod.ageMax} anos`;
+                                } else if (prod.ageMin && prod.ageMax) {
+                                    ageText = `${prod.ageMin} a ${prod.ageMax} anos`;
+                                }
+                            } 
+                            // Regra para Adultos (Opcional, mas fica bom)
+                            else if (['adult', 'combo_adult'].includes(prod.type) && prod.ageMin) {
+                                ageText = `+${prod.ageMin} anos`;
+                            }
+
                             const cartItem = cart[prod.id] || { quantity: 0 };
                             const qty = cartItem.quantity;
                             const isLinked = !!cartItem.linkedTo;
-                            const currentLimit = prod.isPhysical ? (prod.stock || 0) : (availableSpots || 99);
-                            const isScarcity = currentLimit <= 10;
                             const isDependent = DEPENDENT_TYPES.includes(prod.type);
 
-                            // 🔥 VERIFICA A REGRA AQUI PARA RENDERIZAR O BADGE
+                            // --- CÁLCULO ROBUSTO DO LIMITE PARA EXIBIÇÃO ---
+                            let currentLimit = 999;
+
+                            if (prod.isPhysical) {
+                                // Produto físico: Respeita estoque
+                                if (prod.stock !== null && prod.stock !== undefined) currentLimit = Number(prod.stock);
+                            } else {
+                                // Ingresso: Respeita Vagas do Hotel
+                                const hotelSpots = availableSpots !== null ? Number(availableSpots) : 999;
+                                
+                                // Se for Lote com Limite Diário (NOVO)
+                                if (prod.hasDailyLimit && prod.dailyLimit !== null && prod.dailyLimit !== undefined) { 
+                                    currentLimit = Math.min(hotelSpots, Number(prod.dailyLimit));
+                                } else {
+                                    // Se não for lote, usa vagas do hotel ou estoque manual antigo
+                                    currentLimit = hotelSpots;
+                                    if (prod.stock !== null && prod.stock !== undefined) {
+                                        currentLimit = Math.min(currentLimit, Number(prod.stock));
+                                    }
+                                }
+                            }
+
+                            // LÓGICA VISUAL DE ESGOTADO (NOVO)
+                            // Está indisponível se: (Não é físico E vagas do hotel = 0) OU (É físico/lote e limite = 0)
+                            const isUnavailable = (!prod.isPhysical && availableSpots === 0) || currentLimit === 0;
+
+                            // Verifica se atingiu o limite
+                            const isLimitReached = qty >= currentLimit || (!prod.isPhysical && availableSpots !== null && totalItems >= availableSpots);
+                            const isScarcity = currentLimit <= 10 && !isUnavailable;
+
+                            // Verifica Regra de Quantidade Mínima
                             const ruleStatus = checkMinQuantityRule(prod, qty);
 
                             return (
-                                <div key={prod.id} className={`relative p-4 rounded-2xl border transition-all ${qty > 0 ? 'border-[#0097A8] bg-cyan-50/20 ring-1 ring-[#0097A8]/20' : 'border-slate-100 bg-white hover:border-slate-300'}`}>
+                                <div key={prod.id} className={`relative p-4 rounded-2xl border transition-all 
+                                        ${isUnavailable ? 'opacity-60 grayscale bg-slate-50 cursor-not-allowed border-slate-100' : ''} 
+                                        ${!isUnavailable && qty > 0 ? 'border-[#0097A8] bg-cyan-50/20 ring-1 ring-[#0097A8]/20' : 'border-slate-100 bg-white hover:border-slate-300'}
+                                    `}>
+                                   
                                     <div className="flex flex-col md:flex-row justify-between gap-3 md:items-center">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1"><h4 className={`font-bold text-sm leading-tight ${qty > 0 ? 'text-[#0097A8]' : 'text-slate-800'}`}>{prod.title}</h4>{isLinked && <LinkIcon size={14} className="text-[#0097A8]" />}</div>
-                                            {prod.description && (<p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2 pr-2 mb-2">{prod.description}</p>)}
-                                        </div>
-                                        <div className="flex items-end justify-between md:flex-col md:items-end md:gap-1">
-                                            <div className="flex flex-col"><span className="text-lg font-bold text-slate-900 md:text-right">{formatBRL(prod.price || 0)}</span></div>
-                                            <div className="flex flex-col items-end gap-1">
-                                                <div className={`flex items-center gap-3 rounded-lg p-1 transition-colors ${qty > 0 ? 'bg-white shadow-sm border border-[#0097A8]/30' : 'bg-slate-50 border border-slate-200'}`}>
-                                                    <button onClick={() => updateQuantity(prod, -1)} className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${qty === 0 ? 'text-slate-300 cursor-not-allowed' : 'text-[#0097A8] hover:bg-cyan-50 font-bold'}`} disabled={qty === 0}>{qty === 1 ? <Trash2 size={16}/> : '-'}</button>
-                                                    <span className={`w-6 text-center font-bold text-sm ${qty > 0 ? 'text-slate-900' : 'text-slate-400'}`}>{qty}</span>
-                                                    <button onClick={() => updateQuantity(prod, 1)} className="w-8 h-8 flex items-center justify-center text-[#0097A8] hover:bg-cyan-50 rounded-md font-bold transition-colors">+</button>
+                                        
+                                        {/* 1. INFO DO PRODUTO (Lado Esquerdo) */}
+                                            {/* 'min-w-0' é essencial para o truncate/break-words funcionar em flexbox */}
+                                            <div className="flex-1 min-w-0 pr-2"> 
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    {/* TÍTULO BLINDADO: Quebra palavras longas e limita a 2 linhas */}
+                                                    <h4 className={`font-bold text-sm leading-tight break-words line-clamp-2 ${qty > 0 ? 'text-[#0097A8]' : 'text-slate-800'}`}>
+                                                        {prod.title}
+                                                    </h4>
+                                                    {isLinked && <LinkIcon size={14} className="text-[#0097A8] shrink-0" />}
+                                                </div>
+
+                                                {/* DESCRIÇÃO BLINDADA: Quebra palavras longas */}
+                                                {(prod.description || ageText) && (
+                                                    <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2 break-words mb-2">
+                                                        {ageText && (
+                                                            <span className="font-bold text-slate-600 mr-1 whitespace-nowrap">
+                                                                {ageText}
+                                                            </span>
+                                                        )}
+                                                        {ageText && prod.description && (
+                                                            <span className="text-slate-300 mr-1">•</span>
+                                                        )}
+                                                        {prod.description}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {/* 2. PREÇO E BOTÕES (Lado Direito) */}
+                                            <div className="flex items-end justify-between md:flex-col md:items-end md:gap-1 shrink-0">
+                                                
+                                                {/* 🔥 PREÇO INTELIGENTE (COM PROMOÇÃO) */}
+                                                <div className="flex flex-col items-end">
+                                                    {(prod.hasPromo && prod.promoPrice) ? (
+                                                        <>
+                                                            {/* Preço Antigo (Riscado em vermelho suave) */}
+                                                            <span className="text-[10px] text-slate-400 line-through decoration-red-400 mb-[-2px] whitespace-nowrap">
+                                                                {formatBRL(prod.price || 0)}
+                                                            </span>
+                                                            
+                                                            {/* Preço Novo (VERDE DESTAQUE) */}
+                                                            <span className="text-lg font-bold text-green-600 md:text-right whitespace-nowrap">
+                                                                {formatBRL(prod.promoPrice)}
+                                                            </span>
+                                                        </>
+                                                    ) : (
+                                                        /* Preço Normal */
+                                                        <span className="text-lg font-bold text-slate-900 md:text-right whitespace-nowrap">
+                                                            {formatBRL(prod.price || 0)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <div className={`flex items-center gap-3 rounded-lg p-1 transition-colors ${qty > 0 ? 'bg-white shadow-sm border border-[#0097A8]/30' : 'bg-slate-50 border border-slate-200'}`}>
+                                                        {/* BOTÃO MENOS */}
+                                                        <button 
+                                                            onClick={() => updateQuantity(prod, -1)} 
+                                                            className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${qty === 0 ? 'text-slate-300 cursor-not-allowed' : 'text-[#0097A8] hover:bg-cyan-50 font-bold'}`} 
+                                                            disabled={qty === 0}
+                                                        >
+                                                            {qty === 1 ? <Trash2 size={16}/> : '-'}
+                                                        </button>
+                                                        
+                                                        <span className={`w-6 text-center font-bold text-sm ${qty > 0 ? 'text-slate-900' : 'text-slate-400'}`}>{qty}</span>
+                                                        
+                                                        {/* BOTÃO MAIS */}
+                                                        <button 
+                                                            onClick={() => {
+                                                                if (isUnavailable) return;
+                                                                if (isLimitReached) {
+                                                                    showToast(`Limite máximo de ${currentLimit} atingido.`, "warning");
+                                                                } else {
+                                                                    updateQuantity(prod, 1);
+                                                                }
+                                                            }} 
+                                                            className={`w-8 h-8 flex items-center justify-center rounded-md font-bold transition-all ${
+                                                                isUnavailable ? 'hidden' : '' 
+                                                            } ${
+                                                                isLimitReached 
+                                                                ? 'text-slate-300 bg-slate-100 cursor-not-allowed' 
+                                                                : 'text-[#0097A8] hover:bg-cyan-50 cursor-pointer'
+                                                            }`}
+                                                        >
+                                                            +
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
                                     
-                                    {/* ÁREA DE BADGES */}
+                                    {/* ÁREA DE BADGES (Restam X, Regras, etc) */}
                                     <div className="mt-3 pt-3 border-t border-dashed border-slate-200/50 flex flex-wrap gap-2">
-                                        {(isScarcity || (prod.isPhysical && prod.stock)) && (<span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${isScarcity ? 'bg-orange-50 text-orange-700 border border-orange-100 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>{isScarcity && <Flame size={10} fill="currentColor" />}{isScarcity ? `Restam só ${currentLimit}!` : `Restam ${prod.stock}`}</span>)}
-                                        {isDependent && qty === 0 && (<span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-600 border border-blue-100 flex items-center gap-1"><Info size={10}/> Requer responsável</span>)}
                                         
-                                        {/* 🔥 BADGE DE REGRA MÍNIMA */}
-                                        {ruleStatus.hasRule && (
-                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border flex items-center gap-1 transition-all ${
-                                                qty === 0 ? 'bg-amber-50 text-amber-600 border-amber-200' 
-                                                : ruleStatus.valid ? 'bg-green-50 text-green-600 border-green-200' 
-                                                : 'bg-red-50 text-red-600 border-red-200 animate-pulse'
-                                            }`}>
-                                                {ruleStatus.valid ? <CheckCircle size={10}/> : <Info size={10}/>}
-                                                {ruleStatus.valid ? ruleStatus.message : qty === 0 ? ruleStatus.message : `Faltam ${ruleStatus.remaining} ingressos`}
+                                        {/* 🔥 1. SELO DE ESGOTADO (NOVO LOCAL) */}
+                                        {isUnavailable ? (
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-200 text-slate-500 border border-slate-300 flex items-center gap-1 uppercase tracking-wider">
+                                                🚫 Esgotado
                                             </span>
+                                        ) : (
+                                            /* 🔥 2. OUTROS AVISOS (SÓ APARECEM SE NÃO ESTIVER ESGOTADO) */
+                                            <>
+                                                {(isScarcity || (prod.isPhysical && prod.stock)) && (
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${isScarcity ? 'bg-orange-50 text-orange-700 border border-orange-100 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {isScarcity && <Flame size={10} fill="currentColor" />}
+                                                        {isScarcity ? `Restam só ${currentLimit}!` : `Restam ${prod.stock}`}
+                                                    </span>
+                                                )}
+                                                
+                                                {isDependent && qty === 0 && (
+                                                    <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-600 border border-blue-100 flex items-center gap-1">
+                                                        <Info size={10}/> Requer responsável
+                                                    </span>
+                                                )}
+                                                
+                                                {/* Badge da Regra Mínima */}
+                                                {ruleStatus.hasRule && (
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border flex items-center gap-1 transition-all ${
+                                                        qty === 0 ? 'bg-amber-50 text-amber-600 border-amber-200' 
+                                                        : ruleStatus.valid ? 'bg-green-50 text-green-600 border-green-200' 
+                                                        : 'bg-red-50 text-red-600 border-red-200 animate-pulse'
+                                                    }`}>
+                                                        {ruleStatus.valid ? <CheckCircle size={10}/> : <Info size={10}/>}
+                                                        {ruleStatus.valid ? ruleStatus.message : qty === 0 ? ruleStatus.message : `Faltam ${ruleStatus.remaining} ingressos`}
+                                                    </span>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 </div>
@@ -416,18 +646,36 @@ const BookingCard = ({
 
       <div className="pt-4 border-t border-dashed border-slate-200 sticky bottom-0 bg-white pb-2 z-20">
         <div className="flex justify-between items-center mb-3"><span className="text-slate-500 text-xs font-medium">Total Estimado</span><span className="text-xl font-bold text-slate-900">{formatBRL(totalAmount)}</span></div>
+        
         <Button 
-            className="w-full py-4 text-lg shadow-xl shadow-teal-100 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]" 
-            disabled={!date || checkingStock || totalItems === 0 || isSoldOut || isTimeBlocked || isVerifyingLink || hasPendingRules} 
+            className={`w-full py-4 text-lg shadow-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                hasPendingRules 
+                ? 'bg-amber-500 shadow-amber-200 hover:bg-amber-600 border-amber-500 text-white' // Estilo de "Atenção"
+                : 'shadow-teal-100' // Estilo padrão
+            }`}
+            // 🔥 ALTERAÇÃO 1: NÃO desabilita se tiver regras pendentes (hasPendingRules removido daqui)
+            disabled={!date || checkingStock || totalItems === 0 || isSoldOut || isTimeBlocked || isVerifyingLink} 
             onClick={() => {
+                // 🔥 ALTERAÇÃO 2: Intercepta o clique para validar regras
                 if (hasPendingRules) {
-                    showToast("Você precisa atingir a quantidade mínima de ingressos para a data selecionada.", "warning");
+                    // Encontra qual produto está violando a regra para mostrar no modal
+                    const violationProd = validProducts.find(p => {
+                        const qty = cart[p.id]?.quantity || 0;
+                        if (qty === 0) return false;
+                        return !checkMinQuantityRule(p, qty).valid;
+                    });
+
+                    if (violationProd) {
+                        const rule = checkMinQuantityRule(violationProd, cart[violationProd.id]?.quantity || 0);
+                        setViolationData({ title: violationProd.title, min: rule.min });
+                        setMinQtyModalOpen(true);
+                    }
                     return;
                 }
                 onConfirmBooking();
             }}
         >
-            {checkingStock || isVerifyingLink ? 'Aguarde...' : <>{totalItems > 0 && <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full ml-1">{totalItems} item{totalItems > 1 ? 's' : ''}</span>} Reservar Agora</>}
+            {checkingStock || isVerifyingLink ? 'Aguarde...' : <>{totalItems > 0 && <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full ml-1">{totalItems} item{totalItems > 1 ? 's' : ''}</span>} {hasPendingRules ? 'Verificar Pendências' : 'Reservar Agora'}</>}
         </Button>
         <p className="text-center text-[10px] text-slate-400 mt-3 flex items-center justify-center gap-1"><Lock size={10}/> Compra 100% segura via Mercado Pago</p>
       </div>

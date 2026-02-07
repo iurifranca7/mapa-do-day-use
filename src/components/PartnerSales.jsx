@@ -633,14 +633,17 @@ const PartnerSales = ({ user }) => {
           loading={refundLoading}
       />
 
-        {/* MODAL DE FEEDBACK (Sucesso/Erro) */}
-            <FeedbackModal 
-                isOpen={!!feedback} 
-                onClose={() => setFeedback(null)} 
-                type={feedback?.type} 
-                title={feedback?.title} 
-                msg={feedback?.msg} 
-            />
+                {/* MODAL DE FEEDBACK (Sucesso/Erro) */}
+                    {feedback && createPortal(
+                <FeedbackModal 
+                    isOpen={!!feedback} 
+                    onClose={() => setFeedback(null)} 
+                    type={feedback.type} 
+                    title={feedback.title} 
+                    msg={feedback.msg} 
+                />,
+                document.body
+            )}
 
             {/* MODAL DE CONFIRMAÇÃO GENÉRICO (Para o Sync) */}
             {confirmModal && createPortal(

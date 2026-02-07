@@ -8,7 +8,7 @@ import {
   Plus, Edit, Trash2, Package, Tag, Calendar, Clock, 
   ShoppingBag, Users, Car, PawPrint, X, Store, Power, 
   BedDouble, Info, MoreHorizontal, PlayCircle, PauseCircle,
-  ArrowUp, ArrowDown, ListOrdered // Novos ícones
+  ArrowUp, ArrowDown, ListOrdered, Copy
 } from 'lucide-react';
 import Button from './Button';
 import ModalOverlay from './ModalOverlay';
@@ -182,10 +182,46 @@ const PartnerProducts = ({ user }) => {
       stock: 0,
       order: nextOrder,
       hasMinRules: false, 
-      minQuantityRules: {} 
+      minQuantityRules: {},
+      
+      // ✅ RESETANDO OS CAMPOS NOVOS
+      hasDailyLimit: false,
+      dailyLimit: '',
+      hasPromo: false,
+      promoPrice: ''
     });
     setIsModalOpen(true);
   };
+
+    // --- NOVA FUNÇÃO: DUPLICAR PRODUTO ---
+    const handleDuplicate = async (prod) => {
+        if(!window.confirm(`Deseja duplicar "${prod.title}"?`)) return;
+        setLoading(true);
+        try {
+            // Cria uma cópia do objeto removendo o ID original
+            const { id, ...prodData } = prod;
+            
+            const newProd = {
+                ...prodData,
+                title: `${prodData.title} (Cópia)`, // Adiciona sufixo
+                status: 'paused', // Começa pausado por segurança
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                order: products.length // Vai para o final da lista
+            };
+
+            const docRef = await addDoc(collection(db, "products"), newProd);
+            
+            // Atualiza estado local
+            setProducts(prev => [...prev, { id: docRef.id, ...newProd }]);
+            setFeedback({ type: 'success', title: 'Duplicado', msg: 'Produto duplicado com sucesso.' });
+        } catch (err) {
+            console.error(err);
+            setFeedback({ type: 'error', title: 'Erro', msg: 'Falha ao duplicar.' });
+        } finally {
+            setLoading(false);
+        }
+    };
 
   const handleEdit = (prod) => {
     const parentDayUse = myDayUses.find(d => d.id === prod.dayUseId);
@@ -199,7 +235,13 @@ const PartnerProducts = ({ user }) => {
         ageMin: prod.ageMin || '',
         ageMax: prod.ageMax || '',
         petSize: prod.petSize || '',
-        includedSpecialDates: prod.includedSpecialDates || parentDayUse?.specialDates?.map(d => d.date) || []
+        includedSpecialDates: prod.includedSpecialDates || parentDayUse?.specialDates?.map(d => d.date) || [],
+
+        // ✅ GARANTINDO QUE OS DADOS SÃO CARREGADOS NO FORMULÁRIO
+        hasDailyLimit: !!prod.hasDailyLimit,
+        dailyLimit: prod.dailyLimit || '',
+        hasPromo: !!prod.hasPromo,
+        promoPrice: prod.promoPrice || ''
     });
     setIsModalOpen(true);
   };
@@ -275,7 +317,11 @@ const PartnerProducts = ({ user }) => {
         stock: selectedType.isPhysical ? Number(formData.stock) : null,
         consumption: finalConsumption,
         order: formData.order !== undefined ? Number(formData.order) : products.length,
-        minQuantityRules: formData.hasMinRules ? formData.minQuantityRules : {}
+        minQuantityRules: formData.hasMinRules ? formData.minQuantityRules : {},
+        hasPromo: !!formData.hasPromo,
+        promoPrice: formData.hasPromo ? Number(formData.promoPrice) : null,
+        hasDailyLimit: !!formData.hasDailyLimit,
+        dailyLimit: formData.hasDailyLimit ? Number(formData.dailyLimit) : null
       };
 
       if (formData.id) {
@@ -647,13 +693,21 @@ const PartnerProducts = ({ user }) => {
                         </div>
                         
                         <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-50">
-                            <span className={`text-xl font-extrabold ${isPaused ? 'text-slate-400' : 'text-[#0097A8]'}`}>{item.price === 0 ? 'Grátis' : formatBRL(item.price)}</span>
-                            <div className="flex gap-2">
-                                <button onClick={() => handleToggleStatus(item)} className={`p-2 rounded-lg transition-colors ${isPaused ? 'bg-green-100 text-green-600 hover:bg-green-200' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`} title={isPaused ? "Ativar Vendas" : "Pausar Vendas"}><Power size={18}/></button>
-                                <button onClick={() => handleEdit(item)} className="p-2 hover:bg-slate-100 rounded-lg text-blue-600"><Edit size={18}/></button>
-                                <button onClick={() => handleDelete(item.id)} className="p-2 hover:bg-slate-100 rounded-lg text-red-500"><Trash2 size={18}/></button>
-                            </div>
-                        </div>
+                                    <span className={`text-xl font-extrabold ${isPaused ? 'text-slate-400' : 'text-[#0097A8]'}`}>
+                                        {item.price === 0 ? 'Grátis' : formatBRL(item.price)}
+                                    </span>
+                                    <div className="flex gap-1"> {/* Mudei gap-2 para gap-1 para caber tudo */}
+                                        <button onClick={() => handleToggleStatus(item)} className={`p-2 rounded-lg transition-colors ${isPaused ? 'bg-green-100 text-green-600 hover:bg-green-200' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`} title={isPaused ? "Ativar Vendas" : "Pausar Vendas"}><Power size={16}/></button>
+                                        
+                                        {/* BOTÃO DUPLICAR */}
+                                        <button onClick={() => handleDuplicate(item)} className="p-2 hover:bg-slate-100 rounded-lg text-purple-600" title="Duplicar Produto">
+                                            <Copy size={16}/>
+                                        </button>
+
+                                        <button onClick={() => handleEdit(item)} className="p-2 hover:bg-slate-100 rounded-lg text-blue-600" title="Editar"><Edit size={16}/></button>
+                                        <button onClick={() => handleDelete(item.id)} className="p-2 hover:bg-slate-100 rounded-lg text-red-500" title="Excluir"><Trash2 size={16}/></button>
+                                    </div>
+                                </div>
                     </div>
                   );
               })}
@@ -688,11 +742,138 @@ const PartnerProducts = ({ user }) => {
                     {formData.type && (
                         <>
                             {renderAgeSettings()}
-                            <div className="grid md:grid-cols-2 gap-4">
-                                <div><div className="flex justify-between"><label className="text-sm font-bold text-slate-700 block mb-1">Título</label><span className="text-[10px] text-slate-400">{formData.title?.length || 0}/40</span></div><input className="w-full border p-3 rounded-xl outline-none focus:border-[#0097A8]" maxLength={40} value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} /></div>
-                                <div><label className="text-sm font-bold text-slate-700 block mb-1">Preço (R$)</label><input type="number" className="w-full border p-3 rounded-xl outline-none focus:border-[#0097A8]" placeholder="0.00" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} /></div>
-                            </div>
-                            <div><div className="flex justify-between"><label className="text-sm font-bold text-slate-700 block mb-1">Descrição Curta</label><span className="text-[10px] text-slate-400">{formData.description?.length || 0}/120</span></div><textarea className="w-full border p-3 rounded-xl h-24 resize-none outline-none focus:border-[#0097A8]" maxLength={120} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
+                            {/* Lógica de Limite de Caracteres */}
+                            {(() => {
+                                // Grupos definidos na regra
+                                const isMainType = ['child', 'combo_child', 'adult', 'combo_adult'].includes(formData.type);
+                                const titleLimit = 30; // Regra: Título sempre 30
+                                const descLimit = isMainType ? 30 : 40; // Regra: Outros tipos descrição 40, principais mantém 120 (padrão)
+                                
+                                // Lógica de Preço Gratuito (Criança)
+                                const isFreeTicket = formData.type === 'child' && formData.ageType === 'free';
+
+                                return (
+                                    <>
+                                        <div className="grid md:grid-cols-2 gap-4">
+                                            <div>
+                                                <div className="flex justify-between">
+                                                    <label className="text-sm font-bold text-slate-700 block mb-1">Título</label>
+                                                    <span className={`text-[10px] ${formData.title?.length >= titleLimit ? 'text-red-500 font-bold' : 'text-slate-400'}`}>
+                                                        {formData.title?.length || 0}/{titleLimit}
+                                                    </span>
+                                                </div>
+                                                <input 
+                                                    className="w-full border p-3 rounded-xl outline-none focus:border-[#0097A8]" 
+                                                    maxLength={titleLimit} 
+                                                    value={formData.title} 
+                                                    onChange={e => setFormData({...formData, title: e.target.value})} 
+                                                />
+                                            </div>
+                                            
+                                            {/* CAMPO DE PREÇO COM BLOQUEIO AUTOMÁTICO */}
+                                            <div>
+                                                <label className="text-sm font-bold text-slate-700 block mb-1">Preço (R$)</label>
+                                                <input 
+                                                    type="number" 
+                                                    className={`w-full border p-3 rounded-xl outline-none focus:border-[#0097A8] ${isFreeTicket ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`} 
+                                                    placeholder="0.00" 
+                                                    value={isFreeTicket ? 0 : formData.price} 
+                                                    onChange={e => setFormData({...formData, price: e.target.value})}
+                                                    disabled={isFreeTicket} 
+                                                />
+                                                {isFreeTicket && <span className="text-[10px] text-green-600 font-bold mt-1 block">Ingresso definido como Gratuito/Cortesia</span>}
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div className="flex justify-between">
+                                                <label className="text-sm font-bold text-slate-700 block mb-1">Descrição Curta</label>
+                                                <span className={`text-[10px] ${formData.description?.length >= descLimit ? 'text-red-500 font-bold' : 'text-slate-400'}`}>
+                                                    {formData.description?.length || 0}/{descLimit}
+                                                </span>
+                                            </div>
+                                            <textarea 
+                                                className="w-full border p-3 rounded-xl h-24 resize-none outline-none focus:border-[#0097A8]" 
+                                                maxLength={descLimit} 
+                                                value={formData.description} 
+                                                onChange={e => setFormData({...formData, description: e.target.value})} 
+                                            />
+                                        </div>
+
+                                        {/* --- NOVO CAMPO: PREÇO PROMOCIONAL --- */}
+                                        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 mb-4 mt-2">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <label className="text-sm font-bold text-purple-900 flex items-center gap-2">
+                                                    <Tag size={16} className="text-purple-600"/>
+                                                    Preço Promocional?
+                                                    <span className="text-[10px] font-normal text-purple-600/70">(Ofertas relâmpago)</span>
+                                                </label>
+                                                
+                                                <div 
+                                                    onClick={() => setFormData({...formData, hasPromo: !formData.hasPromo})}
+                                                    className={`w-10 h-6 rounded-full p-1 cursor-pointer transition-colors ${formData.hasPromo ? 'bg-purple-600' : 'bg-slate-300'}`}
+                                                >
+                                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform ${formData.hasPromo ? 'translate-x-4' : ''}`}></div>
+                                                </div>
+                                            </div>
+
+                                            {formData.hasPromo && (
+                                                <div className="animate-fade-in-down mt-3 flex gap-4 items-end">
+                                                    <div className="flex-1">
+                                                        <label className="block text-xs font-bold text-purple-700 mb-1">Valor Promocional (R$)</label>
+                                                        <input 
+                                                            type="number"
+                                                            placeholder="0.00"
+                                                            className="w-full border border-purple-200 rounded-lg p-2 text-sm font-bold text-slate-700 focus:border-purple-500 outline-none"
+                                                            value={formData.promoPrice || ''}
+                                                            onChange={e => setFormData({...formData, promoPrice: e.target.value})}
+                                                        />
+                                                    </div>
+                                                    <div className="text-xs text-purple-600/70 pb-2 flex-1">
+                                                        O preço antigo aparecerá riscado (ex: <span className="line-through decoration-red-500">R$ 100</span>)
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                            
+                            {/* --- NOVO CAMPO: LIMITE DIÁRIO (LOTES) --- */}
+                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-4">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                            <Package size={16} className="text-[#0097A8]"/>
+                                            Limitar quantidade por dia?
+                                            <span className="text-[10px] font-normal text-slate-400">(Ideal para Lotes)</span>
+                                        </label>
+                                        
+                                        {/* Switch Toggle Simples */}
+                                        <div 
+                                            onClick={() => setFormData({...formData, hasDailyLimit: !formData.hasDailyLimit})}
+                                            className={`w-10 h-6 rounded-full p-1 cursor-pointer transition-colors ${formData.hasDailyLimit ? 'bg-[#0097A8]' : 'bg-slate-300'}`}
+                                        >
+                                            <div className={`w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform ${formData.hasDailyLimit ? 'translate-x-4' : ''}`}></div>
+                                        </div>
+                                    </div>
+
+                                    {formData.hasDailyLimit && (
+                                        <div className="animate-fade-in-down mt-3">
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Quantidade Máxima por Dia</label>
+                                            <input 
+                                                type="number"
+                                                min="1"
+                                                placeholder="Ex: 20"
+                                                className="w-full border border-slate-300 rounded-lg p-2 text-sm font-bold text-slate-700 focus:border-[#0097A8] outline-none"
+                                                value={formData.dailyLimit || ''}
+                                                onChange={e => setFormData({...formData, dailyLimit: Number(e.target.value)})}
+                                            />
+                                            <p className="text-[10px] text-slate-400 mt-1">
+                                                * O sistema vai vender até atingir esse número naquela data específica. Depois aparecerá como ESGOTADO.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
                             <div className="grid md:grid-cols-2 gap-4">
                                 <div><label className="text-sm font-bold text-slate-700 block mb-1 flex items-center gap-1"><Clock size={14}/> Encerrar vendas às:</label><input type="time" className="w-full border p-3 rounded-xl outline-none focus:border-[#0097A8] disabled:bg-slate-100 disabled:text-slate-400" value={formData.salesEndHour || ''} onChange={e => setFormData({...formData, salesEndHour: e.target.value})} disabled={formData.noSalesLimit} /></div>
                                 <div className="flex items-center pt-6"><label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" className="accent-[#0097A8] w-4 h-4" checked={formData.noSalesLimit} onChange={(e) => setFormData({...formData, noSalesLimit: e.target.checked})} /> Não se aplica (Sem limite)</label></div>

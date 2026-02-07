@@ -95,3 +95,5 @@ export const useSchema = (schemaData) => {
     };
   }, [schemaData]);
 };
+
+export default useSEO;

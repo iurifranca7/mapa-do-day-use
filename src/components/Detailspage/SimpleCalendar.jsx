@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+const GUARDIAN_TYPES = ['adult', 'combo_adult', 'mix_ac', 'mix_suite', 'super_mix'];
 
 const SimpleCalendar = ({ 
   availableDays = [], 
@@ -58,24 +59,19 @@ const SimpleCalendar = ({
       const dateStr = formatDateLocal(date); 
       const dayIndex = date.getDay(); 
       
-      let lowestPrice = Infinity;
+      let minAdultPrice = Infinity; // Menor preço de Adulto
+      let minChildPrice = Infinity; // Menor preço de Criança/Outros (Fallback)
 
-      // 1. Lógica de Produtos
+      // 1. Lógica de Produtos (Prioritária)
       if (products && products.length > 0) {
           products.forEach((product) => {
               let isProductAvailable = false;
 
-              // Verifica Dia da Semana
-              let productWeekDays = product.availableDays;
-              if (!productWeekDays || productWeekDays.length === 0) {
-                  productWeekDays = [0, 1, 2, 3, 4, 5, 6]; 
-              }
+              // Verifica disponibilidade
+              let productWeekDays = product.availableDays || [0, 1, 2, 3, 4, 5, 6];
               const safeWeekDays = productWeekDays.map(d => Number(d));
-              
-              // Verifica Data Especial
               const productSpecialDates = product.includedSpecialDates || [];
               
-              // Regra de Ouro: Aberto se for dia da semana permitido OU data especial
               if (safeWeekDays.includes(dayIndex) || productSpecialDates.includes(dateStr)) {
                   isProductAvailable = true;
               }
@@ -83,48 +79,61 @@ const SimpleCalendar = ({
               if (isProductAvailable) {
                   let priceFound = Number(product.price || 0);
                   
-                  // Override Semanal (WeeklyPrices)
+                  // Override Semanal
                   if (product.weeklyPrices && product.weeklyPrices[dayIndex]) {
                       const wp = product.weeklyPrices[dayIndex];
                       const wpPrice = (typeof wp === 'object') ? wp.price : wp;
-                      
                       if (wpPrice !== undefined && wpPrice !== null && wpPrice !== "") {
                           priceFound = Number(wpPrice);
                       }
                   }
 
                   if (priceFound > 0) {
-                      if (priceFound < lowestPrice) {
-                          lowestPrice = priceFound;
+                      // 🔥 SEPARAÇÃO POR TIPO
+                      if (GUARDIAN_TYPES.includes(product.type)) {
+                          if (priceFound < minAdultPrice) minAdultPrice = priceFound;
+                      } else {
+                          if (priceFound < minChildPrice) minChildPrice = priceFound;
                       }
                   }
               }
           });
       }
 
-      // 2. Fallback Legado (apenas se nenhum produto válido foi encontrado)
-      if (lowestPrice === Infinity) {
+      // 2. Fallback Legado (Se não achou nada nos produtos, olha no objeto prices)
+      if (minAdultPrice === Infinity && minChildPrice === Infinity) {
           const globalDayConfig = prices[dayIndex];
-          let globalPrice = 0;
-
+          
           if (globalDayConfig) {
               if (typeof globalDayConfig === 'object') {
                   const pA = Number(globalDayConfig.adult || 0);
                   const pC = Number(globalDayConfig.child || 0);
                   const pU = Number(globalDayConfig.price || 0);
-                  const valids = [pA, pC, pU].filter(v => v > 0);
-                  if (valids.length > 0) globalPrice = Math.min(...valids);
+                  
+                  // Prioriza Adulto legado
+                  if (pA > 0) minAdultPrice = pA;
+                  // Se não tem adulto, tenta o genérico (pU) como adulto ou fallback
+                  else if (pU > 0) minAdultPrice = pU; 
+                  // Criança
+                  if (pC > 0) minChildPrice = pC;
+
               } else if (!isNaN(globalDayConfig)) {
-                  globalPrice = Number(globalDayConfig);
+                  const p = Number(globalDayConfig);
+                  if (p > 0) minAdultPrice = p; // Assume que preço único é adulto
               }
           } else {
-              globalPrice = Number(basePrice || 0);
+              const base = Number(basePrice || 0);
+              if (base > 0) minAdultPrice = base;
           }
-
-          if (globalPrice > 0) lowestPrice = globalPrice;
       }
 
-      return lowestPrice === Infinity ? 0 : lowestPrice;
+      // 🔥 RETORNO COM PRIORIDADE
+      // 1º Retorna menor preço adulto
+      if (minAdultPrice !== Infinity) return minAdultPrice;
+      // 2º Se não tem adulto, retorna menor preço infantil (fallback visual)
+      if (minChildPrice !== Infinity) return minChildPrice;
+      
+      return 0;
   };
 
   // Lógica visual para destacar o menor preço (ignora 0)
