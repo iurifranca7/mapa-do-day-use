@@ -125,8 +125,12 @@ export default async function handler(req, res) {
             if (qty <= 0) continue;
             
             const realProduct = dbProductsMap[cartItem.id];
-            if (!realProduct) continue; // Ignora item fantasma
+            if (!realProduct) continue; 
             
+            // 🔥 DECLARAÇÃO DA VARIÁVEL (O erro estava aqui: esta linha é obrigatória)
+            let unitPrice = Number(realProduct.price || 0);
+            
+            // Lógica de Promoção: Se tiver promo, sobrescreve o valor
             if (realProduct.hasPromo && realProduct.promoPrice) {
                 unitPrice = Number(realProduct.promoPrice);
             }
@@ -138,6 +142,10 @@ export default async function handler(req, res) {
         // Fallback Legado (apenas se não houver itens no carrinho)
         let priceAdult = Number(item.priceAdult || 0);
         let priceChild = Number(item.priceChild || 0);
+        
+        // Verifica se o DayUse principal tem promo no legado (raro, mas bom garantir)
+        // (Opcional, mantendo lógica simples para legado)
+        
         calculatedGrossTotal = (Number(bookingDetails.adults || 0) * priceAdult) + (Number(bookingDetails.children || 0) * priceChild);
         mpItemsList.push({ id: 'legacy', title: 'Day Use', quantity: 1, unit_price: calculatedGrossTotal });
     }
